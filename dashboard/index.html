@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Buddy - A股量化看板</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: rgba(18, 18, 26, 0.8);
+            --bg-glass: rgba(255, 255, 255, 0.03);
+            --border-subtle: rgba(255, 255, 255, 0.06);
+            --border-glow: rgba(0, 255, 136, 0.3);
+            --text-primary: #e8e8ed;
+            --text-secondary: #6b7280;
+            --text-muted: #4b5563;
+            --accent-green: #00ff88;
+            --accent-red: #ff4757;
+            --accent-cyan: #00d4ff;
+            --accent-gold: #ffd700;
+            --accent-purple: #a855f7;
+            --glow-green: 0 0 20px rgba(0, 255, 136, 0.3);
+            --glow-red: 0 0 20px rgba(255, 71, 87, 0.3);
+            --glow-cyan: 0 0 20px rgba(0, 212, 255, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', 'JetBrains Mono', sans-serif;
+            background: var(--bg-primary);
+            min-height: 100vh;
+            color: var(--text-primary);
+            overflow-x: hidden;
+        }
+
+        /* 背景动画 */
+        .bg-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .bg-glow {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(150px);
+            opacity: 0.15;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .bg-glow-1 {
+            top: -200px;
+            right: -100px;
+            background: var(--accent-cyan);
+            animation: pulse 8s ease-in-out infinite;
+        }
+
+        .bg-glow-2 {
+            bottom: -200px;
+            left: -100px;
+            background: var(--accent-purple);
+            animation: pulse 10s ease-in-out infinite reverse;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.1; transform: scale(1); }
+            50% { opacity: 0.2; transform: scale(1.1); }
+        }
+
+        /* 布局 */
+        .app {
+            position: relative;
+            z-index: 1;
+            min-height: 100vh;
+        }
+
+        /* 头部 */
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(10, 10, 15, 0.9);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-subtle);
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+            color: var(--bg-primary);
+            box-shadow: var(--glow-cyan);
+        }
+
+        .logo-text {
+            font-size: 20px;
+            font-weight: 600;
+            background: linear-gradient(90deg, var(--text-primary), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .header-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .time-value {
+            color: var(--accent-cyan);
+            font-weight: 500;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: var(--glow-green);
+            animation: blink 2s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* 主容器 */
+        .main-container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 24px 32px;
+        }
+
+        /* 指数区域 */
+        .indices-section {
+            margin-bottom: 24px;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .section-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-label::before {
+            content: '';
+            width: 3px;
+            height: 12px;
+            background: var(--accent-cyan);
+            border-radius: 2px;
+        }
+
+        .indices-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+        }
+
+        .index-card {
+            background: var(--bg-glass);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            cursor: pointer;
+        }
+
+        .index-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .index-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--border-glow);
+            box-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
+        }
+
+        .index-card:hover::before {
+            opacity: 1;
+        }
+
+        .index-card.up .index-name::after {
+            content: '▲';
+            color: var(--accent-red);
+            margin-left: 8px;
+            font-size: 10px;
+        }
+
+        .index-card.down .index-name::after {
+            content: '▼';
+            color: var(--accent-green);
+            margin-left: 8px;
+            font-size: 10px;
+        }
+
+        .index-name {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+
+        .index-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-left: auto;
+            padding: 2px 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+
+        .index-price {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            letter-spacing: -1px;
+        }
+
+        .index-change {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .index-card.up .index-change {
+            color: var(--accent-red);
+        }
+
+        .index-card.down .index-change {
+            color: var(--accent-green);
+        }
+
+        .change-value {
+            font-weight: 500;
+        }
+
+        .change-percent {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .index-card.up .change-percent {
+            background: rgba(255, 71, 87, 0.15);
+        }
+
+        .index-card.down .change-percent {
+            background: rgba(0, 255, 136, 0.15);
+        }
+
+        /* 主内容区 */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 24px;
+        }
+
+        /* K线图区域 */
+        .kline-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 24px;
+            animation: fadeInUp 0.6s ease-out 0.2s both;
+        }
+
+        .kline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .kline-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .kline-title h2 {
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .stock-name {
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .stock-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 4px 8px;
+            background: rgba(0, 212, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        .kline-indicators {
+            display: flex;
+            gap: 16px;
+        }
+
+        .indicator {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+
+        .indicator-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 2px;
+        }
+
+        .indicator-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .indicator-value.green { color: var(--accent-green); }
+        .indicator-value.red { color: var(--accent-red); }
+        .indicator-value.cyan { color: var(--accent-cyan); }
+        .indicator-value.gold { color: var(--accent-gold); }
+
+        .search-container {
+            position: relative;
+            margin-bottom: 16px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 16px 12px 44px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 16px;
+        }
+
+        .chart-container {
+            height: 400px;
+            position: relative;
+        }
+
+        /* 涨跌幅榜 */
+        .rank-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 24px;
+            animation: fadeInUp 0.6s ease-out 0.4s both;
+        }
+
+        .rank-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .rank-tab {
+            flex: 1;
+            padding: 10px 16px;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .rank-tab:hover {
+            border-color: var(--text-muted);
+        }
+
+        .rank-tab.active {
+            background: var(--accent-green);
+            border-color: var(--accent-green);
+            color: var(--bg-primary);
+        }
+
+        .rank-tab.active.down {
+            background: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
+        .rank-list {
+            max-height: 420px;
+            overflow-y: auto;
+        }
+
+        .rank-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .rank-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .rank-list::-webkit-scrollbar-thumb {
+            background: var(--border-subtle);
+            border-radius: 2px;
+        }
+
+        .rank-item {
+            display: grid;
+            grid-template-columns: 40px 1fr auto;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .rank-item:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .rank-item:active {
+            transform: scale(0.98);
+        }
+
+        .rank-number {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .rank-item:nth-child(1) .rank-number { color: var(--accent-gold); }
+        .rank-item:nth-child(2) .rank-number { color: #9ca3af; }
+        .rank-item:nth-child(3) .rank-number { color: #cd7f32; }
+
+        .rank-info {
+            overflow: hidden;
+        }
+
+        .rank-name {
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .rank-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .rank-data {
+            text-align: right;
+        }
+
+        .rank-price {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .rank-change {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            margin-top: 2px;
+        }
+
+        .rank-change.up { color: var(--accent-red); }
+        .rank-change.down { color: var(--accent-green); }
+
+        /* 加载状态 */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+            color: var(--text-muted);
+        }
+
+        .loading-spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border-subtle);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 响应式 */
+        @media (max-width: 1200px) {
+            .indices-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                padding: 12px 16px;
+            }
+            .main-container {
+                padding: 16px;
+            }
+            .indices-grid {
+                grid-template-columns: 1fr;
+            }
+            .kline-indicators {
+                display: none;
+            }
+        }
+
+        /* 动画入场 */
+        .index-card {
+            animation: slideIn 0.5s ease-out backwards;
+        }
+        .index-card:nth-child(1) { animation-delay: 0.1s; }
+        .index-card:nth-child(2) { animation-delay: 0.15s; }
+        .index-card:nth-child(3) { animation-delay: 0.2s; }
+        .index-card:nth-child(4) { animation-delay: 0.25s; }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+    
+    <div class="app">
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">T</div>
+                <div>
+                    <div class="logo-text">Trading Buddy</div>
+                    <div class="logo-sub">量化数据看板</div>
+                </div>
+            </div>
+            <div class="header-time">
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span>实时数据</span>
+                </div>
+                <div>
+                    <span class="time-value" id="currentTime">--:--:--</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-container">
+            <section class="indices-section">
+                <div class="section-label">市场指数</div>
+                <div class="indices-grid" id="indices">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        加载中...
+                    </div>
+                </div>
+            </section>
+
+            <div class="content-grid">
+                <section class="kline-section">
+                    <div class="kline-header">
+                        <div class="kline-title">
+                            <h2 id="klineTitle">上证指数</h2>
+                            <span class="stock-code" id="stockCode">sh.000001</span>
+                        </div>
+                        <div class="kline-indicators">
+                            <div class="indicator">
+                                <span class="indicator-label">MA5</span>
+                                <span class="indicator-value cyan" id="ma5">--</span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">MA10</span>
+                                <span class="indicator-value cyan" id="ma10">--</span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">MA20</span>
+                                <span class="indicator-value cyan" id="ma20">--</span>
+                            </div>
+                            <div class="indicator">
+                                <span class="indicator-label">成交量</span>
+                                <span class="indicator-value" id="volume">--</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="search-container">
+                        <span class="search-icon">⌕</span>
+                        <input type="text" class="search-input" id="stockSearch" placeholder="输入股票代码搜索，如 600519">
+                    </div>
+                    <div class="chart-container" id="klineChart"></div>
+                </section>
+
+                <section class="rank-section">
+                    <div class="section-label">涨跌幅排行</div>
+                    <div class="rank-tabs">
+                        <button class="rank-tab active" onclick="switchTab('gainers')" id="tabGainers">
+                            <span>▲</span> 涨幅榜
+                        </button>
+                        <button class="rank-tab down" onclick="switchTab('losers')" id="tabLosers">
+                            <span>▼</span> 跌幅榜
+                        </button>
+                    </div>
+                    <div class="rank-list" id="rankList">
+                        <div class="loading">
+                            <div class="loading-spinner"></div>
+                            加载中...
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8002/api';
+        let currentTab = 'gainers';
+        let currentStock = 'sh.000001';
+        let klineChart = null;
+
+        // 更新时间
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
+            document.getElementById('currentTime').textContent = timeStr;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        // 加载指数数据
+        async function loadIndices() {
+            try {
+                const res = await fetch(`${API_BASE}/dashboard/overview`);
+                const data = await res.json();
+                const indices = data.indices || [];
+                
+                document.getElementById('indices').innerHTML = indices.map(idx => {
+                    const isUp = (idx.pct_change || 0) >= 0;
+                    return `
+                        <div class="index-card ${isUp ? 'up' : 'down'}" onclick="selectStock('${idx.code}')">
+                            <div class="index-name">
+                                ${idx.name}
+                                <span class="index-code">${idx.code.replace('sh.', '')}</span>
+                            </div>
+                            <div class="index-price">${idx.price?.toFixed(2) || '-'}</div>
+                            <div class="index-change">
+                                <span class="change-value">${isUp ? '+' : ''}${idx.change?.toFixed(2) || '0.00'}</span>
+                                <span class="change-percent">${isUp ? '+' : ''}${idx.pct_change?.toFixed(2) || '0.00'}%</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                document.getElementById('indices').innerHTML = '<div class="loading">API未启动</div>';
+            }
+        }
+
+        // 加载涨跌幅榜
+        async function loadStockList() {
+            try {
+                const endpoint = currentTab === 'gainers' ? 'gainers' : 'losers';
+                const res = await fetch(`${API_BASE}/dashboard/${endpoint}?limit=20`);
+                const data = await res.json();
+                
+                document.getElementById('rankList').innerHTML = data.map((stock, i) => {
+                    const isUp = (stock.pct_change || 0) >= 0;
+                    return `
+                        <div class="rank-item" onclick="selectStock('${stock.code}')">
+                            <div class="rank-number">${i + 1}</div>
+                            <div class="rank-info">
+                                <div class="rank-name">${stock.name}</div>
+                                <div class="rank-code">${stock.code}</div>
+                            </div>
+                            <div class="rank-data">
+                                <div class="rank-price">${stock.price?.toFixed(2) || '-'}</div>
+                                <div class="rank-change ${isUp ? 'up' : 'down'}">
+                                    ${isUp ? '+' : ''}${stock.pct_change?.toFixed(2) || '0.00'}%
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                document.getElementById('rankList').innerHTML = '<div class="loading">加载失败</div>';
+            }
+        }
+
+        // 切换Tab
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('tabGainers').classList.toggle('active', tab === 'gainers');
+            document.getElementById('tabLosers').classList.toggle('active', tab === 'losers');
+            loadStockList();
+        }
+
+        // K线图
+        function initKlineChart() {
+            klineChart = echarts.init(document.getElementById('klineChart'));
+            window.addEventListener('resize', () => klineChart.resize());
+            loadKlineData(currentStock);
+        }
+
+        async function loadKlineData(code) {
+            try {
+                const res = await fetch(`${API_BASE}/klines/analysis/${code}?limit=60`);
+                const data = await res.json();
+                
+                if (data.error || !data.history || data.history.length === 0) {
+                    klineChart.setOption({
+                        title: { text: '未找到数据', left: 'center', top: 'center', textStyle: { color: '#4b5563' } }
+                    });
+                    return;
+                }
+
+                const history = data.history;
+                const stockName = history[0]?.name || code;
+                
+                document.getElementById('klineTitle').textContent = stockName;
+                document.getElementById('stockCode').textContent = code;
+
+                // 更新指标
+                if (data.indicators) {
+                    document.getElementById('ma5').textContent = data.indicators.ma5?.toFixed(2) || '--';
+                    document.getElementById('ma10').textContent = data.indicators.ma10?.toFixed(2) || '--';
+                    document.getElementById('ma20').textContent = data.indicators.ma20?.toFixed(2) || '--';
+                }
+
+                const latest = history[history.length - 1];
+                if (latest) {
+                    document.getElementById('volume').textContent = (latest.volume / 10000).toFixed(0) + '万';
+                }
+
+                // 计算均线
+                const calculateMA = (period) => {
+                    const result = [];
+                    for (let i = 0; i < history.length; i++) {
+                        if (i < period - 1) {
+                            result.push('-');
+                        } else {
+                            const sum = history.slice(i - period + 1, i + 1)
+                                .reduce((acc, d) => acc + d.close, 0);
+                            result.push((sum / period).toFixed(2));
+                        }
+                    }
+                    return result;
+                };
+
+                const dates = history.map(d => d.trade_date);
+                const ma5 = calculateMA(5);
+                const ma10 = calculateMA(10);
+                const ma20 = calculateMA(20);
+
+                const option = {
+                    backgroundColor: 'transparent',
+                    animation: true,
+                    animationDuration: 800,
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'cross' },
+                        backgroundColor: 'rgba(18, 18, 26, 0.95)',
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        textStyle: { color: '#e8e8ed' },
+                    },
+                    legend: {
+                        data: ['MA5', 'MA10', 'MA20'],
+                        textStyle: { color: '#6b7280' },
+                        top: 0,
+                        right: 0
+                    },
+                    grid: { left: '3%', right: '3%', top: '15%', bottom: '10%', containLabel: true },
+                    xAxis: {
+                        type: 'category',
+                        data: dates,
+                        axisLine: { lineStyle: { color: '#2a2a3a' } },
+                        axisLabel: { color: '#6b7280', fontSize: 10 }
+                    },
+                    yAxis: {
+                        scale: true,
+                        position: 'right',
+                        axisLine: { lineStyle: { color: '#2a2a3a' } },
+                        axisLabel: { color: '#6b7280', fontSize: 10 },
+                        splitLine: { lineStyle: { color: '#1a1a2a' } }
+                    },
+                    dataZoom: [
+                        { type: 'inside', xAxisIndex: 0, start: 60, end: 100 },
+                        { type: 'slider', xAxisIndex: 0, start: 60, end: 100, height: 20, bottom: 0, borderColor: 'transparent', backgroundColor: '#1a1a2a', fillerColor: 'rgba(0, 212, 255, 0.2)', handleStyle: { color: '#00d4ff' } }
+                    ],
+                    series: [
+                        {
+                            name: 'K线',
+                            type: 'candlestick',
+                            data: history.map(d => [d.open, d.close, d.low, d.high]),
+                            itemStyle: {
+                                color: '#ff4757',
+                                color0: '#00ff88',
+                                borderColor: '#ff4757',
+                                borderColor0: '#00ff88'
+                            }
+                        },
+                        { name: 'MA5', type: 'line', data: ma5, smooth: true, lineStyle: { width: 1, color: '#ffd700' }, symbol: 'none' },
+                        { name: 'MA10', type: 'line', data: ma10, smooth: true, lineStyle: { width: 1, color: '#00d4ff' }, symbol: 'none' },
+                        { name: 'MA20', type: 'line', data: ma20, smooth: true, lineStyle: { width: 1, color: '#a855f7' }, symbol: 'none' }
+                    ]
+                };
+
+                klineChart.setOption(option);
+            } catch (e) {
+                console.error('K线加载失败:', e);
+            }
+        }
+
+        // 选择股票
+        function selectStock(code) {
+            currentStock = code;
+            loadKlineData(code);
+        }
+
+        // 搜索
+        document.getElementById('stockSearch').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                let code = e.target.value.trim().toLowerCase();
+                if (!code.startsWith('sh.') && !code.startsWith('sz.') && !code.startsWith('bj.')) {
+                    if (code.startsWith('6')) code = 'sh.' + code;
+                    else if (code.startsWith('0') || code.startsWith('3')) code = 'sz.' + code;
+                    else code = 'sh.' + code;
+                }
+                selectStock(code);
+                this.blur();
+            }
+        });
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadIndices();
+            loadStockList();
+            initKlineChart();
+            setInterval(loadIndices, 30000);
+        });
+    </script>
+</body>
+</html>
