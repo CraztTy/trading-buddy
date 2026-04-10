@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 维护用单页已迁移至 ../frontend/（Vue 3 + Vite）。开发: cd frontend && npm run dev -->
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -743,7 +744,13 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8002/api';
+        const API_BASE = 'http://127.0.0.1:8000/api';
+        const MAJOR_INDEX_NAMES = {
+            'sh.000001': '上证指数',
+            'sz.399001': '深证成指',
+            'sz.399006': '创业板指',
+            'sh.000300': '沪深300',
+        };
         let currentTab = 'gainers';
         let currentStock = 'sh.000001';
         let klineChart = null;
@@ -839,12 +846,18 @@
                     klineChart.setOption({
                         title: { text: '未找到数据', left: 'center', top: 'center', textStyle: { color: '#4b5563' } }
                     });
+                    const k = (code || '').trim().toLowerCase();
+                    document.getElementById('klineTitle').textContent =
+                        (data.name && String(data.name).trim()) || MAJOR_INDEX_NAMES[k] || code;
+                    document.getElementById('stockCode').textContent = code;
                     return;
                 }
 
                 const history = data.history;
-                const stockName = history[0]?.name || code;
-                
+                const k = (code || '').trim().toLowerCase();
+                const stockName =
+                    (data.name && String(data.name).trim()) || MAJOR_INDEX_NAMES[k] || code;
+
                 document.getElementById('klineTitle').textContent = stockName;
                 document.getElementById('stockCode').textContent = code;
 
@@ -942,6 +955,11 @@
         // 选择股票
         function selectStock(code) {
             currentStock = code;
+            const k = (code || '').trim().toLowerCase();
+            if (MAJOR_INDEX_NAMES[k]) {
+                document.getElementById('klineTitle').textContent = MAJOR_INDEX_NAMES[k];
+            }
+            document.getElementById('stockCode').textContent = code;
             loadKlineData(code);
         }
 

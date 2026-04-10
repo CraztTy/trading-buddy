@@ -38,6 +38,7 @@ class StockInfo(BaseModel):
     market: Market = Field(..., description="交易市场")
     industry: Optional[str] = Field(None, description="所属行业")
     sector_code: Optional[str] = Field(None, description="板块代码（概念/行业）")
+    is_trading: bool = Field(True, description="是否交易中（未停牌）")
     
     class Config:
         from_attributes = True

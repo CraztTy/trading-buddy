@@ -8,7 +8,7 @@ from datetime import date
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
-from src.data.storage import get_database, KlineRepository
+from src.data.storage import dispose_database, get_database, KlineRepository
 from src.data.models import KLine
 
 
@@ -44,7 +44,7 @@ async def test():
         for k in result:
             print(f"  {k.trade_date} close={k.close} pct={k.pct_change}")
 
-    await db.close()
+    await dispose_database()
 
 
 if __name__ == "__main__":

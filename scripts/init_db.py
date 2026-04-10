@@ -12,8 +12,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
-from src.common import get_logger
-from src.data.storage import get_database
+from src.common import describe_database_write_target, get_logger
+from src.data.storage import dispose_database, get_database
 
 
 async def init_database():
@@ -27,6 +27,7 @@ async def init_database():
     settings.project_root = project_root
     
     logger.info(f"Initializing database (mode: {settings.database.mode})...")
+    logger.info(f"写入目标: {describe_database_write_target()}")
     logger.info(f"Project root: {project_root}")
     
     # 确保数据目录存在
@@ -47,7 +48,7 @@ async def init_database():
         logger.error(f"Failed to initialize database: {e}")
         raise
     finally:
-        await db.close()
+        await dispose_database()
 
 
 if __name__ == "__main__":

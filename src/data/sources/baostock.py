@@ -152,6 +152,7 @@ class BaostockSource(BaseDataSource):
                 name=name,
                 stock_type=self._parse_stock_type(code, None),  # 简化版列表不需要精确类型
                 market=self._parse_market(code),
+                is_trading=(trade_status == "1"),
             ))
         
         logger.info(f"Fetched {len(stocks)} stocks")
@@ -213,6 +214,8 @@ class BaostockSource(BaseDataSource):
             while rs.next():
                 row = rs.get_row_data()
                 try:
+                    # 字段顺序: date,open,high,low,close,volume,amount,pctChg
+                    pct = float(row[7]) if len(row) > 7 and row[7] not in (None, "") else None
                     kline = KLine(
                         code=code,
                         trade_date=datetime.strptime(row[0], '%Y-%m-%d').date(),
@@ -222,7 +225,8 @@ class BaostockSource(BaseDataSource):
                         close=float(row[4]),
                         volume=int(float(row[5])) if row[5] else 0,
                         amount=float(row[6]) if row[6] else 0.0,
-                        turnover_rate=float(row[7]) if row[7] else None,
+                        turnover_rate=None,
+                        pct_change=pct,
                     )
                     klines.append(kline)
                 except (ValueError, IndexError) as e:
@@ -279,8 +283,12 @@ class BaostockSource(BaseDataSource):
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> list[KLine]:
-        """获取指数数据"""
-        if not code.startswith('sh.'):
+        """获取指数数据（深证/创业板等须保留 sz. 前缀）"""
+        if not (
+            code.startswith("sh.")
+            or code.startswith("sz.")
+            or code.startswith("bj.")
+        ):
             code = f"sh.{code}"
         return await self.get_daily_kline(code, start_date, end_date)
     

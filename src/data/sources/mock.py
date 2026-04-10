@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import AsyncIterator
 
 from .base import BaseDataSource, DataSourceFactory
-from ..models import StockInfo, KLine, RealtimeQuote, SectorData
+from ..models import StockInfo, KLine, RealtimeQuote, SectorData, Market
 
 
 class MockDataSource(BaseDataSource):
@@ -65,7 +65,7 @@ class MockDataSource(BaseDataSource):
             stocks.append(StockInfo(
                 code=s["code"],
                 name=s["name"],
-                market=s["market"],
+                market=Market(s["market"]),
                 industry=s["industry"],
                 ipo_date=date(2010, 1, 1),
             ))
@@ -78,9 +78,9 @@ class MockDataSource(BaseDataSource):
                 return StockInfo(
                     code=s["code"],
                     name=s["name"],
-                    market=s["market"],
+                    market=Market(s["market"]),
                     industry=s["industry"],
-                    list_date=date(2010, 1, 1),
+                    ipo_date=date(2010, 1, 1),
                 )
         return None
     
@@ -102,36 +102,43 @@ class MockDataSource(BaseDataSource):
         
         current_date = start
         current_price = base_price * random.uniform(0.85, 1.15)
-        
+        prev_close: float | None = None
+
         while current_date <= end:
             # 跳过周末
             if current_date.weekday() >= 5:
                 current_date += timedelta(days=1)
                 continue
-            
+
             # 随机波动
             change = random.uniform(-0.05, 0.05)
             current_price *= (1 + change)
-            
+
             day_range = current_price * random.uniform(0.01, 0.03)
             open_price = current_price * random.uniform(0.98, 1.02)
             high_price = max(open_price, current_price) + random.uniform(0, day_range)
             low_price = min(open_price, current_price) - random.uniform(0, day_range)
-            
+
             volume = random.uniform(500000, 5000000)
-            
+
             amount = volume * current_price
+            close_px = round(current_price, 2)
+            pct = None
+            if prev_close and prev_close > 0:
+                pct = round((close_px - prev_close) / prev_close * 100, 4)
             klines.append(KLine(
                 code=code,
                 trade_date=current_date,
                 open=round(open_price, 2),
                 high=round(high_price, 2),
                 low=round(low_price, 2),
-                close=round(current_price, 2),
+                close=close_px,
                 volume=int(volume),
                 amount=round(amount, 2),
+                pct_change=pct,
             ))
-            
+            prev_close = close_px
+
             current_date += timedelta(days=1)
         
         return klines
@@ -178,9 +185,12 @@ class MockDataSource(BaseDataSource):
         # 模拟指数代码
         index_prices = {
             "sh.000001": 3200.0,
+            "sz.399001": 10000.0,
+            "sz.399006": 2000.0,
+            "sh.000300": 3800.0,
+            # 兼容旧代码里的错误前缀
             "sh.399001": 10000.0,
             "sh.399006": 2000.0,
-            "sh.000300": 3800.0,
         }
         
         base_price = index_prices.get(code, 3000.0)

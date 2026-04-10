@@ -1,0 +1,187 @@
+/* Meridian Ledger — 深色账簿 + 几何标题 + 子午线光晕 */
+
+:root {
+  --void: #050508;
+  --ink: #0a0a0f;
+  --ink-raised: #12121c;
+  --ink-card: #14141f;
+  --ink-highlight: #1c1c2a;
+  --gold: #e8c547;
+  --gold-muted: #9a7b2c;
+  --ember: #ff5c45;
+  --jade: #2ee6a8;
+  --meridian: #3ee0ff;
+  --mist: #b8b4c8;
+  --mist-dim: #6d6a7a;
+  --rule: rgba(232, 197, 71, 0.22);
+  --rule-faint: rgba(255, 255, 255, 0.06);
+  --font-display: "Syne", system-ui, sans-serif;
+  --font-ui: "Noto Serif SC", "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-lift: 0 24px 48px rgba(0, 0, 0, 0.45);
+  /* 组件内沿用旧名时映射到新调色板 */
+  --brass: var(--gold);
+  --brass-dim: var(--gold-muted);
+  --paper: var(--mist);
+  --paper-muted: var(--mist-dim);
+  --danger: var(--ember);
+  --gain: var(--jade);
+  --cyan: var(--meridian);
+  --violet: #a78bfa;
+  --border: var(--rule);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  background: var(--void);
+  color: var(--mist);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(232, 197, 71, 0.28);
+  color: #fff;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* 子午线渐变 + 暗角 */
+.mesh {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 100% 80% at 50% -20%, rgba(62, 224, 255, 0.09), transparent 50%),
+    radial-gradient(ellipse 70% 50% at 110% 60%, rgba(232, 197, 71, 0.07), transparent 45%),
+    radial-gradient(ellipse 50% 40% at -10% 80%, rgba(255, 92, 69, 0.05), transparent 40%),
+    linear-gradient(180deg, var(--void) 0%, var(--ink) 35%, #0d0d14 100%);
+}
+
+.mesh::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.55) 100%);
+  pointer-events: none;
+}
+
+/* 胶片颗粒 */
+.noise {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.055;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 极淡扫描线 */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.04;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.18) 2px,
+    rgba(0, 0, 0, 0.18) 3px
+  );
+}
+
+.app-frame {
+  position: relative;
+  z-index: 3;
+  min-height: 100vh;
+  opacity: 0;
+  animation: frame-in 0.9s var(--ease-out-expo) 0.05s forwards;
+}
+
+@keyframes frame-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.enter-stagger > * {
+  animation: rise-in 0.65s var(--ease-out-expo) both;
+}
+.enter-stagger > *:nth-child(1) {
+  animation-delay: 0.08s;
+}
+.enter-stagger > *:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.enter-stagger > *:nth-child(3) {
+  animation-delay: 0.24s;
+}
+.enter-stagger > *:nth-child(4) {
+  animation-delay: 0.32s;
+}
+.enter-stagger > *:nth-child(5) {
+  animation-delay: 0.4s;
+}
+.enter-stagger > *:nth-child(6) {
+  animation-delay: 0.48s;
+}
+
+/* 区块标题通用 */
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: var(--gold-muted);
+  margin: 0 0 14px;
+}

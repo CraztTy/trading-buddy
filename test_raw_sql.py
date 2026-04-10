@@ -9,7 +9,7 @@ from sqlalchemy import text
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
-from src.data.storage import get_database
+from src.data.storage import dispose_database, get_database
 
 
 async def test_raw_sql():
@@ -44,7 +44,7 @@ async def test_raw_sql():
         for row in rows:
             print(f"  id={row[0]} code={row[1]} date={row[2]} close={row[3]} pct={row[4]}")
 
-    await db.close()
+    await dispose_database()
 
 
 if __name__ == "__main__":

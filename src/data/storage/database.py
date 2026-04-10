@@ -31,13 +31,14 @@ class Database:
                 connect_args={"check_same_thread": False}  # SQLite 特定
             )
         else:
-            # MySQL 配置
+            # MySQL 配置（云实例：超时、SSL 等见 DATABASE_CONNECT_TIMEOUT / DATABASE_SSL）
             self._engine = create_async_engine(
                 settings.database.url,
                 echo=settings.api.debug,
                 pool_size=10,
                 max_overflow=20,
                 pool_pre_ping=True,
+                connect_args=settings.database.mysql_connect_args(),
             )
         
         self._session_factory = async_sessionmaker(
@@ -91,6 +92,14 @@ def get_database() -> Database:
     if _db is None:
         _db = Database()
     return _db
+
+
+async def dispose_database() -> None:
+    """关闭并丢弃全局 Database（脚本多次拉数时需调用，否则会复用已 dispose 的引擎）"""
+    global _db
+    if _db is not None:
+        await _db.close()
+        _db = None
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

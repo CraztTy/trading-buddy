@@ -3,109 +3,226 @@
 ## 环境要求
 
 - Python 3.10+
-- Docker Desktop
+- Node.js 18+（用于 Vue 看板）
+- 数据库：**本地 SQLite 即可**；若用云 **MySQL / Redis**，复制 `.env.example` 为项目根目录 `.env` 并按说明填写（Docker 非必须）
 - 8GB+ RAM 推荐
 
-## 第一步：启动基础设施
+## 第一步：安装 Python 依赖
 
-```bash
-cd C:\Users\Administrator\Desktop\trading-buddy
+```powershell
+cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+# 若你的路径不同，请改为本仓库根目录
 
-# 启动 MySQL 和 Redis
-docker-compose up -d
-```
-
-等待 30 秒让服务完全启动。
-
-## 第二步：安装依赖
-
-```bash
 # 创建虚拟环境（推荐）
 python -m venv venv
 .\venv\Scripts\activate
 
-# 安装依赖
 pip install -r requirements.txt
 ```
 
-## 第三步：初始化数据库
+## 第二步：初始化数据库
 
-```bash
-python scripts/init_db.py
+```powershell
+python scripts\init_db.py
 ```
 
-看到 `Database initialized successfully` 即成功。
+日志中出现表创建成功即可。使用 **云 MySQL** 时先在 `.env` 中设置 `DATABASE_MODE=mysql` 及 `DATABASE_*`（或兼容别名 `DB_*`），并确保库已创建。
 
-## 第四步：拉取初始数据
+## 第三步：拉取初始数据
 
-```bash
-# 拉取股票列表
-python scripts/fetch_data.py --mode stocks
+### 方式 A：一键喂数（推荐，云库 / 本地库通用）
 
-# 拉取日K线数据（需要几分钟）
-python scripts/fetch_data.py --mode klines --days 365
+在项目根目录配置好 `.env` 后执行（**首次**会依次：**建表 → 股票列表 → 指数 K 线 → 部分股票日 K**）：
+
+```powershell
+# 默认 standard：约 90 天日 K、最多 120 只股票，指数约 730 天
+python scripts\feed_dashboard.py
+
+# 更快验证看板
+python scripts\feed_dashboard.py --profile quick
+
+# 全市场日 K（极慢，慎用）
+python scripts\feed_dashboard.py --profile full
+
+# 表已建好则跳过 init
+python scripts\feed_dashboard.py --skip-init
+
+# 只看将执行哪些命令
+python scripts\feed_dashboard.py --dry-run
 ```
 
-## 第五步：启动 API 服务
+**日常增量**（收盘后、定时任务推荐，按库中最新交易日补数，省时间省流量）：
 
-```bash
-uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+```powershell
+python scripts\feed_dashboard.py --profile daily --skip-init
 ```
 
-## 第六步：打开看板
+数据源默认读 `.env` 的 `DATA_SOURCE`；可加强制参数，例如  
+`python scripts\feed_dashboard.py --source baostock`。
 
-直接在浏览器打开：
-```
-C:\Users\Administrator\Desktop\trading-buddy\dashboard\index.html
+说明：**脚本可以替你写好流程，但必须在你本机运行**（需要你的网络访问 baostock、你的云库账号权限）；别人无法代替你连上你的云数据库执行写入。
+
+### 方式 B：分步拉取（与 `fetch_data.py` 一致）
+
+```powershell
+# 数据源由 .env 中 DATA_SOURCE 决定，也可用 --source 覆盖
+python scripts\fetch_data.py --source baostock --mode stocks
+
+# 全市场 K 线较慢，建议先小批量验证
+python scripts\fetch_data.py --source baostock --mode klines --days 30 --limit 50
+
+# 主要指数（看板概览用）
+python scripts\fetch_data.py --source baostock --mode indices
+
+# 等价于「日常增量」的一条龙（股票表 + 指数 + 全市场日 K，增量逻辑）
+python scripts\fetch_data.py --mode daily
 ```
 
-或者用 Live Server 打开。
+需要**仅对日 K / 指数**做增量时，可加 `--incremental` 与 `--overlap-days`（详见 `python scripts\fetch_data.py --help`）。
+
+本地联调可改用 `--source mock --limit 5` 快速灌入模拟数据。
+
+## 第四步：启动 API
+
+**方式 1（与文档一致，适合开发热重载）：**
+
+```powershell
+python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**方式 2（与 `.env` 一致，读取 `API_HOST` / `API_PORT` / `API_DEBUG`）：**
+
+```powershell
+python scripts\run_api.py
+```
+
+保持此终端运行。接口文档：http://127.0.0.1:8000/docs  
+
+生产前端若与 API 不同域，可在 `.env` 中配置 `CORS_ORIGINS`（逗号分隔源，或 `*`，见 `.env.example`）。
+
+## 第五步：安装并启动 Vue 看板
+
+**新开一个终端**（API 仍在运行）：
+
+```powershell
+cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy\frontend
+npm install
+npm run dev
+```
+
+终端会打印本地地址，一般为 **http://localhost:5173**。开发模式下请求会通过 Vite **代理**到 `http://127.0.0.1:8000`（可在 `frontend/.env.development` 里改 `VITE_PROXY_TARGET`）。
+
+更多说明见 `frontend/README.md`（含生产构建 `npm run build` 与 `VITE_API_BASE`）。
 
 ## 验证是否正常运行
 
-访问 API 文档：http://localhost:8000/docs
+- 浏览器打开 Vue 看板（上一步的 `npm run dev` 地址）
+- 或访问 API：http://127.0.0.1:8000/docs  
+  - `GET /api/dashboard/overview` — 指数概览  
+  - `GET /api/klines/analysis/sh.000001` — 上证指数 K 线分析（路径以实际路由为准，可在 Docs 中查看）
 
-试试这些接口：
-- `GET /api/dashboard/overview` - 查看指数行情
-- `GET /api/klines/analysis/sh.000001` - 查看上证指数K线
+**健康与就绪（运维 / 负载均衡）：**
+
+- `GET /health` — 仅返回配置摘要（`database_mode`、`redis_enabled`），**不连库**
+- `GET /health/ready` — 执行数据库 `SELECT 1`；若启用 Redis 则 `PING`，失败时 **503**
+
+**一键自检（需已配置 `.env`，会连 MySQL / Redis 并冒烟若干路由）：**
+
+```powershell
+cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+python scripts\verify_stack.py
+```
+
+自动化测试（不跑真实拉数）：
+
+```powershell
+python -m pytest tests -q
+```
 
 ## 常见问题
 
-**Q: docker-compose 启动失败？**
-```bash
-# 检查 Docker 是否运行
-docker ps
+**Q: 看板空白或「API 未就绪」？**  
+先确认本机 API 已启动（默认 `8000`，若用 `run_api.py` 则以 `.env` 中 `API_PORT` 为准），且 `frontend` 里未把 `VITE_API_BASE` 指错。
 
-# 查看日志
-docker-compose logs mysql
-```
+**Q: pip 安装失败？**
 
-**Q: pip 安装依赖失败？**
-```bash
-# 使用国内镜像
+```powershell
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-**Q: baostock 数据拉取很慢？**
-正常，首次需要拉取几千只股票的数据，耐心等待。
+**Q: baostock 拉数很慢？**  
+正常；先用 `--limit` 缩小范围。注意接口频率，可适当调大 `fetch_data.py` 的 `--baostock-delay`。日常更新请优先用 **`--profile daily`** 或 **`--mode daily`**。
+
+**Q: 云库 `daily_kline` 里没有 `sh.000001` 等指数，看板「主要指数」为空？**  
+指数成交量常超过 32 位 `INT` 上限，旧表若仍是 `INT` 会导致写入失败。在 MySQL 上执行：  
+`ALTER TABLE daily_kline MODIFY COLUMN volume BIGINT NULL;`  
+然后重新：`python scripts\fetch_data.py --mode indices --index-days 730`（或与 `feed_dashboard` 等效步骤）。
+
+**Q: 涨跌榜首次加载很慢？**  
+云库上常见原因是：按交易日排序涨跌幅要对大量行排序。请在 MySQL 上补复合索引（已有库需手动执行一次）：  
+`CREATE INDEX ix_daily_kline_trade_date_pct ON daily_kline (trade_date, change_pct);`  
+接口已合并为单次查询并绑定最新交易日，可减少一次往返。
+
+**Q: 还想用旧版静态页？**  
+仓库里仍保留 `dashboard\index.html`（已标注迁移说明），需自行把其中的 API 地址指到后端；**推荐以 Vue 看板为准**。
 
 ## 每日使用流程
 
-```bash
-# 每天收盘后（16:00后）运行更新
-python scripts/fetch_data.py --mode klines --days 5
+```powershell
+cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+
+# 推荐：一键日常增量（刷新股票表 + 增量指数 + 增量全市场日 K）
+python scripts\feed_dashboard.py --profile daily --skip-init
+
+# 或仅跑拉数脚本（等价逻辑）
+python scripts\fetch_data.py --mode daily
 ```
+
+也可使用 `scripts\scheduler.py` 在后台按固定时间触发（详见脚本内注释）；生产环境更推荐用系统计划任务直接执行上述命令之一。
+
+## V1.x 发布与归档（当前 **1.0.1**）
+
+在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.0.1**）：
+
+```powershell
+cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+
+# 工作区应已提交，无未跟踪的重要文件
+git status
+
+python -m pytest tests
+
+# 可选：栈探活（需 API、MySQL、Redis 等按 .env 已可达）
+python scripts\verify_stack.py
+```
+
+打**附注标签**并推送远程（按需）：
+
+```powershell
+git tag -a v1.0.1 -m "Trading Buddy V1.0.1: 云栈、指数 BIGINT、涨跌榜索引、K 线名称、Vue Meridian"
+git push origin v1.0.1
+```
+
+本地生成**源码归档包**（不依赖远程）：
+
+```powershell
+git archive --format=zip -o trading-buddy-v1.0.1.zip v1.0.1
+```
+
+版本号与 OpenAPI、`GET /`、`GET /health` 中的 `app_version` 一致，定义在 `src/common/__init__.py` 的 `__version__`。
 
 ## 下一步
 
 V1 功能已就绪：
+
 - [x] 股票列表查询
 - [x] 日K线数据
 - [x] 实时行情
-- [x] 简单看板
+- [x] Vue 看板（Meridian）
 
 V2 规划中：
+
 - [ ] 策略模板解析
 - [ ] 信号计算引擎
 - [ ] 回测模块
-- [ ] 券商API对接
+- [ ] 券商 API 对接
