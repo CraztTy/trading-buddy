@@ -23,7 +23,13 @@ def test_ma_cross_scan_csv_bom_and_header():
         }
     ]
     b = ma_cross_scan_csv_bytes(
-        items, fast=5, slow=20, limit=500, commission_rate=0.0, slippage_rate=0.0
+        items,
+        fast=5,
+        slow=20,
+        limit=500,
+        commission_rate=0.0,
+        slippage_rate=0.0,
+        sort_by="total_return",
     )
     assert b[:3] == b"\xef\xbb\xbf"
     s = b.decode("utf-8")

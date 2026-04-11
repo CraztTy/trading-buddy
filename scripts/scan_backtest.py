@@ -5,6 +5,7 @@
 用法（项目根目录，需已配置 .env）:
   python scripts/scan_backtest.py --codes "sh.000001,sh.000300"
   python scripts/scan_backtest.py --codes-file codes.txt -o scan.csv
+  python scripts/scan_backtest.py --codes "a,b" --sort-by excess_return
 
 codes.txt 支持每行一个代码，或逗号分隔。
 """
@@ -27,12 +28,25 @@ async def _async_main(
     commission_rate: float,
     slippage_rate: float,
     max_codes: int,
+    sort_by: str,
+    max_concurrent: int,
     out_path: Path | None,
 ) -> int:
     sys.path.insert(0, str(project_root))
-    from src.backtest.scan import ma_cross_scan_csv_bytes, ma_cross_scan_items, parse_scan_codes
+    from src.backtest.scan import (
+        ma_cross_scan_csv_bytes,
+        ma_cross_scan_items,
+        normalize_sort_by,
+        parse_scan_codes,
+    )
     from src.common.config import describe_database_write_target
-    from src.data.storage import dispose_database, get_database
+    from src.data.storage import dispose_database
+
+    try:
+        sort_norm = normalize_sort_by(sort_by)
+    except ValueError as e:
+        print(f"错误: {e}", file=sys.stderr)
+        return 2
 
     print(f"数据读取目标: {describe_database_write_target()}", file=sys.stderr)
     parsed = parse_scan_codes(codes_raw, max_codes)
@@ -40,20 +54,19 @@ async def _async_main(
         print("错误: 无有效代码", file=sys.stderr)
         return 2
 
-    db = get_database()
     try:
-        async with db.session() as session:
-            items = await ma_cross_scan_items(
-                session,
-                parsed,
-                fast=fast,
-                slow=slow,
-                limit=limit,
-                start_date=None,
-                end_date=None,
-                commission_rate=commission_rate,
-                slippage_rate=slippage_rate,
-            )
+        items = await ma_cross_scan_items(
+            parsed,
+            fast=fast,
+            slow=slow,
+            limit=limit,
+            start_date=None,
+            end_date=None,
+            commission_rate=commission_rate,
+            slippage_rate=slippage_rate,
+            sort_by=sort_norm,
+            max_concurrent=max_concurrent,
+        )
     finally:
         await dispose_database()
 
@@ -64,6 +77,7 @@ async def _async_main(
         limit=limit,
         commission_rate=commission_rate,
         slippage_rate=slippage_rate,
+        sort_by=sort_norm,
     )
     if out_path:
         out_path.write_bytes(blob)
@@ -84,6 +98,18 @@ def main() -> int:
     p.add_argument("--commission-rate", type=float, default=0.0)
     p.add_argument("--slippage-rate", type=float, default=0.0)
     p.add_argument("--max-codes", type=int, default=25)
+    p.add_argument(
+        "--sort-by",
+        type=str,
+        default="total_return",
+        help="排序：total_return | excess_return | sharpe | buy_hold",
+    )
+    p.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=8,
+        help="MySQL 等下并行拉 K 并发上限（SQLite 下忽略，顺序执行）",
+    )
     p.add_argument("-o", "--output", type=Path, default=None, help="输出文件；省略则打印到 stdout")
     args = p.parse_args()
 
@@ -108,6 +134,8 @@ def main() -> int:
             args.commission_rate,
             args.slippage_rate,
             args.max_codes,
+            args.sort_by,
+            args.max_concurrent,
             args.output,
         )
     )

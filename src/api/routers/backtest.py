@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from src.backtest import run_ma_cross_backtest
-from src.backtest.scan import ma_cross_scan_csv_bytes, ma_cross_scan_items, parse_scan_codes
+from src.backtest.scan import (
+    ma_cross_scan_csv_bytes,
+    ma_cross_scan_items,
+    normalize_sort_by,
+    parse_scan_codes,
+)
 from src.data.storage import KlineRepository, get_session
 
 router = APIRouter()
@@ -53,6 +58,8 @@ class MaCrossScanResponse(BaseModel):
     limit: int
     commission_rate: float
     slippage_rate: float
+    sort_by: str
+    max_concurrent: int
     items: list[MaCrossScanRow]
 
 
@@ -74,7 +81,16 @@ async def ma_cross_scan(
         "json",
         description="json（默认）或 csv；csv 带 UTF-8 BOM，适合 Excel",
     ),
-    session: AsyncSession = Depends(get_session),
+    sort_by: str = Query(
+        "total_return",
+        description="排序：total_return | excess_return | sharpe | buy_hold",
+    ),
+    max_concurrent: int = Query(
+        8,
+        ge=1,
+        le=20,
+        description="并行拉取 K 线的最大并发数",
+    ),
 ):
     if export not in ("json", "csv"):
         raise HTTPException(status_code=400, detail="export 须为 json 或 csv")
@@ -85,13 +101,16 @@ async def ma_cross_scan(
             status_code=400,
             detail="commission_rate 与 slippage_rate 之和勿超过 0.08",
         )
+    try:
+        sort_norm = normalize_sort_by(sort_by)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     parsed = parse_scan_codes(codes, max_codes)
     if not parsed:
         raise HTTPException(status_code=400, detail="codes 解析后为空")
 
     items = await ma_cross_scan_items(
-        session,
         parsed,
         fast=fast,
         slow=slow,
@@ -100,6 +119,8 @@ async def ma_cross_scan(
         end_date=end_date,
         commission_rate=commission_rate,
         slippage_rate=slippage_rate,
+        sort_by=sort_norm,
+        max_concurrent=max_concurrent,
     )
 
     if export == "csv":
@@ -110,6 +131,7 @@ async def ma_cross_scan(
             limit=limit,
             commission_rate=round(commission_rate, 8),
             slippage_rate=round(slippage_rate, 8),
+            sort_by=sort_norm,
         )
         return Response(
             content=body,
@@ -126,6 +148,8 @@ async def ma_cross_scan(
         limit=limit,
         commission_rate=round(commission_rate, 8),
         slippage_rate=round(slippage_rate, 8),
+        sort_by=sort_norm,
+        max_concurrent=max_concurrent,
         items=rows,
     )
 

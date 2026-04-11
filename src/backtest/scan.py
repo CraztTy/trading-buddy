@@ -4,13 +4,48 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from src.common import get_settings
 from src.backtest import run_ma_cross_backtest
-from src.data.storage import KlineRepository
+from src.data.models import KLine
+from src.data.storage import KlineRepository, get_database
+
+
+VALID_SORT_BY = frozenset({"total_return", "excess_return", "sharpe", "buy_hold"})
+
+_SORT_FIELD: dict[str, str] = {
+    "total_return": "total_return_pct",
+    "excess_return": "excess_return_pct",
+    "sharpe": "sharpe_ratio",
+    "buy_hold": "buy_hold_return_pct",
+}
+
+
+def normalize_sort_by(sort_by: str) -> str:
+    s = (sort_by or "total_return").strip().lower()
+    if s not in VALID_SORT_BY:
+        raise ValueError(
+            f"sort_by 须为 {', '.join(sorted(VALID_SORT_BY))} 之一，当前为 {sort_by!r}"
+        )
+    return s
+
+
+def sort_scan_rows_inplace(items: list[dict[str, Any]], sort_by: str) -> None:
+    """按指标降序；失败行（含 error）沉底。"""
+    field = _SORT_FIELD[normalize_sort_by(sort_by)]
+
+    def key(r: dict[str, Any]) -> float:
+        if r.get("error"):
+            return float("-inf")
+        v = r.get(field)
+        if v is None:
+            return float("-inf")
+        return float(v)
+
+    items.sort(key=key, reverse=True)
 
 
 def parse_scan_codes(raw: str, cap: int) -> list[str]:
@@ -25,8 +60,28 @@ def parse_scan_codes(raw: str, cap: int) -> list[str]:
     return out
 
 
+async def _fetch_klines_one(
+    code: str,
+    *,
+    start_date: date | None,
+    end_date: date | None,
+    limit: int,
+    semaphore: asyncio.Semaphore,
+) -> tuple[str, list[KLine]]:
+    async with semaphore:
+        db = get_database()
+        async with db.session() as session:
+            repo = KlineRepository(session)
+            klines = await repo.get_daily(
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+            )
+            return code, klines
+
+
 async def ma_cross_scan_items(
-    session: AsyncSession,
     codes: list[str],
     *,
     fast: int,
@@ -36,18 +91,46 @@ async def ma_cross_scan_items(
     end_date: date | None,
     commission_rate: float,
     slippage_rate: float,
+    sort_by: str = "total_return",
+    max_concurrent: int = 8,
 ) -> list[dict[str, Any]]:
-    """返回已排序的 dict 列表，键与 MaCrossScanRow 一致。"""
-    repo = KlineRepository(session)
-    rows: list[dict[str, Any]] = []
-
-    for c in codes:
-        klines = await repo.get_daily(
-            code=c,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit,
+    """
+    并行拉取各标的日 K（每标的独立会话，受 max_concurrent 限制），再逐只回测并排序。
+    """
+    _ = normalize_sort_by(sort_by)
+    settings = get_settings()
+    if settings.database.mode == "sqlite":
+        db = get_database()
+        async with db.session() as session:
+            repo = KlineRepository(session)
+            pairs = []
+            for c in codes:
+                klines = await repo.get_daily(
+                    code=c,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=limit,
+                )
+                pairs.append((c, klines))
+    else:
+        sem = asyncio.Semaphore(max(1, min(max_concurrent, 20)))
+        pairs = list(
+            await asyncio.gather(
+                *[
+                    _fetch_klines_one(
+                        c,
+                        start_date=start_date,
+                        end_date=end_date,
+                        limit=limit,
+                        semaphore=sem,
+                    )
+                    for c in codes
+                ]
+            )
         )
+
+    rows: list[dict[str, Any]] = []
+    for c, klines in pairs:
         if len(klines) < slow + 1:
             rows.append(
                 {
@@ -102,12 +185,7 @@ async def ma_cross_scan_items(
             }
         )
 
-    def sort_key(r: dict[str, Any]) -> float:
-        if r.get("error") or r.get("total_return_pct") is None:
-            return float("-inf")
-        return float(r["total_return_pct"])
-
-    rows.sort(key=sort_key, reverse=True)
+    sort_scan_rows_inplace(rows, sort_by)
     return rows
 
 
@@ -119,6 +197,7 @@ def ma_cross_scan_csv_bytes(
     limit: int,
     commission_rate: float,
     slippage_rate: float,
+    sort_by: str = "total_return",
 ) -> bytes:
     """UTF-8 BOM + CSV，便于 Excel 打开。"""
     import csv
@@ -129,7 +208,8 @@ def ma_cross_scan_csv_bytes(
     w.writerow(
         [
             f"# fast={fast} slow={slow} limit={limit} "
-            f"commission_rate={commission_rate} slippage_rate={slippage_rate}"
+            f"commission_rate={commission_rate} slippage_rate={slippage_rate} "
+            f"sort_by={sort_by}"
         ]
     )
     w.writerow(

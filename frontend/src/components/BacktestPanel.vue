@@ -22,6 +22,9 @@ const error = ref("");
 const result = ref(null);
 
 const scanCodesText = ref("sh.000001\nsh.000300\nsz.399001");
+/** 批量扫描排序：与 API sort_by 一致 */
+const scanSortBy = ref("total_return");
+const scanMaxConcurrent = ref(8);
 const scanLoading = ref(false);
 const scanCsvLoading = ref(false);
 const scanError = ref("");
@@ -106,6 +109,14 @@ function commonParams() {
   });
 }
 
+/** 扫描 / CSV 下载在 common 基础上附加排序与并发 */
+function scanQueryParams() {
+  const p = commonParams();
+  p.set("sort_by", scanSortBy.value);
+  p.set("max_concurrent", String(Math.max(1, Math.min(20, Number(scanMaxConcurrent.value) || 8))));
+  return p;
+}
+
 function downloadSingleJson() {
   if (!result.value) return;
   const text = JSON.stringify(result.value, null, 2);
@@ -149,7 +160,7 @@ async function runScan() {
     scanLoading.value = false;
     return;
   }
-  const params = commonParams();
+  const params = scanQueryParams();
   params.set("codes", raw);
   params.set("export", "json");
   try {
@@ -173,7 +184,7 @@ async function downloadScanCsv() {
   }
   scanCsvLoading.value = true;
   scanError.value = "";
-  const params = commonParams();
+  const params = scanQueryParams();
   params.set("codes", raw);
   params.set("export", "csv");
   try {
@@ -345,7 +356,9 @@ watch(
         <div>
           <p class="eyebrow">策略回测</p>
           <h2 class="h2">多标的批量扫描</h2>
-          <p class="sub">相同参数下对列表逐只回测，按策略收益率降序排列（最多 25 只）。</p>
+          <p class="sub">
+            相同参数下对列表逐只回测；排序可按策略收益、超额、夏普或买入持有（失败行沉底，最多 25 只）。
+          </p>
         </div>
         <div class="hd-actions">
           <button type="button" class="run gold" :disabled="scanLoading" @click="runScan">
@@ -382,6 +395,26 @@ watch(
         <label class="field wide">
           <span class="lbl">滑点（万分之）</span>
           <input v-model.number="slipWan" type="number" min="0" step="0.1" class="inp mono" />
+        </label>
+        <label class="field wide">
+          <span class="lbl">结果排序</span>
+          <select v-model="scanSortBy" class="inp mono">
+            <option value="total_return">策略收益 %</option>
+            <option value="excess_return">超额 %（相对买入持有）</option>
+            <option value="sharpe">夏普</option>
+            <option value="buy_hold">买入持有 %</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="lbl">并发拉 K（MySQL）</span>
+          <input
+            v-model.number="scanMaxConcurrent"
+            type="number"
+            min="1"
+            max="20"
+            class="inp mono"
+            title="SQLite 下后端会顺序拉取，此值无效"
+          />
         </label>
       </div>
 
