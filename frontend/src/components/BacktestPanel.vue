@@ -117,6 +117,24 @@ function scanQueryParams() {
   return p;
 }
 
+const SORT_BY_LABELS = {
+  total_return: "策略收益",
+  excess_return: "超额",
+  sharpe: "夏普",
+  buy_hold: "买入持有",
+};
+
+function scanSortLabel(sortBy) {
+  return SORT_BY_LABELS[sortBy] || sortBy || "—";
+}
+
+/** API 小数费率 → 万分之展示 */
+function wanFromRate(r) {
+  const n = Number(r);
+  if (r == null || Number.isNaN(n)) return "—";
+  return (n * 10000).toFixed(2);
+}
+
 function downloadSingleJson() {
   if (!result.value) return;
   const text = JSON.stringify(result.value, null, 2);
@@ -425,6 +443,22 @@ watch(
       <textarea v-model="scanCodesText" class="codes-ta mono" rows="5" spellcheck="false" />
 
       <div v-if="scanError" class="err">{{ scanError }}</div>
+
+      <p v-if="scanResult?.items?.length" class="scan-meta mono">
+        <span>MA {{ scanResult.fast_period }}/{{ scanResult.slow_period }}</span>
+        <span class="scan-meta-sep">·</span>
+        <span>K {{ scanResult.limit }}</span>
+        <span class="scan-meta-sep">·</span>
+        <span>排序 {{ scanSortLabel(scanResult.sort_by) }}</span>
+        <span class="scan-meta-sep">·</span>
+        <span>并发 {{ scanResult.max_concurrent }}</span>
+        <span class="scan-meta-sep">·</span>
+        <span>手续费 {{ wanFromRate(scanResult.commission_rate) }}‱</span>
+        <span class="scan-meta-sep">·</span>
+        <span>滑点 {{ wanFromRate(scanResult.slippage_rate) }}‱</span>
+        <span class="scan-meta-sep">·</span>
+        <span>{{ scanResult.items.length }} 行</span>
+      </p>
 
       <div v-if="scanResult?.items?.length" class="scan-wrap">
         <table class="scan-table">
@@ -757,6 +791,22 @@ watch(
 .codes-ta:focus {
   outline: none;
   border-color: rgba(232, 197, 71, 0.35);
+}
+
+.scan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 4px;
+  margin: 0 0 12px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--mist-dim);
+}
+
+.scan-meta-sep {
+  opacity: 0.45;
+  user-select: none;
 }
 
 .scan-wrap {
