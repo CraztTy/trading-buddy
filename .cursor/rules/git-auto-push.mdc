@@ -1,0 +1,14 @@
+---
+description: After any git commit in this repo, run git push to the current branch remote without being asked.
+alwaysApply: true
+---
+
+# Git: commit then push
+
+When you create a git commit for this project (`git commit`), immediately run `git push` to the tracked upstream for the current branch (e.g. `git push origin main`), unless:
+
+- the user explicitly asked not to push, or
+- there is no `origin`/upstream, or
+- push fails (report the error; do not retry blindly with force).
+
+Do not commit or push `.env` or other ignored secrets.
