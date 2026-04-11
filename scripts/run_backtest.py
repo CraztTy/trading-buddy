@@ -18,7 +18,9 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 
 
-async def _async_main(code: str, fast: int, slow: int, limit: int) -> int:
+async def _async_main(
+    code: str, fast: int, slow: int, limit: int, commission_rate: float
+) -> int:
     sys.path.insert(0, str(project_root))
     from src.backtest import run_ma_cross_backtest
     from src.common.config import describe_database_write_target
@@ -37,7 +39,9 @@ async def _async_main(code: str, fast: int, slow: int, limit: int) -> int:
         print(f"错误: K 线不足（需要 >= {slow + 1}），当前 {len(klines)}", file=sys.stderr)
         return 2
 
-    res, curve = run_ma_cross_backtest(klines, fast=fast, slow=slow)
+    res, curve = run_ma_cross_backtest(
+        klines, fast=fast, slow=slow, commission_rate=commission_rate
+    )
     out = res.to_api_dict()
     out["equity_curve"] = curve
     print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -50,11 +54,19 @@ def main() -> int:
     p.add_argument("--fast", type=int, default=5, help="快线周期")
     p.add_argument("--slow", type=int, default=20, help="慢线周期")
     p.add_argument("--limit", type=int, default=500, help="使用最近多少根日 K")
+    p.add_argument(
+        "--commission-rate",
+        type=float,
+        default=0.0,
+        help="单边手续费率，如万1.5为 0.00015（每次调仓翻转扣一次）",
+    )
     args = p.parse_args()
     if args.fast >= args.slow:
         print("错误: fast 必须小于 slow", file=sys.stderr)
         return 2
-    return asyncio.run(_async_main(args.code, args.fast, args.slow, args.limit))
+    return asyncio.run(
+        _async_main(args.code, args.fast, args.slow, args.limit, args.commission_rate)
+    )
 
 
 if __name__ == "__main__":

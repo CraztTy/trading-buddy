@@ -30,13 +30,22 @@ class MaCrossBacktestResult:
     max_drawdown_pct: float
     sharpe_ratio: float
     signal_changes: int
+    commission_rate: float = 0.0
 
     def to_api_dict(self, equity_sample_max: int = 120) -> dict[str, Any]:
+        note = (
+            "Sharpe 按 252 交易日年化；信号基于收盘均线，收益为收盘到收盘且滞后一日。"
+        )
+        if self.commission_rate > 0:
+            note += (
+                f" 单边手续费按调仓日扣减（费率={self.commission_rate:.6f}，每次翻转仓位扣一次）。"
+            )
         d: dict[str, Any] = {
             "code": self.code,
             "fast_period": self.fast_period,
             "slow_period": self.slow_period,
             "bars_used": self.bars_used,
+            "commission_rate": round(self.commission_rate, 8),
             "first_trade_date": self.first_trade_date.isoformat()
             if self.first_trade_date
             else None,
@@ -48,9 +57,7 @@ class MaCrossBacktestResult:
             "max_drawdown_pct": round(self.max_drawdown_pct, 4),
             "sharpe_ratio": round(self.sharpe_ratio, 4),
             "signal_changes": self.signal_changes,
-            "note": (
-                "Sharpe 按 252 交易日年化；信号基于收盘均线，收益为收盘到收盘且滞后一日。"
-            ),
+            "note": note,
         }
         return d
 
@@ -61,6 +68,7 @@ def ma_cross_result_from_df(
     code: str,
     fast: int,
     slow: int,
+    commission_rate: float = 0.0,
 ) -> tuple[MaCrossBacktestResult, pd.Series, pd.Series]:
     """
     df 须含列 trade_date, close；按时间升序。
@@ -70,8 +78,10 @@ def ma_cross_result_from_df(
         raise ValueError("fast 须 >=1，slow 须 >=2")
     if fast >= slow:
         raise ValueError("fast 须小于 slow")
-    if df.empty or len(df) < slow + 2:
-        raise ValueError("K 线数量不足，无法计算慢均线并完成至少一日滞后收益")
+    if df.empty or len(df) < slow + 1:
+        raise ValueError(f"K 线数量不足（需要至少 {slow + 1} 根）")
+    if commission_rate < 0 or commission_rate > 0.05:
+        raise ValueError("commission_rate 须在 [0, 0.05] 内")
 
     d = df.sort_values("trade_date").reset_index(drop=True)
     close = d["close"].astype(float)
@@ -81,13 +91,13 @@ def ma_cross_result_from_df(
     pos_signal = np.where(valid & (ma_f > ma_s), 1.0, 0.0)
     pos = pd.Series(pos_signal, index=d.index)
 
-    daily_ret = close.pct_change()
-    strat_ret = pos.shift(1) * daily_ret
+    daily_ret = close.pct_change().fillna(0.0)
+    hold = pos.shift(1).fillna(0.0)
+    flipped = (hold.diff().abs() > 1e-12).fillna(False)
+    strat_ret = hold * daily_ret - flipped.astype(float) * float(commission_rate)
     strat_ret = strat_ret.fillna(0.0)
 
     equity = (1.0 + strat_ret).cumprod()
-    bh_ret = daily_ret.fillna(0.0)
-    bh_equity = (1.0 + bh_ret).cumprod()
 
     total_return_pct = float((equity.iloc[-1] - 1.0) * 100.0)
     buy_hold_return_pct = float((close.iloc[-1] / close.iloc[0] - 1.0) * 100.0)
@@ -122,6 +132,7 @@ def ma_cross_result_from_df(
         max_drawdown_pct=dd_pct,
         sharpe_ratio=sharpe,
         signal_changes=changes,
+        commission_rate=float(commission_rate),
     )
     return res, equity, strat_ret
 
@@ -131,6 +142,7 @@ def run_ma_cross_backtest(
     *,
     fast: int = 5,
     slow: int = 20,
+    commission_rate: float = 0.0,
 ) -> tuple[MaCrossBacktestResult, list[dict[str, Any]]]:
     """从 KLine 列表运行双均线回测，返回结果与权益曲线采样点。"""
     if not klines:
@@ -142,7 +154,9 @@ def run_ma_cross_backtest(
             "close": [float(k.close) for k in klines],
         }
     )
-    res, equity, _ = ma_cross_result_from_df(df, code=code, fast=fast, slow=slow)
+    res, equity, _ = ma_cross_result_from_df(
+        df, code=code, fast=fast, slow=slow, commission_rate=commission_rate
+    )
 
     dates = df["trade_date"].tolist()
     eqv = equity.to_numpy()

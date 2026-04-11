@@ -3,7 +3,9 @@ import { onMounted, onUnmounted, ref } from "vue";
 import MarketIndices from "./components/MarketIndices.vue";
 import KlineWorkspace from "./components/KlineWorkspace.vue";
 import RankBoard from "./components/RankBoard.vue";
+import BacktestPanel from "./components/BacktestPanel.vue";
 
+const mainView = ref("market");
 const currentCode = ref("sh.000001");
 const rankTab = ref("gainers");
 const clock = ref("");
@@ -62,7 +64,26 @@ function onSelectCode(code) {
 
       <MarketIndices class="block" @select="onSelectCode" />
 
-      <div class="split enter-stagger">
+      <nav class="view-tabs enter-stagger" aria-label="主视图">
+        <button
+          type="button"
+          class="view-tab"
+          :class="{ active: mainView === 'market' }"
+          @click="mainView = 'market'"
+        >
+          行情看板
+        </button>
+        <button
+          type="button"
+          class="view-tab"
+          :class="{ active: mainView === 'backtest' }"
+          @click="mainView = 'backtest'"
+        >
+          策略回测
+        </button>
+      </nav>
+
+      <div v-if="mainView === 'market'" class="split enter-stagger">
         <KlineWorkspace
           class="col chart-col"
           :code="currentCode"
@@ -73,6 +94,7 @@ function onSelectCode(code) {
           <RankBoard v-model:tab="rankTab" @select="onSelectCode" />
         </aside>
       </div>
+      <BacktestPanel v-else class="block enter-stagger" :code="currentCode" />
     </main>
   </div>
 </template>
@@ -288,6 +310,41 @@ function onSelectCode(code) {
 
 .block {
   margin-bottom: 28px;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.view-tab {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(18, 18, 28, 0.6);
+  color: var(--mist-dim);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.view-tab:hover {
+  color: var(--mist);
+  border-color: rgba(232, 197, 71, 0.25);
+}
+
+.view-tab.active {
+  color: var(--void);
+  background: linear-gradient(145deg, var(--gold) 0%, #d4b84a 100%);
+  border-color: rgba(232, 197, 71, 0.55);
+  box-shadow: 0 0 24px rgba(232, 197, 71, 0.18);
 }
 
 .split {

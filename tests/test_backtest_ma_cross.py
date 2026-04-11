@@ -42,5 +42,27 @@ def test_ma_cross_insufficient_bars_raises():
     df = pd.DataFrame(
         {"trade_date": _date_series(10), "close": list(range(10))},
     )
-    with pytest.raises(ValueError, match="数量不足"):
+    with pytest.raises(ValueError, match="K 线数量不足"):
         ma_cross_result_from_df(df, code="x", fast=2, slow=20)
+
+
+def test_commission_reduces_return_vs_zero():
+    n = 120
+    flat = [100.0] * 35
+    ramp = list(100.0 + (i / 84.0) * 55.0 for i in range(85))
+    closes = flat + ramp
+    df = pd.DataFrame({"trade_date": _date_series(n), "close": closes})
+    r0, _, _ = ma_cross_result_from_df(df, code="x", fast=3, slow=12, commission_rate=0.0)
+    r1, _, _ = ma_cross_result_from_df(
+        df, code="x", fast=3, slow=12, commission_rate=0.001
+    )
+    assert r0.signal_changes > 0
+    assert r1.total_return_pct < r0.total_return_pct
+
+
+def test_commission_rate_out_of_range_raises():
+    df = pd.DataFrame(
+        {"trade_date": _date_series(40), "close": list(range(40, 80))},
+    )
+    with pytest.raises(ValueError, match="commission_rate"):
+        ma_cross_result_from_df(df, code="x", fast=2, slow=10, commission_rate=0.1)

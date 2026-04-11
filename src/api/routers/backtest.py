@@ -19,6 +19,7 @@ class MaCrossBacktestResponse(BaseModel):
     fast_period: int
     slow_period: int
     bars_used: int
+    commission_rate: float = 0.0
     first_trade_date: str | None
     last_trade_date: str | None
     total_return_pct: float
@@ -38,6 +39,12 @@ async def ma_cross_backtest(
     start_date: date | None = Query(None, description="起始日（含）"),
     end_date: date | None = Query(None, description="结束日（含）"),
     limit: int = Query(500, ge=30, le=5000, description="最多使用多少根日 K（从新到旧取，再按时间正序回测）"),
+    commission_rate: float = Query(
+        0.0,
+        ge=0.0,
+        le=0.05,
+        description="单边手续费率（如万1.5填0.00015）；在持仓翻转日各扣一次",
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     if fast >= slow:
@@ -56,7 +63,9 @@ async def ma_cross_backtest(
             detail=f"K 线不足：需要至少 slow+1={slow + 1} 根，当前 {len(klines)}",
         )
     try:
-        result, curve = run_ma_cross_backtest(klines, fast=fast, slow=slow)
+        result, curve = run_ma_cross_backtest(
+            klines, fast=fast, slow=slow, commission_rate=commission_rate
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
