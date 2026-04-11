@@ -14,13 +14,26 @@ from src.data.models import KLine
 from src.data.storage import KlineRepository, get_database
 
 
-VALID_SORT_BY = frozenset({"total_return", "excess_return", "sharpe", "buy_hold"})
+VALID_SORT_BY = frozenset(
+    {
+        "total_return",
+        "excess_return",
+        "sharpe",
+        "buy_hold",
+        "ann_return",
+        "sortino",
+        "calmar",
+    }
+)
 
 _SORT_FIELD: dict[str, str] = {
     "total_return": "total_return_pct",
     "excess_return": "excess_return_pct",
     "sharpe": "sharpe_ratio",
     "buy_hold": "buy_hold_return_pct",
+    "ann_return": "annualized_return_pct",
+    "sortino": "sortino_ratio",
+    "calmar": "calmar_ratio",
 }
 
 
@@ -143,6 +156,11 @@ async def ma_cross_scan_items(
                     "max_drawdown_pct": None,
                     "sharpe_ratio": None,
                     "signal_changes": None,
+                    "annualized_return_pct": None,
+                    "buy_hold_annualized_return_pct": None,
+                    "annualized_volatility_pct": None,
+                    "sortino_ratio": None,
+                    "calmar_ratio": None,
                 }
             )
             continue
@@ -167,6 +185,11 @@ async def ma_cross_scan_items(
                     "max_drawdown_pct": None,
                     "sharpe_ratio": None,
                     "signal_changes": None,
+                    "annualized_return_pct": None,
+                    "buy_hold_annualized_return_pct": None,
+                    "annualized_volatility_pct": None,
+                    "sortino_ratio": None,
+                    "calmar_ratio": None,
                 }
             )
             continue
@@ -182,6 +205,13 @@ async def ma_cross_scan_items(
                 "max_drawdown_pct": round(res.max_drawdown_pct, 4),
                 "sharpe_ratio": round(res.sharpe_ratio, 4),
                 "signal_changes": res.signal_changes,
+                "annualized_return_pct": round(res.annualized_return_pct, 4),
+                "buy_hold_annualized_return_pct": round(
+                    res.buy_hold_annualized_return_pct, 4
+                ),
+                "annualized_volatility_pct": round(res.annualized_volatility_pct, 4),
+                "sortino_ratio": round(res.sortino_ratio, 4),
+                "calmar_ratio": round(res.calmar_ratio, 4),
             }
         )
 
@@ -229,6 +259,11 @@ def ma_cross_scan_csv_bytes(
             "excess_return_pct",
             "max_drawdown_pct",
             "sharpe_ratio",
+            "sortino_ratio",
+            "calmar_ratio",
+            "annualized_return_pct",
+            "buy_hold_annualized_return_pct",
+            "annualized_volatility_pct",
             "signal_changes",
         ]
     )
@@ -249,6 +284,17 @@ def ma_cross_scan_csv_bytes(
                 if r.get("max_drawdown_pct") is not None
                 else "",
                 r.get("sharpe_ratio") if r.get("sharpe_ratio") is not None else "",
+                r.get("sortino_ratio") if r.get("sortino_ratio") is not None else "",
+                r.get("calmar_ratio") if r.get("calmar_ratio") is not None else "",
+                r.get("annualized_return_pct")
+                if r.get("annualized_return_pct") is not None
+                else "",
+                r.get("buy_hold_annualized_return_pct")
+                if r.get("buy_hold_annualized_return_pct") is not None
+                else "",
+                r.get("annualized_volatility_pct")
+                if r.get("annualized_volatility_pct") is not None
+                else "",
                 r.get("signal_changes")
                 if r.get("signal_changes") is not None
                 else "",

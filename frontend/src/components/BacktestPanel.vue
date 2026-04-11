@@ -137,6 +137,9 @@ const SORT_BY_LABELS = {
   excess_return: "超额",
   sharpe: "夏普",
   buy_hold: "买入持有",
+  ann_return: "年化收益",
+  sortino: "Sortino",
+  calmar: "Calmar",
 };
 
 function scanSortLabel(sortBy) {
@@ -412,6 +415,34 @@ watch(
           <span class="mv mono">{{ result.sharpe_ratio?.toFixed?.(3) ?? "—" }}</span>
         </div>
         <div class="m">
+          <span class="mk">Sortino</span>
+          <span class="mv mono">{{ result.sortino_ratio?.toFixed?.(3) ?? "—" }}</span>
+        </div>
+        <div class="m">
+          <span class="mk">Calmar</span>
+          <span class="mv mono">{{ result.calmar_ratio?.toFixed?.(3) ?? "—" }}</span>
+        </div>
+        <div class="m">
+          <span class="mk">年化收益 %</span>
+          <span
+            class="mv mono"
+            :class="{
+              up: result.annualized_return_pct > 0,
+              down: result.annualized_return_pct < 0,
+            }"
+          >
+            {{ result.annualized_return_pct?.toFixed?.(2) ?? "—" }}
+          </span>
+        </div>
+        <div class="m">
+          <span class="mk">买入持有年化 %</span>
+          <span class="mv mono">{{ result.buy_hold_annualized_return_pct?.toFixed?.(2) ?? "—" }}</span>
+        </div>
+        <div class="m">
+          <span class="mk">年化波动 %</span>
+          <span class="mv mono">{{ result.annualized_volatility_pct?.toFixed?.(2) ?? "—" }}</span>
+        </div>
+        <div class="m">
           <span class="mk">信号翻转</span>
           <span class="mv mono">{{ result.signal_changes ?? "—" }}</span>
         </div>
@@ -434,7 +465,8 @@ watch(
           <p class="eyebrow">策略回测</p>
           <h2 class="h2">多标的批量扫描</h2>
           <p class="sub">
-            相同参数下对列表逐只回测；排序可按策略收益、超额、夏普或买入持有（失败行沉底，最多 25 只）。
+            相同参数下对列表逐只回测；排序含收益、超额、夏普、Sortino、Calmar、年化等（失败行沉底，最多 25
+            只）。
           </p>
         </div>
         <div class="hd-actions">
@@ -487,6 +519,9 @@ watch(
             <option value="total_return">策略收益 %</option>
             <option value="excess_return">超额 %（相对买入持有）</option>
             <option value="sharpe">夏普</option>
+            <option value="sortino">Sortino</option>
+            <option value="calmar">Calmar</option>
+            <option value="ann_return">年化收益 %</option>
             <option value="buy_hold">买入持有 %</option>
           </select>
         </label>
@@ -536,10 +571,14 @@ watch(
           <thead>
             <tr>
               <th>代码</th>
-              <th>策略收益 %</th>
-              <th>买入持有 %</th>
+              <th>策略 %</th>
+              <th>BH %</th>
               <th>超额 %</th>
+              <th>年化 %</th>
+              <th>波动 %</th>
               <th>夏普</th>
+              <th>So</th>
+              <th>Ca</th>
               <th>翻转</th>
               <th>备注</th>
             </tr>
@@ -566,7 +605,11 @@ watch(
               >
                 {{ row.error ? "—" : row.excess_return_pct?.toFixed(2) }}
               </td>
+              <td class="mono">{{ row.error ? "—" : row.annualized_return_pct?.toFixed(2) }}</td>
+              <td class="mono">{{ row.error ? "—" : row.annualized_volatility_pct?.toFixed(2) }}</td>
               <td class="mono">{{ row.error ? "—" : row.sharpe_ratio?.toFixed(3) }}</td>
+              <td class="mono">{{ row.error ? "—" : row.sortino_ratio?.toFixed(3) }}</td>
+              <td class="mono">{{ row.error ? "—" : row.calmar_ratio?.toFixed(3) }}</td>
               <td class="mono">{{ row.error ? "—" : row.signal_changes }}</td>
               <td class="err-cell">{{ row.error || "" }}</td>
             </tr>

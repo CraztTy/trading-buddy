@@ -31,12 +31,20 @@ class MaCrossBacktestResult:
     max_drawdown_pct: float
     sharpe_ratio: float
     signal_changes: int
+    annualized_return_pct: float
+    buy_hold_annualized_return_pct: float
+    annualized_volatility_pct: float
+    sortino_ratio: float
+    calmar_ratio: float
     commission_rate: float = 0.0
     slippage_rate: float = 0.0
 
     def to_api_dict(self, equity_sample_max: int = 120) -> dict[str, Any]:
         note = (
-            "Sharpe 按 252 交易日年化；信号基于收盘均线，收益为收盘到收盘且滞后一日。"
+            "Sharpe / Sortino 按 252 交易日年化；Sortino 的 MAR=0、下行偏差为 min(0,r) 的二阶矩均方根。"
+            " 年化收益为区间复利换算：(1+总收益)^(252/区间交易日)−1。"
+            " Calmar=年化收益÷|最大回撤|（回撤为负百分比时取绝对值）。"
+            " 信号基于收盘均线，收益为收盘到收盘且滞后一日。"
         )
         if self.commission_rate > 0:
             note += (
@@ -65,6 +73,13 @@ class MaCrossBacktestResult:
             "max_drawdown_pct": round(self.max_drawdown_pct, 4),
             "sharpe_ratio": round(self.sharpe_ratio, 4),
             "signal_changes": self.signal_changes,
+            "annualized_return_pct": round(self.annualized_return_pct, 4),
+            "buy_hold_annualized_return_pct": round(
+                self.buy_hold_annualized_return_pct, 4
+            ),
+            "annualized_volatility_pct": round(self.annualized_volatility_pct, 4),
+            "sortino_ratio": round(self.sortino_ratio, 4),
+            "calmar_ratio": round(self.calmar_ratio, 4),
             "note": note,
         }
         return d
@@ -123,8 +138,34 @@ def ma_cross_result_from_df(
     active = strat_ret.iloc[1:]
     if len(active) > 1 and float(active.std()) > 1e-12:
         sharpe = float(np.sqrt(252.0) * active.mean() / active.std())
+        annualized_volatility_pct = float(active.std() * np.sqrt(252.0) * 100.0)
     else:
         sharpe = 0.0
+        annualized_volatility_pct = 0.0
+
+    n_periods = max(1, len(d) - 1)
+    tr_dec = total_return_pct / 100.0
+    annualized_return_pct = float(
+        ((1.0 + tr_dec) ** (252.0 / n_periods) - 1.0) * 100.0
+    )
+    bh_dec = buy_hold_return_pct / 100.0
+    buy_hold_annualized_return_pct = float(
+        ((1.0 + bh_dec) ** (252.0 / n_periods) - 1.0) * 100.0
+    )
+
+    mar = 0.0
+    downside_sq = np.minimum(0.0, (active - mar).to_numpy(dtype=float)) ** 2
+    downside_dev = float(np.sqrt(np.mean(downside_sq))) if len(active) > 0 else 0.0
+    if len(active) > 1 and downside_dev > 1e-12:
+        sortino_ratio = float(np.sqrt(252.0) * float(active.mean()) / downside_dev)
+    else:
+        sortino_ratio = 0.0
+
+    dd_abs = abs(dd_pct) / 100.0
+    if dd_abs > 1e-8:
+        calmar_ratio = float((annualized_return_pct / 100.0) / dd_abs)
+    else:
+        calmar_ratio = 0.0
 
     ps = pos.to_numpy()
     changes = int(np.sum(ps[1:] != ps[:-1])) if len(ps) > 1 else 0
@@ -148,6 +189,11 @@ def ma_cross_result_from_df(
         max_drawdown_pct=dd_pct,
         sharpe_ratio=sharpe,
         signal_changes=changes,
+        annualized_return_pct=annualized_return_pct,
+        buy_hold_annualized_return_pct=buy_hold_annualized_return_pct,
+        annualized_volatility_pct=annualized_volatility_pct,
+        sortino_ratio=sortino_ratio,
+        calmar_ratio=calmar_ratio,
         commission_rate=float(commission_rate),
         slippage_rate=float(slippage_rate),
     )

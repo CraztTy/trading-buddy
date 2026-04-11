@@ -30,6 +30,11 @@ def test_ma_cross_uptrend_positive_return():
     assert abs(res.excess_return_pct - (res.total_return_pct - res.buy_hold_return_pct)) < 1e-6
     assert equity.iloc[-1] > 1.0
     assert res.signal_changes >= 0
+    assert res.annualized_volatility_pct > 0
+    assert res.annualized_return_pct > 0
+    assert res.buy_hold_annualized_return_pct > 0
+    assert isinstance(res.sortino_ratio, float)
+    assert isinstance(res.calmar_ratio, float)
 
 
 def test_ma_cross_fast_ge_slow_raises():

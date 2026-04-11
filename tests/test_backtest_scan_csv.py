@@ -21,6 +21,11 @@ def test_ma_cross_scan_csv_bom_and_header():
             "excess_return_pct": -0.5,
             "max_drawdown_pct": -3.0,
             "sharpe_ratio": 0.5,
+            "sortino_ratio": 0.6,
+            "calmar_ratio": 0.2,
+            "annualized_return_pct": 3.0,
+            "buy_hold_annualized_return_pct": 4.0,
+            "annualized_volatility_pct": 10.0,
             "signal_changes": 4,
         }
     ]
@@ -39,6 +44,7 @@ def test_ma_cross_scan_csv_bom_and_header():
     assert "sh.x" in s
     assert "1.5" in s
     assert "excess_return_pct" in s
+    assert "sortino_ratio" in s
     assert "-0.5" in s
 
 
@@ -53,6 +59,11 @@ def test_ma_cross_scan_csv_comment_includes_date_range():
             "excess_return_pct": 0.0,
             "max_drawdown_pct": 0.0,
             "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
+            "calmar_ratio": 0.0,
+            "annualized_return_pct": 0.0,
+            "buy_hold_annualized_return_pct": 0.0,
+            "annualized_volatility_pct": 0.0,
             "signal_changes": 0,
         }
     ]

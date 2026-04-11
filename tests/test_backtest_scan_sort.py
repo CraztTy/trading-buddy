@@ -34,6 +34,33 @@ def test_sort_by_excess_puts_higher_first():
     assert items[1]["code"] == "a"
 
 
+def test_sort_by_ann_return():
+    items = [
+        {
+            "code": "a",
+            "error": None,
+            "annualized_return_pct": 1.0,
+            "total_return_pct": 0.0,
+            "excess_return_pct": 0,
+            "sharpe_ratio": 0,
+            "sortino_ratio": 0,
+            "calmar_ratio": 0,
+        },
+        {
+            "code": "b",
+            "error": None,
+            "annualized_return_pct": 5.0,
+            "total_return_pct": 0.0,
+            "excess_return_pct": 0,
+            "sharpe_ratio": 0,
+            "sortino_ratio": 0,
+            "calmar_ratio": 0,
+        },
+    ]
+    sort_scan_rows_inplace(items, "ann_return")
+    assert items[0]["code"] == "b"
+
+
 def test_error_rows_sink():
     items = [
         {"code": "ok", "error": None, "total_return_pct": 1.0, "excess_return_pct": 0, "sharpe_ratio": 0},
