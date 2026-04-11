@@ -140,6 +140,8 @@ const SORT_BY_LABELS = {
   ann_return: "年化收益",
   sortino: "Sortino",
   calmar: "Calmar",
+  win_rate: "胜率",
+  avg_holding: "均段收益",
 };
 
 function scanSortLabel(sortBy) {
@@ -443,6 +445,26 @@ watch(
           <span class="mv mono">{{ result.annualized_volatility_pct?.toFixed?.(2) ?? "—" }}</span>
         </div>
         <div class="m">
+          <span class="mk">多头段数</span>
+          <span class="mv mono">{{ result.long_trades_count ?? "—" }}</span>
+        </div>
+        <div class="m">
+          <span class="mk">段胜率 %</span>
+          <span class="mv mono">{{ result.win_rate_pct?.toFixed?.(1) ?? "—" }}</span>
+        </div>
+        <div class="m">
+          <span class="mk">段均收益 %</span>
+          <span
+            class="mv mono"
+            :class="{
+              up: result.avg_holding_return_pct > 0,
+              down: result.avg_holding_return_pct < 0,
+            }"
+          >
+            {{ result.avg_holding_return_pct?.toFixed?.(2) ?? "—" }}
+          </span>
+        </div>
+        <div class="m">
           <span class="mk">信号翻转</span>
           <span class="mv mono">{{ result.signal_changes ?? "—" }}</span>
         </div>
@@ -465,8 +487,8 @@ watch(
           <p class="eyebrow">策略回测</p>
           <h2 class="h2">多标的批量扫描</h2>
           <p class="sub">
-            相同参数下对列表逐只回测；排序含收益、超额、夏普、Sortino、Calmar、年化等（失败行沉底，最多 25
-            只）。
+            相同参数下对列表逐只回测；排序含收益、超额、夏普、Sortino、Calmar、年化、胜率、均段收益等（失败行沉底，最多
+            25 只）。
           </p>
         </div>
         <div class="hd-actions">
@@ -523,6 +545,8 @@ watch(
             <option value="calmar">Calmar</option>
             <option value="ann_return">年化收益 %</option>
             <option value="buy_hold">买入持有 %</option>
+            <option value="win_rate">段胜率 %</option>
+            <option value="avg_holding">段均收益 %</option>
           </select>
         </label>
         <label class="field">
@@ -579,6 +603,9 @@ watch(
               <th>夏普</th>
               <th>So</th>
               <th>Ca</th>
+              <th>段</th>
+              <th>胜率%</th>
+              <th>均段%</th>
               <th>翻转</th>
               <th>备注</th>
             </tr>
@@ -610,6 +637,17 @@ watch(
               <td class="mono">{{ row.error ? "—" : row.sharpe_ratio?.toFixed(3) }}</td>
               <td class="mono">{{ row.error ? "—" : row.sortino_ratio?.toFixed(3) }}</td>
               <td class="mono">{{ row.error ? "—" : row.calmar_ratio?.toFixed(3) }}</td>
+              <td class="mono">{{ row.error ? "—" : row.long_trades_count }}</td>
+              <td class="mono">{{ row.error ? "—" : row.win_rate_pct?.toFixed(1) }}</td>
+              <td
+                class="mono"
+                :class="{
+                  up: !row.error && row.avg_holding_return_pct > 0,
+                  down: !row.error && row.avg_holding_return_pct < 0,
+                }"
+              >
+                {{ row.error ? "—" : row.avg_holding_return_pct?.toFixed(2) }}
+              </td>
               <td class="mono">{{ row.error ? "—" : row.signal_changes }}</td>
               <td class="err-cell">{{ row.error || "" }}</td>
             </tr>

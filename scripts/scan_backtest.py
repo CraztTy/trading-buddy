@@ -117,7 +117,10 @@ def main() -> int:
         "--sort-by",
         type=str,
         default="total_return",
-        help="排序：total_return | excess_return | sharpe | buy_hold | ann_return | sortino | calmar",
+        help=(
+            "排序：total_return | excess_return | sharpe | buy_hold | ann_return | "
+            "sortino | calmar | win_rate | avg_holding"
+        ),
     )
     p.add_argument(
         "--max-concurrent",

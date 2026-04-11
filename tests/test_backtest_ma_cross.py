@@ -7,7 +7,11 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from src.backtest.ma_cross import ma_cross_result_from_df, run_ma_cross_backtest
+from src.backtest.ma_cross import (
+    _long_segment_total_returns_pct,
+    ma_cross_result_from_df,
+    run_ma_cross_backtest,
+)
 from src.data.models import KLine
 
 
@@ -35,6 +39,18 @@ def test_ma_cross_uptrend_positive_return():
     assert res.buy_hold_annualized_return_pct > 0
     assert isinstance(res.sortino_ratio, float)
     assert isinstance(res.calmar_ratio, float)
+    assert res.long_trades_count >= 1
+    assert 0.0 <= res.win_rate_pct <= 100.0
+
+
+def test_long_segment_total_returns_pct_two_segments():
+    hold = pd.Series([0.0, 1.0, 1.0, 0.0, 1.0])
+    r = pd.Series([0.0, 0.1, -0.05, 0.0, 0.2])
+    segs = _long_segment_total_returns_pct(hold, r)
+    assert len(segs) == 2
+    exp0 = float(((1.1 * 0.95) - 1.0) * 100.0)
+    assert abs(segs[0] - exp0) < 1e-6
+    assert abs(segs[1] - 20.0) < 1e-6
 
 
 def test_ma_cross_fast_ge_slow_raises():
@@ -65,6 +81,8 @@ def test_commission_reduces_return_vs_zero():
     )
     assert r0.signal_changes > 0
     assert r1.total_return_pct < r0.total_return_pct
+    assert r0.long_trades_count >= 1
+    assert 0.0 <= r0.win_rate_pct <= 100.0
 
 
 def test_commission_rate_out_of_range_raises():

@@ -17,6 +17,33 @@ import pandas as pd
 from src.data.models import KLine
 
 
+def _long_segment_total_returns_pct(
+    hold: pd.Series, strat_ret: pd.Series
+) -> list[float]:
+    """
+    连续多头段内日策略收益复利，返回每段总收益（百分点，与 total_return_pct 同口径）。
+    hold 为滞后一日的有效仓位，与 strat_ret 逐行对齐。
+    """
+    h = hold.to_numpy(dtype=float)
+    r = strat_ret.to_numpy(dtype=float)
+    n = len(h)
+    if len(r) != n:
+        raise ValueError("hold 与 strat_ret 长度须一致")
+    out: list[float] = []
+    i = 0
+    while i < n:
+        if h[i] < 0.5:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and h[j + 1] >= 0.5:
+            j += 1
+        chunk = r[i : j + 1]
+        out.append(float(np.prod(1.0 + chunk) - 1.0) * 100.0)
+        i = j + 1
+    return out
+
+
 @dataclass(frozen=True)
 class MaCrossBacktestResult:
     code: str
@@ -36,6 +63,9 @@ class MaCrossBacktestResult:
     annualized_volatility_pct: float
     sortino_ratio: float
     calmar_ratio: float
+    long_trades_count: int
+    win_rate_pct: float
+    avg_holding_return_pct: float
     commission_rate: float = 0.0
     slippage_rate: float = 0.0
 
@@ -44,6 +74,8 @@ class MaCrossBacktestResult:
             "Sharpe / Sortino 按 252 交易日年化；Sortino 的 MAR=0、下行偏差为 min(0,r) 的二阶矩均方根。"
             " 年化收益为区间复利换算：(1+总收益)^(252/区间交易日)−1。"
             " Calmar=年化收益÷|最大回撤|（回撤为负百分比时取绝对值）。"
+            " 多头持仓段=有效仓位为多的最长连续区间；段内收益为日 strat_ret 复利。"
+            " 胜率=盈利段数/段数；平均持有收益为各段总收益（%）的简单平均。"
             " 信号基于收盘均线，收益为收盘到收盘且滞后一日。"
         )
         if self.commission_rate > 0:
@@ -80,6 +112,9 @@ class MaCrossBacktestResult:
             "annualized_volatility_pct": round(self.annualized_volatility_pct, 4),
             "sortino_ratio": round(self.sortino_ratio, 4),
             "calmar_ratio": round(self.calmar_ratio, 4),
+            "long_trades_count": self.long_trades_count,
+            "win_rate_pct": round(self.win_rate_pct, 4),
+            "avg_holding_return_pct": round(self.avg_holding_return_pct, 4),
             "note": note,
         }
         return d
@@ -167,6 +202,16 @@ def ma_cross_result_from_df(
     else:
         calmar_ratio = 0.0
 
+    seg_returns_pct = _long_segment_total_returns_pct(hold, strat_ret)
+    long_trades_count = len(seg_returns_pct)
+    if long_trades_count > 0:
+        wins = sum(1 for x in seg_returns_pct if x > 0.0)
+        win_rate_pct = float(100.0 * wins / long_trades_count)
+        avg_holding_return_pct = float(np.mean(seg_returns_pct))
+    else:
+        win_rate_pct = 0.0
+        avg_holding_return_pct = 0.0
+
     ps = pos.to_numpy()
     changes = int(np.sum(ps[1:] != ps[:-1])) if len(ps) > 1 else 0
 
@@ -194,6 +239,9 @@ def ma_cross_result_from_df(
         annualized_volatility_pct=annualized_volatility_pct,
         sortino_ratio=sortino_ratio,
         calmar_ratio=calmar_ratio,
+        long_trades_count=long_trades_count,
+        win_rate_pct=win_rate_pct,
+        avg_holding_return_pct=avg_holding_return_pct,
         commission_rate=float(commission_rate),
         slippage_rate=float(slippage_rate),
     )

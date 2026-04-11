@@ -26,6 +26,9 @@ def test_ma_cross_scan_csv_bom_and_header():
             "annualized_return_pct": 3.0,
             "buy_hold_annualized_return_pct": 4.0,
             "annualized_volatility_pct": 10.0,
+            "long_trades_count": 3,
+            "win_rate_pct": 66.67,
+            "avg_holding_return_pct": 0.5,
             "signal_changes": 4,
         }
     ]
@@ -45,6 +48,7 @@ def test_ma_cross_scan_csv_bom_and_header():
     assert "1.5" in s
     assert "excess_return_pct" in s
     assert "sortino_ratio" in s
+    assert "win_rate_pct" in s
     assert "-0.5" in s
 
 
@@ -64,6 +68,9 @@ def test_ma_cross_scan_csv_comment_includes_date_range():
             "annualized_return_pct": 0.0,
             "buy_hold_annualized_return_pct": 0.0,
             "annualized_volatility_pct": 0.0,
+            "long_trades_count": 0,
+            "win_rate_pct": 0.0,
+            "avg_holding_return_pct": 0.0,
             "signal_changes": 0,
         }
     ]

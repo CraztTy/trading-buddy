@@ -23,6 +23,8 @@ VALID_SORT_BY = frozenset(
         "ann_return",
         "sortino",
         "calmar",
+        "win_rate",
+        "avg_holding",
     }
 )
 
@@ -34,6 +36,8 @@ _SORT_FIELD: dict[str, str] = {
     "ann_return": "annualized_return_pct",
     "sortino": "sortino_ratio",
     "calmar": "calmar_ratio",
+    "win_rate": "win_rate_pct",
+    "avg_holding": "avg_holding_return_pct",
 }
 
 
@@ -161,6 +165,9 @@ async def ma_cross_scan_items(
                     "annualized_volatility_pct": None,
                     "sortino_ratio": None,
                     "calmar_ratio": None,
+                    "long_trades_count": None,
+                    "win_rate_pct": None,
+                    "avg_holding_return_pct": None,
                 }
             )
             continue
@@ -190,6 +197,9 @@ async def ma_cross_scan_items(
                     "annualized_volatility_pct": None,
                     "sortino_ratio": None,
                     "calmar_ratio": None,
+                    "long_trades_count": None,
+                    "win_rate_pct": None,
+                    "avg_holding_return_pct": None,
                 }
             )
             continue
@@ -212,6 +222,9 @@ async def ma_cross_scan_items(
                 "annualized_volatility_pct": round(res.annualized_volatility_pct, 4),
                 "sortino_ratio": round(res.sortino_ratio, 4),
                 "calmar_ratio": round(res.calmar_ratio, 4),
+                "long_trades_count": res.long_trades_count,
+                "win_rate_pct": round(res.win_rate_pct, 4),
+                "avg_holding_return_pct": round(res.avg_holding_return_pct, 4),
             }
         )
 
@@ -264,6 +277,9 @@ def ma_cross_scan_csv_bytes(
             "annualized_return_pct",
             "buy_hold_annualized_return_pct",
             "annualized_volatility_pct",
+            "long_trades_count",
+            "win_rate_pct",
+            "avg_holding_return_pct",
             "signal_changes",
         ]
     )
@@ -294,6 +310,13 @@ def ma_cross_scan_csv_bytes(
                 else "",
                 r.get("annualized_volatility_pct")
                 if r.get("annualized_volatility_pct") is not None
+                else "",
+                r.get("long_trades_count")
+                if r.get("long_trades_count") is not None
+                else "",
+                r.get("win_rate_pct") if r.get("win_rate_pct") is not None else "",
+                r.get("avg_holding_return_pct")
+                if r.get("avg_holding_return_pct") is not None
                 else "",
                 r.get("signal_changes")
                 if r.get("signal_changes") is not None

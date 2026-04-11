@@ -61,6 +61,29 @@ def test_sort_by_ann_return():
     assert items[0]["code"] == "b"
 
 
+def test_sort_by_avg_holding():
+    items = [
+        {
+            "code": "a",
+            "error": None,
+            "avg_holding_return_pct": 0.5,
+            "total_return_pct": 0.0,
+            "excess_return_pct": 0,
+            "sharpe_ratio": 0,
+        },
+        {
+            "code": "b",
+            "error": None,
+            "avg_holding_return_pct": 2.0,
+            "total_return_pct": 0.0,
+            "excess_return_pct": 0,
+            "sharpe_ratio": 0,
+        },
+    ]
+    sort_scan_rows_inplace(items, "avg_holding")
+    assert items[0]["code"] == "b"
+
+
 def test_error_rows_sink():
     items = [
         {"code": "ok", "error": None, "total_return_pct": 1.0, "excess_return_pct": 0, "sharpe_ratio": 0},
