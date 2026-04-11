@@ -106,6 +106,18 @@ function commonParams() {
   });
 }
 
+function downloadSingleJson() {
+  if (!result.value) return;
+  const text = JSON.stringify(result.value, null, 2);
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ma_cross_${(props.code || "code").replace(/[^a-z0-9.]/gi, "_")}_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function runBacktest() {
   loading.value = true;
   error.value = "";
@@ -221,9 +233,19 @@ watch(
           <h2 class="h2">双均线（日线）</h2>
           <p class="sub mono">标的 {{ (code || "—").trim() }} · 与行情看板当前代码联动</p>
         </div>
-        <button type="button" class="run" :disabled="loading" @click="runBacktest">
-          {{ loading ? "计算中…" : "运行回测" }}
-        </button>
+        <div class="hd-actions">
+          <button type="button" class="run" :disabled="loading" @click="runBacktest">
+            {{ loading ? "计算中…" : "运行回测" }}
+          </button>
+          <button
+            type="button"
+            class="run secondary"
+            :disabled="!result"
+            @click="downloadSingleJson"
+          >
+            下载 JSON
+          </button>
+        </div>
       </header>
 
       <div class="form">
@@ -280,6 +302,18 @@ watch(
         <div class="m">
           <span class="mk">买入持有 %</span>
           <span class="mv mono">{{ result.buy_hold_return_pct?.toFixed?.(2) ?? "—" }}</span>
+        </div>
+        <div class="m">
+          <span class="mk">超额 %（相对买入持有）</span>
+          <span
+            class="mv mono"
+            :class="{
+              up: result.excess_return_pct > 0,
+              down: result.excess_return_pct < 0,
+            }"
+          >
+            {{ result.excess_return_pct?.toFixed?.(2) ?? "—" }}
+          </span>
         </div>
         <div class="m">
           <span class="mk">最大回撤 %</span>
@@ -366,6 +400,7 @@ watch(
               <th>代码</th>
               <th>策略收益 %</th>
               <th>买入持有 %</th>
+              <th>超额 %</th>
               <th>夏普</th>
               <th>翻转</th>
               <th>备注</th>
@@ -384,6 +419,15 @@ watch(
                 {{ row.error ? "—" : row.total_return_pct?.toFixed(2) }}
               </td>
               <td class="mono">{{ row.error ? "—" : row.buy_hold_return_pct?.toFixed(2) }}</td>
+              <td
+                class="mono"
+                :class="{
+                  up: row.excess_return_pct != null && row.excess_return_pct > 0,
+                  down: row.excess_return_pct != null && row.excess_return_pct < 0,
+                }"
+              >
+                {{ row.error ? "—" : row.excess_return_pct?.toFixed(2) }}
+              </td>
               <td class="mono">{{ row.error ? "—" : row.sharpe_ratio?.toFixed(3) }}</td>
               <td class="mono">{{ row.error ? "—" : row.signal_changes }}</td>
               <td class="err-cell">{{ row.error || "" }}</td>

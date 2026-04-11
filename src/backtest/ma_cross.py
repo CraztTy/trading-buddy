@@ -27,6 +27,7 @@ class MaCrossBacktestResult:
     last_trade_date: date | None
     total_return_pct: float
     buy_hold_return_pct: float
+    excess_return_pct: float
     max_drawdown_pct: float
     sharpe_ratio: float
     signal_changes: int
@@ -60,6 +61,7 @@ class MaCrossBacktestResult:
             else None,
             "total_return_pct": round(self.total_return_pct, 4),
             "buy_hold_return_pct": round(self.buy_hold_return_pct, 4),
+            "excess_return_pct": round(self.excess_return_pct, 4),
             "max_drawdown_pct": round(self.max_drawdown_pct, 4),
             "sharpe_ratio": round(self.sharpe_ratio, 4),
             "signal_changes": self.signal_changes,
@@ -113,6 +115,7 @@ def ma_cross_result_from_df(
 
     total_return_pct = float((equity.iloc[-1] - 1.0) * 100.0)
     buy_hold_return_pct = float((close.iloc[-1] / close.iloc[0] - 1.0) * 100.0)
+    excess_return_pct = float(total_return_pct - buy_hold_return_pct)
 
     peak = equity.cummax()
     dd_pct = float(((equity / peak) - 1.0).min() * 100.0)
@@ -141,6 +144,7 @@ def ma_cross_result_from_df(
         last_trade_date=last_d,
         total_return_pct=total_return_pct,
         buy_hold_return_pct=buy_hold_return_pct,
+        excess_return_pct=excess_return_pct,
         max_drawdown_pct=dd_pct,
         sharpe_ratio=sharpe,
         signal_changes=changes,

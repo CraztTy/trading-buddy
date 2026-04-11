@@ -56,6 +56,7 @@ async def ma_cross_scan_items(
                     "bars_used": None,
                     "total_return_pct": None,
                     "buy_hold_return_pct": None,
+                    "excess_return_pct": None,
                     "max_drawdown_pct": None,
                     "sharpe_ratio": None,
                     "signal_changes": None,
@@ -79,6 +80,7 @@ async def ma_cross_scan_items(
                     "bars_used": None,
                     "total_return_pct": None,
                     "buy_hold_return_pct": None,
+                    "excess_return_pct": None,
                     "max_drawdown_pct": None,
                     "sharpe_ratio": None,
                     "signal_changes": None,
@@ -93,6 +95,7 @@ async def ma_cross_scan_items(
                 "bars_used": res.bars_used,
                 "total_return_pct": round(res.total_return_pct, 4),
                 "buy_hold_return_pct": round(res.buy_hold_return_pct, 4),
+                "excess_return_pct": round(res.excess_return_pct, 4),
                 "max_drawdown_pct": round(res.max_drawdown_pct, 4),
                 "sharpe_ratio": round(res.sharpe_ratio, 4),
                 "signal_changes": res.signal_changes,
@@ -136,6 +139,7 @@ def ma_cross_scan_csv_bytes(
             "bars_used",
             "total_return_pct",
             "buy_hold_return_pct",
+            "excess_return_pct",
             "max_drawdown_pct",
             "sharpe_ratio",
             "signal_changes",
@@ -150,6 +154,9 @@ def ma_cross_scan_csv_bytes(
                 r.get("total_return_pct") if r.get("total_return_pct") is not None else "",
                 r.get("buy_hold_return_pct")
                 if r.get("buy_hold_return_pct") is not None
+                else "",
+                r.get("excess_return_pct")
+                if r.get("excess_return_pct") is not None
                 else "",
                 r.get("max_drawdown_pct")
                 if r.get("max_drawdown_pct") is not None

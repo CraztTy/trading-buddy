@@ -27,6 +27,7 @@ class MaCrossBacktestResponse(BaseModel):
     last_trade_date: str | None
     total_return_pct: float
     buy_hold_return_pct: float
+    excess_return_pct: float
     max_drawdown_pct: float
     sharpe_ratio: float
     signal_changes: int
@@ -40,6 +41,7 @@ class MaCrossScanRow(BaseModel):
     bars_used: int | None = None
     total_return_pct: float | None = None
     buy_hold_return_pct: float | None = None
+    excess_return_pct: float | None = None
     max_drawdown_pct: float | None = None
     sharpe_ratio: float | None = None
     signal_changes: int | None = None

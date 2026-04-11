@@ -25,13 +25,14 @@ async def _async_main(
     limit: int,
     commission_rate: float,
     slippage_rate: float,
+    output_path: Path | None,
 ) -> int:
     sys.path.insert(0, str(project_root))
     from src.backtest import run_ma_cross_backtest
     from src.common.config import describe_database_write_target
     from src.data.storage import KlineRepository, dispose_database, get_database
 
-    print(f"数据读取目标: {describe_database_write_target()}")
+    print(f"数据读取目标: {describe_database_write_target()}", file=sys.stderr)
     db = get_database()
     try:
         async with db.session() as session:
@@ -53,7 +54,12 @@ async def _async_main(
     )
     out = res.to_api_dict()
     out["equity_curve"] = curve
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    text = json.dumps(out, ensure_ascii=False, indent=2)
+    if output_path:
+        output_path.write_text(text, encoding="utf-8")
+        print(f"已写入 {output_path.resolve()}", file=sys.stderr)
+    else:
+        print(text)
     return 0
 
 
@@ -75,6 +81,13 @@ def main() -> int:
         default=0.0,
         help="滑点率（与手续费同口径，调仓日扣减）；与 commission-rate 之和勿超过 0.08",
     )
+    p.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="将完整 JSON（含 equity_curve）写入文件；省略则打印到 stdout",
+    )
     args = p.parse_args()
     if args.fast >= args.slow:
         print("错误: fast 必须小于 slow", file=sys.stderr)
@@ -90,6 +103,7 @@ def main() -> int:
             args.limit,
             args.commission_rate,
             args.slippage_rate,
+            args.output,
         )
     )
 
