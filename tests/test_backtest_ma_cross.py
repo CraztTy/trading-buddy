@@ -7,7 +7,8 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from src.backtest.ma_cross import ma_cross_result_from_df
+from src.backtest.ma_cross import ma_cross_result_from_df, run_ma_cross_backtest
+from src.data.models import KLine
 
 
 def _date_series(n: int, start: date | None = None) -> list[date]:
@@ -66,3 +67,54 @@ def test_commission_rate_out_of_range_raises():
     )
     with pytest.raises(ValueError, match="commission_rate"):
         ma_cross_result_from_df(df, code="x", fast=2, slow=10, commission_rate=0.1)
+
+
+def test_slippage_rate_out_of_range_raises():
+    df = pd.DataFrame(
+        {"trade_date": _date_series(40), "close": list(range(40, 80))},
+    )
+    with pytest.raises(ValueError, match="slippage_rate"):
+        ma_cross_result_from_df(df, code="x", fast=2, slow=10, slippage_rate=0.06)
+
+
+def test_flip_cost_sum_cap_raises():
+    df = pd.DataFrame(
+        {"trade_date": _date_series(40), "close": list(range(40, 80))},
+    )
+    with pytest.raises(ValueError, match="之和"):
+        ma_cross_result_from_df(
+            df, code="x", fast=2, slow=10, commission_rate=0.05, slippage_rate=0.04
+        )
+
+
+def test_slippage_reduces_return_like_commission():
+    n = 120
+    flat = [100.0] * 35
+    ramp = list(100.0 + (i / 84.0) * 55.0 for i in range(85))
+    closes = flat + ramp
+    df = pd.DataFrame({"trade_date": _date_series(n), "close": closes})
+    r0, _, _ = ma_cross_result_from_df(df, code="x", fast=3, slow=12, slippage_rate=0.0)
+    r1, _, _ = ma_cross_result_from_df(df, code="x", fast=3, slow=12, slippage_rate=0.001)
+    assert r0.signal_changes > 0
+    assert r1.total_return_pct < r0.total_return_pct
+
+
+def test_run_ma_cross_skip_equity_curve():
+    klines = [
+        KLine(
+            code="sh.x",
+            trade_date=_date_series(50)[i],
+            open=100.0,
+            high=101.0,
+            low=99.0,
+            close=100.0 + i * 0.1,
+            volume=1,
+            amount=1.0,
+        )
+        for i in range(50)
+    ]
+    res, curve = run_ma_cross_backtest(
+        klines, fast=2, slow=10, include_equity_curve=False
+    )
+    assert res.bars_used == 50
+    assert curve == []

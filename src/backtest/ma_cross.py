@@ -31,6 +31,7 @@ class MaCrossBacktestResult:
     sharpe_ratio: float
     signal_changes: int
     commission_rate: float = 0.0
+    slippage_rate: float = 0.0
 
     def to_api_dict(self, equity_sample_max: int = 120) -> dict[str, Any]:
         note = (
@@ -40,12 +41,17 @@ class MaCrossBacktestResult:
             note += (
                 f" 单边手续费按调仓日扣减（费率={self.commission_rate:.6f}，每次翻转仓位扣一次）。"
             )
+        if self.slippage_rate > 0:
+            note += (
+                f" 滑点按调仓日扣减（费率={self.slippage_rate:.6f}，与手续费同口径）。"
+            )
         d: dict[str, Any] = {
             "code": self.code,
             "fast_period": self.fast_period,
             "slow_period": self.slow_period,
             "bars_used": self.bars_used,
             "commission_rate": round(self.commission_rate, 8),
+            "slippage_rate": round(self.slippage_rate, 8),
             "first_trade_date": self.first_trade_date.isoformat()
             if self.first_trade_date
             else None,
@@ -69,6 +75,7 @@ def ma_cross_result_from_df(
     fast: int,
     slow: int,
     commission_rate: float = 0.0,
+    slippage_rate: float = 0.0,
 ) -> tuple[MaCrossBacktestResult, pd.Series, pd.Series]:
     """
     df 须含列 trade_date, close；按时间升序。
@@ -82,6 +89,10 @@ def ma_cross_result_from_df(
         raise ValueError(f"K 线数量不足（需要至少 {slow + 1} 根）")
     if commission_rate < 0 or commission_rate > 0.05:
         raise ValueError("commission_rate 须在 [0, 0.05] 内")
+    if slippage_rate < 0 or slippage_rate > 0.05:
+        raise ValueError("slippage_rate 须在 [0, 0.05] 内")
+    if commission_rate + slippage_rate > 0.08:
+        raise ValueError("commission_rate 与 slippage_rate 之和勿超过 0.08")
 
     d = df.sort_values("trade_date").reset_index(drop=True)
     close = d["close"].astype(float)
@@ -94,7 +105,8 @@ def ma_cross_result_from_df(
     daily_ret = close.pct_change().fillna(0.0)
     hold = pos.shift(1).fillna(0.0)
     flipped = (hold.diff().abs() > 1e-12).fillna(False)
-    strat_ret = hold * daily_ret - flipped.astype(float) * float(commission_rate)
+    flip_cost = float(commission_rate) + float(slippage_rate)
+    strat_ret = hold * daily_ret - flipped.astype(float) * flip_cost
     strat_ret = strat_ret.fillna(0.0)
 
     equity = (1.0 + strat_ret).cumprod()
@@ -133,6 +145,7 @@ def ma_cross_result_from_df(
         sharpe_ratio=sharpe,
         signal_changes=changes,
         commission_rate=float(commission_rate),
+        slippage_rate=float(slippage_rate),
     )
     return res, equity, strat_ret
 
@@ -143,8 +156,10 @@ def run_ma_cross_backtest(
     fast: int = 5,
     slow: int = 20,
     commission_rate: float = 0.0,
+    slippage_rate: float = 0.0,
+    include_equity_curve: bool = True,
 ) -> tuple[MaCrossBacktestResult, list[dict[str, Any]]]:
-    """从 KLine 列表运行双均线回测，返回结果与权益曲线采样点。"""
+    """从 KLine 列表运行双均线回测；可跳过权益曲线采样以加速批量扫描。"""
     if not klines:
         raise ValueError("klines 为空")
     code = klines[0].code
@@ -155,8 +170,16 @@ def run_ma_cross_backtest(
         }
     )
     res, equity, _ = ma_cross_result_from_df(
-        df, code=code, fast=fast, slow=slow, commission_rate=commission_rate
+        df,
+        code=code,
+        fast=fast,
+        slow=slow,
+        commission_rate=commission_rate,
+        slippage_rate=slippage_rate,
     )
+
+    if not include_equity_curve:
+        return res, []
 
     dates = df["trade_date"].tolist()
     eqv = equity.to_numpy()

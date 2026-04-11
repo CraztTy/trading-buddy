@@ -19,7 +19,12 @@ project_root = Path(__file__).resolve().parent.parent
 
 
 async def _async_main(
-    code: str, fast: int, slow: int, limit: int, commission_rate: float
+    code: str,
+    fast: int,
+    slow: int,
+    limit: int,
+    commission_rate: float,
+    slippage_rate: float,
 ) -> int:
     sys.path.insert(0, str(project_root))
     from src.backtest import run_ma_cross_backtest
@@ -40,7 +45,11 @@ async def _async_main(
         return 2
 
     res, curve = run_ma_cross_backtest(
-        klines, fast=fast, slow=slow, commission_rate=commission_rate
+        klines,
+        fast=fast,
+        slow=slow,
+        commission_rate=commission_rate,
+        slippage_rate=slippage_rate,
     )
     out = res.to_api_dict()
     out["equity_curve"] = curve
@@ -60,12 +69,28 @@ def main() -> int:
         default=0.0,
         help="单边手续费率，如万1.5为 0.00015（每次调仓翻转扣一次）",
     )
+    p.add_argument(
+        "--slippage-rate",
+        type=float,
+        default=0.0,
+        help="滑点率（与手续费同口径，调仓日扣减）；与 commission-rate 之和勿超过 0.08",
+    )
     args = p.parse_args()
     if args.fast >= args.slow:
         print("错误: fast 必须小于 slow", file=sys.stderr)
         return 2
+    if args.commission_rate + args.slippage_rate > 0.08:
+        print("错误: commission-rate 与 slippage-rate 之和勿超过 0.08", file=sys.stderr)
+        return 2
     return asyncio.run(
-        _async_main(args.code, args.fast, args.slow, args.limit, args.commission_rate)
+        _async_main(
+            args.code,
+            args.fast,
+            args.slow,
+            args.limit,
+            args.commission_rate,
+            args.slippage_rate,
+        )
     )
 
 

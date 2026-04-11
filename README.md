@@ -106,15 +106,17 @@ trading-buddy/
 
 ## 最小回测（双均线）
 
-- **HTTP**：`GET /api/backtest/ma-cross?code=sh.000001&fast=5&slow=20&limit=500&commission_rate=0`  
-  可选 `commission_rate`（单边费率，如万 1.5 = `0.00015`）：在**持仓翻转日**各扣一次，近似买卖佣金。  
-  返回总收益、买入持有基准、最大回撤、夏普（252 日年化）、信号翻转次数及权益曲线采样点。
-- **Vue**：顶部切换 **「策略回测」**，与当前标的联动，表单含「万分之」手续费输入。
+- **单标的 HTTP**：`GET /api/backtest/ma-cross?code=sh.000001&fast=5&slow=20&limit=500`  
+  - `commission_rate`、`slippage_rate`：单边费率，在**持仓翻转日**各扣一次（与手续费同口径）；二者之和勿超过 `0.08`。  
+  - 返回总收益、买入持有、最大回撤、夏普（252 日年化）、翻转次数、权益曲线采样点。
+- **批量扫描**：`GET /api/backtest/ma-cross/scan?codes=sh.000001,sh.000300&fast=5&slow=20&limit=500`  
+  - `codes` 支持逗号或换行分隔，默认最多 **25** 只（`max_codes` 可调至 40）；结果按策略收益率降序，无 K 线标的带 `error` 字段。
+- **Vue**：**策略回测** 内「单标的 / 批量扫描」；手续费与滑点均为「万分之」输入。
 - **CLI**（读当前 `.env` 数据库）：
 
 ```bash
 python scripts/run_backtest.py --code sh.000001 --fast 5 --slow 20 --limit 500
-python scripts/run_backtest.py --code sh.000001 --commission-rate 0.00015
+python scripts/run_backtest.py --code sh.000001 --commission-rate 0.00015 --slippage-rate 0.00005
 ```
 
 逻辑说明：快慢线均用**收盘**计算；信号在收盘确定后，**滞后一日**乘日收益，避免当根 K 线前视偏差。
