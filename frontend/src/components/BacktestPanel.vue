@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import VChart from "vue-echarts";
-import { fetchJson } from "../composables/api.js";
+import { apiUrl, fetchJson } from "../composables/api.js";
 
 const props = defineProps({
   code: { type: String, default: "sh.000001" },
@@ -23,8 +23,11 @@ const result = ref(null);
 
 const scanCodesText = ref("sh.000001\nsh.000300\nsz.399001");
 const scanLoading = ref(false);
+const scanCsvLoading = ref(false);
 const scanError = ref("");
 const scanResult = ref(null);
+
+const PRESET_MAJORS = "sh.000001\nsz.399001\nsz.399006\nsh.000300";
 
 const feeRate = computed(() => Math.max(0, Number(feeWan.value) || 0) / 10000);
 const slipRate = computed(() => Math.max(0, Number(slipWan.value) || 0) / 10000);
@@ -136,12 +139,48 @@ async function runScan() {
   }
   const params = commonParams();
   params.set("codes", raw);
+  params.set("export", "json");
   try {
     scanResult.value = await fetchJson(`backtest/ma-cross/scan?${params.toString()}`);
   } catch (e) {
     scanError.value = e?.message || "请求失败";
   } finally {
     scanLoading.value = false;
+  }
+}
+
+function fillPresetMajors() {
+  scanCodesText.value = PRESET_MAJORS;
+}
+
+async function downloadScanCsv() {
+  const raw = (scanCodesText.value || "").trim();
+  if (!raw) {
+    scanError.value = "请填写至少一个代码";
+    return;
+  }
+  scanCsvLoading.value = true;
+  scanError.value = "";
+  const params = commonParams();
+  params.set("codes", raw);
+  params.set("export", "csv");
+  try {
+    const res = await fetch(apiUrl(`backtest/ma-cross/scan?${params.toString()}`));
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t.slice(0, 200) || `${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ma_cross_scan_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    scanError.value = e?.message || "CSV 下载失败";
+  } finally {
+    scanCsvLoading.value = false;
   }
 }
 
@@ -274,9 +313,19 @@ watch(
           <h2 class="h2">多标的批量扫描</h2>
           <p class="sub">相同参数下对列表逐只回测，按策略收益率降序排列（最多 25 只）。</p>
         </div>
-        <button type="button" class="run gold" :disabled="scanLoading" @click="runScan">
-          {{ scanLoading ? "扫描中…" : "开始扫描" }}
-        </button>
+        <div class="hd-actions">
+          <button type="button" class="run gold" :disabled="scanLoading" @click="runScan">
+            {{ scanLoading ? "扫描中…" : "开始扫描" }}
+          </button>
+          <button
+            type="button"
+            class="run secondary"
+            :disabled="scanCsvLoading || scanLoading"
+            @click="downloadScanCsv"
+          >
+            {{ scanCsvLoading ? "导出中…" : "下载 CSV" }}
+          </button>
+        </div>
       </header>
 
       <div class="form">
@@ -302,7 +351,10 @@ watch(
         </label>
       </div>
 
-      <label class="block-label">代码列表（每行一个或逗号分隔）</label>
+      <div class="codes-toolbar">
+        <label class="block-label">代码列表（每行一个或逗号分隔）</label>
+        <button type="button" class="linkish" @click="fillPresetMajors">填入主要指数</button>
+      </div>
       <textarea v-model="scanCodesText" class="codes-ta mono" rows="5" spellcheck="false" />
 
       <div v-if="scanError" class="err">{{ scanError }}</div>
@@ -392,6 +444,19 @@ watch(
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 20px;
+}
+
+.hd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.run.secondary {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--mist);
 }
 
 .eyebrow {
@@ -565,12 +630,37 @@ watch(
   color: var(--mist-dim);
 }
 
+.codes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .block-label {
-  display: block;
+  margin: 0;
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   color: var(--mist-dim);
-  margin-bottom: 8px;
+}
+
+.linkish {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--meridian);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.linkish:hover {
+  color: var(--mist);
 }
 
 .codes-ta {

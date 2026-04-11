@@ -110,8 +110,10 @@ trading-buddy/
   - `commission_rate`、`slippage_rate`：单边费率，在**持仓翻转日**各扣一次（与手续费同口径）；二者之和勿超过 `0.08`。  
   - 返回总收益、买入持有、最大回撤、夏普（252 日年化）、翻转次数、权益曲线采样点。
 - **批量扫描**：`GET /api/backtest/ma-cross/scan?codes=sh.000001,sh.000300&fast=5&slow=20&limit=500`  
-  - `codes` 支持逗号或换行分隔，默认最多 **25** 只（`max_codes` 可调至 40）；结果按策略收益率降序，无 K 线标的带 `error` 字段。
-- **Vue**：**策略回测** 内「单标的 / 批量扫描」；手续费与滑点均为「万分之」输入。
+  - `codes` 支持逗号或换行分隔，默认最多 **25** 只（`max_codes` 可调至 40）；结果按策略收益率降序，无 K 线标的带 `error` 字段。  
+  - `export=csv`：返回 **UTF-8 BOM** CSV（首行为参数注释），便于 Excel；`export=json`（默认）。  
+  - CLI：`python scripts/scan_backtest.py --codes "sh.000001,sh.000300" -o scan.csv`
+- **Vue**：**策略回测** 内「单标的 / 批量扫描」；手续费与滑点均为「万分之」；批量支持 **下载 CSV**、**填入主要指数** 快捷按钮。
 - **CLI**（读当前 `.env` 数据库）：
 
 ```bash

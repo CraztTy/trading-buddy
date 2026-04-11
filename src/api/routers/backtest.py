@@ -7,8 +7,10 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import Response
 
 from src.backtest import run_ma_cross_backtest
+from src.backtest.scan import ma_cross_scan_csv_bytes, ma_cross_scan_items, parse_scan_codes
 from src.data.storage import KlineRepository, get_session
 
 router = APIRouter()
@@ -52,19 +54,7 @@ class MaCrossScanResponse(BaseModel):
     items: list[MaCrossScanRow]
 
 
-def _parse_codes(raw: str, cap: int) -> list[str]:
-    parts = raw.replace("\n", ",").replace(";", ",").split(",")
-    out: list[str] = []
-    for p in parts:
-        c = p.strip().lower()
-        if c and c not in out:
-            out.append(c)
-        if len(out) >= cap:
-            break
-    return out
-
-
-@router.get("/ma-cross/scan", response_model=MaCrossScanResponse)
+@router.get("/ma-cross/scan")
 async def ma_cross_scan(
     codes: str = Query(
         ...,
@@ -78,8 +68,14 @@ async def ma_cross_scan(
     commission_rate: float = Query(0.0, ge=0.0, le=0.05),
     slippage_rate: float = Query(0.0, ge=0.0, le=0.05),
     max_codes: int = Query(25, ge=1, le=40),
+    export: str = Query(
+        "json",
+        description="json（默认）或 csv；csv 带 UTF-8 BOM，适合 Excel",
+    ),
     session: AsyncSession = Depends(get_session),
 ):
+    if export not in ("json", "csv"):
+        raise HTTPException(status_code=400, detail="export 须为 json 或 csv")
     if fast >= slow:
         raise HTTPException(status_code=400, detail="fast 必须小于 slow")
     if commission_rate + slippage_rate > 0.08:
@@ -88,60 +84,40 @@ async def ma_cross_scan(
             detail="commission_rate 与 slippage_rate 之和勿超过 0.08",
         )
 
-    parsed = _parse_codes(codes, max_codes)
+    parsed = parse_scan_codes(codes, max_codes)
     if not parsed:
         raise HTTPException(status_code=400, detail="codes 解析后为空")
 
-    repo = KlineRepository(session)
-    rows: list[MaCrossScanRow] = []
+    items = await ma_cross_scan_items(
+        session,
+        parsed,
+        fast=fast,
+        slow=slow,
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date,
+        commission_rate=commission_rate,
+        slippage_rate=slippage_rate,
+    )
 
-    for c in parsed:
-        klines = await repo.get_daily(
-            code=c,
-            start_date=start_date,
-            end_date=end_date,
+    if export == "csv":
+        body = ma_cross_scan_csv_bytes(
+            items,
+            fast=fast,
+            slow=slow,
             limit=limit,
+            commission_rate=round(commission_rate, 8),
+            slippage_rate=round(slippage_rate, 8),
         )
-        if len(klines) < slow + 1:
-            rows.append(
-                MaCrossScanRow(
-                    code=c,
-                    error=f"K 线不足（{len(klines)}<{slow + 1}）",
-                )
-            )
-            continue
-        try:
-            res, _ = run_ma_cross_backtest(
-                klines,
-                fast=fast,
-                slow=slow,
-                commission_rate=commission_rate,
-                slippage_rate=slippage_rate,
-                include_equity_curve=False,
-            )
-        except ValueError as e:
-            rows.append(MaCrossScanRow(code=c, error=str(e)))
-            continue
-
-        rows.append(
-            MaCrossScanRow(
-                code=res.code,
-                bars_used=res.bars_used,
-                total_return_pct=round(res.total_return_pct, 4),
-                buy_hold_return_pct=round(res.buy_hold_return_pct, 4),
-                max_drawdown_pct=round(res.max_drawdown_pct, 4),
-                sharpe_ratio=round(res.sharpe_ratio, 4),
-                signal_changes=res.signal_changes,
-            )
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="ma_cross_scan.csv"'
+            },
         )
 
-    def sort_key(r: MaCrossScanRow) -> float:
-        if r.error or r.total_return_pct is None:
-            return float("-inf")
-        return float(r.total_return_pct)
-
-    rows.sort(key=sort_key, reverse=True)
-
+    rows = [MaCrossScanRow.model_validate(x) for x in items]
     return MaCrossScanResponse(
         fast_period=fast,
         slow_period=slow,
