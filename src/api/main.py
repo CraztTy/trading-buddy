@@ -16,7 +16,7 @@ from src.common.redis_client import (
     init_redis_client,
 )
 from src.data.storage import dispose_database, get_database
-from .routers import stocks, klines, realtime, dashboard
+from .routers import stocks, klines, realtime, dashboard, backtest
 
 
 # 初始化日志
@@ -69,6 +69,7 @@ app.include_router(stocks.router, prefix="/api/stocks", tags=["股票"])
 app.include_router(klines.router, prefix="/api/klines", tags=["K线"])
 app.include_router(realtime.router, prefix="/api/realtime", tags=["实时行情"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["看板"])
+app.include_router(backtest.router, prefix="/api/backtest", tags=["回测"])
 
 
 @app.get("/")

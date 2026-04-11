@@ -104,6 +104,18 @@ trading-buddy/
 
 **其它**：`DATA_SOURCE`、`LOG_LEVEL`、`API_HOST`、`API_PORT`、`CORS_ORIGINS`（生产建议显式域名，逗号分隔）。
 
+## 最小回测（双均线）
+
+- **HTTP**：`GET /api/backtest/ma-cross?code=sh.000001&fast=5&slow=20&limit=500`  
+  返回总收益、买入持有基准、最大回撤、夏普（252 日年化）、信号翻转次数及权益曲线采样点。
+- **CLI**（读当前 `.env` 数据库）：
+
+```bash
+python scripts/run_backtest.py --code sh.000001 --fast 5 --slow 20 --limit 500
+```
+
+逻辑说明：快慢线均用**收盘**计算；信号在收盘确定后，**滞后一日**乘日收益，避免当根 K 线前视偏差。
+
 ## 测试
 
 ```bash
