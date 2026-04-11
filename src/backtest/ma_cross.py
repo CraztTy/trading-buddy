@@ -90,6 +90,8 @@ class MaCrossBacktestResult:
     long_trades_count: int
     win_rate_pct: float
     avg_holding_return_pct: float
+    underlying_beta: float
+    underlying_alpha_ann_pct: float
     commission_rate: float = 0.0
     slippage_rate: float = 0.0
 
@@ -101,6 +103,8 @@ class MaCrossBacktestResult:
             " 多头持仓段=有效仓位为多的最长连续区间；段内收益为日 strat_ret 复利。"
             " 段胜率按金额加权：权重为段首日前一日累计权益，盈利段贡献其权重。"
             " 平均持有收益为各段总收益（%）的简单平均。"
+            " underlying_beta / underlying_alpha_ann_pct：日策略收益对日标的收盘收益的 OLS（rf=0），"
+            " α 按 ×252 年化到百分点。"
             " 信号基于收盘均线，收益为收盘到收盘且滞后一日。"
         )
         if self.commission_rate > 0:
@@ -140,6 +144,8 @@ class MaCrossBacktestResult:
             "long_trades_count": self.long_trades_count,
             "win_rate_pct": round(self.win_rate_pct, 4),
             "avg_holding_return_pct": round(self.avg_holding_return_pct, 4),
+            "underlying_beta": round(self.underlying_beta, 4),
+            "underlying_alpha_ann_pct": round(self.underlying_alpha_ann_pct, 4),
             "note": note,
         }
         return d
@@ -227,6 +233,22 @@ def ma_cross_result_from_df(
     else:
         calmar_ratio = 0.0
 
+    mkt_active = daily_ret.iloc[1:].astype(float)
+    if len(mkt_active) == len(active) and len(active) > 1:
+        m = mkt_active.to_numpy(dtype=float)
+        s_arr = active.to_numpy(dtype=float)
+        vm = float(np.var(m))
+        if vm > 1e-18:
+            cov_sm = float(np.cov(s_arr, m, bias=True)[0, 1])
+            underlying_beta = float(cov_sm / vm)
+        else:
+            underlying_beta = 0.0
+        alpha_daily = float(np.mean(s_arr) - underlying_beta * float(np.mean(m)))
+        underlying_alpha_ann_pct = float(alpha_daily * 252.0 * 100.0)
+    else:
+        underlying_beta = 0.0
+        underlying_alpha_ann_pct = 0.0
+
     seg_list = _long_hold_segments_start_and_return_pct(hold, strat_ret)
     long_trades_count = len(seg_list)
     if long_trades_count > 0:
@@ -267,6 +289,8 @@ def ma_cross_result_from_df(
         long_trades_count=long_trades_count,
         win_rate_pct=win_rate_pct,
         avg_holding_return_pct=avg_holding_return_pct,
+        underlying_beta=underlying_beta,
+        underlying_alpha_ann_pct=underlying_alpha_ann_pct,
         commission_rate=float(commission_rate),
         slippage_rate=float(slippage_rate),
     )

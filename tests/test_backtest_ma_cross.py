@@ -42,6 +42,8 @@ def test_ma_cross_uptrend_positive_return():
     assert isinstance(res.calmar_ratio, float)
     assert res.long_trades_count >= 1
     assert 0.0 <= res.win_rate_pct <= 100.0
+    assert isinstance(res.underlying_beta, float)
+    assert isinstance(res.underlying_alpha_ann_pct, float)
 
 
 def test_long_hold_segments_start_and_return_pct_two_segments():
@@ -63,6 +65,14 @@ def test_equity_weighted_win_rate_pct_not_equal_simple_count():
     exp = 100.0 * 0.99 / (1.0 + 0.99)
     assert abs(wr - exp) < 1e-6
     assert abs(wr - 50.0) > 0.1
+
+
+def test_flat_market_zero_underlying_beta():
+    n = 50
+    closes = [100.0] * n
+    df = pd.DataFrame({"trade_date": _date_series(n), "close": closes})
+    res, _, _ = ma_cross_result_from_df(df, code="x", fast=2, slow=10)
+    assert res.underlying_beta == 0.0
 
 
 def test_ma_cross_fast_ge_slow_raises():

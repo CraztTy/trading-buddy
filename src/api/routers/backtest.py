@@ -44,6 +44,8 @@ class MaCrossBacktestResponse(BaseModel):
     long_trades_count: int
     win_rate_pct: float
     avg_holding_return_pct: float
+    underlying_beta: float
+    underlying_alpha_ann_pct: float
     note: str
     equity_curve: list[dict] = Field(default_factory=list)
 
@@ -66,6 +68,8 @@ class MaCrossScanRow(BaseModel):
     long_trades_count: int | None = None
     win_rate_pct: float | None = None
     avg_holding_return_pct: float | None = None
+    underlying_beta: float | None = None
+    underlying_alpha_ann_pct: float | None = None
 
 
 class MaCrossScanResponse(BaseModel):
@@ -103,7 +107,8 @@ async def ma_cross_scan(
         "total_return",
         description=(
             "排序：total_return | excess_return | sharpe | buy_hold | "
-            "ann_return | sortino | calmar | win_rate | avg_holding"
+            "ann_return | sortino | calmar | win_rate（额权）| avg_holding | "
+            "underlying_beta | underlying_alpha"
         ),
     ),
     max_concurrent: int = Query(

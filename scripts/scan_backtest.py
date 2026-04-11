@@ -119,7 +119,7 @@ def main() -> int:
         default="total_return",
         help=(
             "排序：total_return | excess_return | sharpe | buy_hold | ann_return | "
-            "sortino | calmar | win_rate | avg_holding"
+            "sortino | calmar | win_rate | avg_holding | underlying_beta | underlying_alpha"
         ),
     )
     p.add_argument(

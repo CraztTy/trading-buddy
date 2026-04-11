@@ -142,6 +142,8 @@ const SORT_BY_LABELS = {
   calmar: "Calmar",
   win_rate: "胜率(额权)",
   avg_holding: "均段收益",
+  underlying_beta: "β(标的)",
+  underlying_alpha: "α年化%",
 };
 
 function scanSortLabel(sortBy) {
@@ -465,6 +467,22 @@ watch(
           </span>
         </div>
         <div class="m">
+          <span class="mk">β（对标的日收益）</span>
+          <span class="mv mono">{{ result.underlying_beta?.toFixed?.(3) ?? "—" }}</span>
+        </div>
+        <div class="m">
+          <span class="mk">α 年化 %（rf=0）</span>
+          <span
+            class="mv mono"
+            :class="{
+              up: result.underlying_alpha_ann_pct > 0,
+              down: result.underlying_alpha_ann_pct < 0,
+            }"
+          >
+            {{ result.underlying_alpha_ann_pct?.toFixed?.(2) ?? "—" }}
+          </span>
+        </div>
+        <div class="m">
           <span class="mk">信号翻转</span>
           <span class="mv mono">{{ result.signal_changes ?? "—" }}</span>
         </div>
@@ -547,6 +565,8 @@ watch(
             <option value="buy_hold">买入持有 %</option>
             <option value="win_rate">段胜率 %(额权)</option>
             <option value="avg_holding">段均收益 %</option>
+            <option value="underlying_beta">β(标的)</option>
+            <option value="underlying_alpha">α 年化 %</option>
           </select>
         </label>
         <label class="field">
@@ -606,6 +626,8 @@ watch(
               <th>段</th>
               <th>胜%权</th>
               <th>均段%</th>
+              <th>β</th>
+              <th>α年%</th>
               <th>翻转</th>
               <th>备注</th>
             </tr>
@@ -647,6 +669,16 @@ watch(
                 }"
               >
                 {{ row.error ? "—" : row.avg_holding_return_pct?.toFixed(2) }}
+              </td>
+              <td class="mono">{{ row.error ? "—" : row.underlying_beta?.toFixed(3) }}</td>
+              <td
+                class="mono"
+                :class="{
+                  up: !row.error && row.underlying_alpha_ann_pct > 0,
+                  down: !row.error && row.underlying_alpha_ann_pct < 0,
+                }"
+              >
+                {{ row.error ? "—" : row.underlying_alpha_ann_pct?.toFixed(2) }}
               </td>
               <td class="mono">{{ row.error ? "—" : row.signal_changes }}</td>
               <td class="err-cell">{{ row.error || "" }}</td>

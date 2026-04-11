@@ -25,6 +25,8 @@ VALID_SORT_BY = frozenset(
         "calmar",
         "win_rate",
         "avg_holding",
+        "underlying_beta",
+        "underlying_alpha",
     }
 )
 
@@ -38,6 +40,8 @@ _SORT_FIELD: dict[str, str] = {
     "calmar": "calmar_ratio",
     "win_rate": "win_rate_pct",
     "avg_holding": "avg_holding_return_pct",
+    "underlying_beta": "underlying_beta",
+    "underlying_alpha": "underlying_alpha_ann_pct",
 }
 
 
@@ -168,6 +172,8 @@ async def ma_cross_scan_items(
                     "long_trades_count": None,
                     "win_rate_pct": None,
                     "avg_holding_return_pct": None,
+                    "underlying_beta": None,
+                    "underlying_alpha_ann_pct": None,
                 }
             )
             continue
@@ -200,6 +206,8 @@ async def ma_cross_scan_items(
                     "long_trades_count": None,
                     "win_rate_pct": None,
                     "avg_holding_return_pct": None,
+                    "underlying_beta": None,
+                    "underlying_alpha_ann_pct": None,
                 }
             )
             continue
@@ -225,6 +233,8 @@ async def ma_cross_scan_items(
                 "long_trades_count": res.long_trades_count,
                 "win_rate_pct": round(res.win_rate_pct, 4),
                 "avg_holding_return_pct": round(res.avg_holding_return_pct, 4),
+                "underlying_beta": round(res.underlying_beta, 4),
+                "underlying_alpha_ann_pct": round(res.underlying_alpha_ann_pct, 4),
             }
         )
 
@@ -280,6 +290,8 @@ def ma_cross_scan_csv_bytes(
             "long_trades_count",
             "win_rate_pct",
             "avg_holding_return_pct",
+            "underlying_beta",
+            "underlying_alpha_ann_pct",
             "signal_changes",
         ]
     )
@@ -317,6 +329,10 @@ def ma_cross_scan_csv_bytes(
                 r.get("win_rate_pct") if r.get("win_rate_pct") is not None else "",
                 r.get("avg_holding_return_pct")
                 if r.get("avg_holding_return_pct") is not None
+                else "",
+                r.get("underlying_beta") if r.get("underlying_beta") is not None else "",
+                r.get("underlying_alpha_ann_pct")
+                if r.get("underlying_alpha_ann_pct") is not None
                 else "",
                 r.get("signal_changes")
                 if r.get("signal_changes") is not None
