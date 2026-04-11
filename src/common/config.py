@@ -28,8 +28,15 @@ def _load_env_file() -> None:
                     os.environ[key.strip()] = val.strip()
 
 
-# 启动时加载 .env
-_load_env_file()
+def _skip_dotenv() -> bool:
+    """pytest 等场景下由 tests/conftest 置位，避免测试被本机 .env 劫持。"""
+    v = os.environ.get("TRADING_BUDDY_SKIP_DOTENV", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+# 启动时加载 .env（测试进程见 TRADING_BUDDY_SKIP_DOTENV）
+if not _skip_dotenv():
+    _load_env_file()
 
 
 class DatabaseSettings(BaseSettings):

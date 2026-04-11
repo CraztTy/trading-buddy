@@ -10,7 +10,7 @@
 ## 第一步：安装 Python 依赖
 
 ```powershell
-cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+cd C:\Users\Administrator\Desktop\trading-buddy
 # 若你的路径不同，请改为本仓库根目录
 
 # 创建虚拟环境（推荐）
@@ -105,7 +105,7 @@ python scripts\run_api.py
 **新开一个终端**（API 仍在运行）：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy\frontend
+cd C:\Users\Administrator\Desktop\trading-buddy\frontend
 npm install
 npm run dev
 ```
@@ -129,7 +129,7 @@ npm run dev
 **一键自检（需已配置 `.env`，会连 MySQL / Redis 并冒烟若干路由）：**
 
 ```powershell
-cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+cd C:\Users\Administrator\Desktop\trading-buddy
 python scripts\verify_stack.py
 ```
 
@@ -169,7 +169,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ## 每日使用流程
 
 ```powershell
-cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+cd C:\Users\Administrator\Desktop\trading-buddy
 
 # 推荐：一键日常增量（刷新股票表 + 增量指数 + 增量全市场日 K）
 python scripts\feed_dashboard.py --profile daily --skip-init
@@ -185,7 +185,7 @@ python scripts\fetch_data.py --mode daily
 在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.0.1**）：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+cd C:\Users\Administrator\Desktop\trading-buddy
 
 # 工作区应已提交，无未跟踪的重要文件
 git status

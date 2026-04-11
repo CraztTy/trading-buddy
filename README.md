@@ -1,30 +1,30 @@
 # Trading Buddy - 精简版量化交易系统 V1
 
-> A股量化交易基础设施，聚焦数据层 + 可视化，为后续策略执行打基础
+> A股量化交易基础设施，聚焦数据层 + 可视化，为后续策略执行打基础。当前发布线：**1.0.1**（版本见 `src/common/__init__.py` 与 `GET /health` 的 `app_version`）。
 
 ## 技术栈
 
 | 层级 | 技术选型 | 说明 |
 |------|----------|------|
 | 语言 | Python 3.10+ | 主流、库丰富 |
-| API框架 | FastAPI | 高性能、自动文档 |
-| 数据库 | MySQL 8.0 | 稳定、结构化存储 |
-| 缓存 | Redis | 实时行情缓存 |
+| API | FastAPI | 高性能、自动文档 `/docs` |
+| 数据库 | SQLite（默认）/ MySQL 8.0 | 本地零配置或云上结构化存储 |
+| 缓存 | Redis（可选） | 实时行情缓存 |
 | 数据源 | baostock（免费） | A股数据、无需注册 |
-| 前端看板 | ECharts | 轻量、K线图支持好 |
+| 看板 | Vue 3 + Vite + ECharts | 主看板在 `frontend/`；仓库内 `dashboard/index.html` 为旧版静态页备选 |
 
 ## 架构分层
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      看板层 (Dashboard)                       │
-│              ECharts K线图 / 板块行情 / 涨跌榜                 │
+│              Vue 看板：K 线 / 指数 / 涨跌榜                    │
 ├─────────────────────────────────────────────────────────────┤
 │                      API层 (API Service)                     │
 │              FastAPI - 股票查询 / K线 / 实时行情               │
 ├─────────────────────────────────────────────────────────────┤
 │                      缓存层 (Cache)                           │
-│                    Redis - 实时数据 / 会话                     │
+│                    Redis - 实时数据（可选）                      │
 ├─────────────────────────────────────────────────────────────┤
 │                      数据层 (Data Service)                     │
 │           数据拉取 / 数据清洗 / 数据存储 / 历史数据              │
@@ -44,70 +44,73 @@
 
 ## 快速开始
 
+更细的步骤、云库与日常增量说明见 **[FIRST_STEPS.md](FIRST_STEPS.md)**。
+
 ```bash
-# 1. 启动基础设施
+# 1) 可选：仅本地 MySQL + Redis
 docker-compose up -d
 
-# 2. 安装依赖
+# 2) Python 依赖（云 MySQL 8 建议保留 requirements 中的 cryptography）
 pip install -r requirements.txt
 
-# 3. 初始化数据库
+# 3) 根目录复制环境模板并编辑（勿提交 .env）
+cp .env.example .env   # Windows: copy .env.example .env
+
+# 4) 建表
 python scripts/init_db.py
 
-# 4. 拉取初始数据
-python scripts/fetch_data.py
+# 5) 灌数（推荐一键；详见 FIRST_STEPS）
+python scripts/feed_dashboard.py --profile quick
 
-# 5. 启动API服务
-uvicorn src.api.main:app --reload
+# 6) 启动 API
+python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
-# 6. 打开看板
-# 浏览器访问 http://localhost:8000
+# 7) 另开终端：Vue 看板
+cd frontend && npm install && npm run dev
+# 开发默认 http://localhost:5173 ，经 Vite 代理访问本机 API
 ```
+
+接口文档：http://127.0.0.1:8000/docs  
+浅探活：`GET /health`；含 DB/Redis 探测：`GET /health/ready`。
 
 ## 项目结构
 
 ```
 trading-buddy/
-├── configs/              # 配置文件
-│   └── settings.py       # Pydantic Settings
-├── docker-compose.yml    # 基础设施
-├── requirements.txt      # Python依赖
-├── scripts/              # 工具脚本
-│   ├── init_db.py        # 数据库初始化
-│   └── fetch_data.py     # 数据拉取
-├── src/                  # 源代码
-│   ├── api/              # API层
-│   │   ├── main.py       # FastAPI入口
-│   │   └── routers/       # 路由模块
-│   ├── data/             # 数据层
-│   │   ├── sources/      # 数据源适配器
-│   │   ├── storage/      # 存储逻辑
-│   │   └── models/       # 数据模型
-│   └── common/           # 公共模块
-│       ├── config.py     # 配置
-│       └── logger.py     # 日志
-├── dashboard/            # 前端看板
-│   └── index.html        # K线看板
-├── tests/                # 测试
-└── README.md
+├── docker-compose.yml    # 可选：本地 MySQL + Redis
+├── requirements.txt
+├── .env.example           # 环境变量模板（勿写真实密码）
+├── FIRST_STEPS.md         # 上手与发布流程
+├── scripts/               # init_db、拉数、feed_dashboard、verify_stack 等
+├── src/
+│   ├── api/               # FastAPI 入口与 routers
+│   ├── data/              # 数据源、存储、模型
+│   └── common/            # 配置、日志、版本号
+├── frontend/              # Vue 3 看板（推荐）
+├── dashboard/             # 旧版静态 HTML（可选）
+└── tests/
 ```
 
-## 环境变量
+## 环境变量（摘要）
 
-```env
-# .env 文件
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_password
-DB_NAME=trading
+根目录 `.env` 由 `src/common/config.py` 加载。与 **MySQL** 相关的常用键：
 
-REDIS_HOST=localhost
-REDIS_PORT=6379
+- `DATABASE_MODE`：`sqlite`（默认）或 `mysql`
+- `DATABASE_HOST` / `DATABASE_PORT` / `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_NAME`
+- 兼容别名：`DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`
+- 云库：`DATABASE_CONNECT_TIMEOUT`、`DATABASE_SSL`
 
-DATA_SOURCE=baostock
-LOG_LEVEL=INFO
+**Redis**：`REDIS_ENABLED`、`REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`（可选）。
+
+**其它**：`DATA_SOURCE`、`LOG_LEVEL`、`API_HOST`、`API_PORT`、`CORS_ORIGINS`（生产建议显式域名，逗号分隔）。
+
+## 测试
+
+```bash
+python -m pytest tests -q
 ```
+
+测试进程会设置 `TRADING_BUDDY_SKIP_DOTENV`，**不读取** 仓库根目录 `.env`，避免本机云库配置影响 CI/本地单测。
 
 ## License
 
