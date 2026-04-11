@@ -198,6 +198,8 @@ def ma_cross_scan_csv_bytes(
     commission_rate: float,
     slippage_rate: float,
     sort_by: str = "total_return",
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> bytes:
     """UTF-8 BOM + CSV，便于 Excel 打开。"""
     import csv
@@ -205,11 +207,16 @@ def ma_cross_scan_csv_bytes(
 
     buf = io.StringIO()
     w = csv.writer(buf)
+    range_bits = ""
+    if start_date is not None:
+        range_bits += f" start_date={start_date.isoformat()}"
+    if end_date is not None:
+        range_bits += f" end_date={end_date.isoformat()}"
     w.writerow(
         [
             f"# fast={fast} slow={slow} limit={limit} "
             f"commission_rate={commission_rate} slippage_rate={slippage_rate} "
-            f"sort_by={sort_by}"
+            f"sort_by={sort_by}{range_bits}"
         ]
     )
     w.writerow(

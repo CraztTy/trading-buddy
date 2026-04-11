@@ -6,6 +6,7 @@
   python scripts/scan_backtest.py --codes "sh.000001,sh.000300"
   python scripts/scan_backtest.py --codes-file codes.txt -o scan.csv
   python scripts/scan_backtest.py --codes "a,b" --sort-by excess_return
+  python scripts/scan_backtest.py --codes "sh.000001" --start-date 2022-01-01 --end-date 2024-12-31
 
 codes.txt 支持每行一个代码，或逗号分隔。
 """
@@ -15,9 +16,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import date
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
+
+
+def _opt_iso_date(s: str | None) -> date | None:
+    if s is None:
+        return None
+    t = str(s).strip()
+    if not t:
+        return None
+    return date.fromisoformat(t)
 
 
 async def _async_main(
@@ -30,6 +41,8 @@ async def _async_main(
     max_codes: int,
     sort_by: str,
     max_concurrent: int,
+    start_date: date | None,
+    end_date: date | None,
     out_path: Path | None,
 ) -> int:
     sys.path.insert(0, str(project_root))
@@ -60,8 +73,8 @@ async def _async_main(
             fast=fast,
             slow=slow,
             limit=limit,
-            start_date=None,
-            end_date=None,
+            start_date=start_date,
+            end_date=end_date,
             commission_rate=commission_rate,
             slippage_rate=slippage_rate,
             sort_by=sort_norm,
@@ -78,6 +91,8 @@ async def _async_main(
         commission_rate=commission_rate,
         slippage_rate=slippage_rate,
         sort_by=sort_norm,
+        start_date=start_date,
+        end_date=end_date,
     )
     if out_path:
         out_path.write_bytes(blob)
@@ -110,6 +125,18 @@ def main() -> int:
         default=8,
         help="MySQL 等下并行拉 K 并发上限（SQLite 下忽略，顺序执行）",
     )
+    p.add_argument(
+        "--start-date",
+        type=str,
+        default=None,
+        help="可选，K 线起始日（含），ISO 格式 YYYY-MM-DD",
+    )
+    p.add_argument(
+        "--end-date",
+        type=str,
+        default=None,
+        help="可选，K 线结束日（含），ISO 格式 YYYY-MM-DD",
+    )
     p.add_argument("-o", "--output", type=Path, default=None, help="输出文件；省略则打印到 stdout")
     args = p.parse_args()
 
@@ -118,6 +145,16 @@ def main() -> int:
         return 2
     if args.commission_rate + args.slippage_rate > 0.08:
         print("错误: commission-rate 与 slippage-rate 之和勿超过 0.08", file=sys.stderr)
+        return 2
+
+    try:
+        d_start = _opt_iso_date(args.start_date)
+        d_end = _opt_iso_date(args.end_date)
+    except ValueError:
+        print("错误: --start-date / --end-date 须为 YYYY-MM-DD", file=sys.stderr)
+        return 2
+    if d_start and d_end and d_start > d_end:
+        print("错误: --start-date 不能晚于 --end-date", file=sys.stderr)
         return 2
 
     if args.codes_file:
@@ -136,6 +173,8 @@ def main() -> int:
             args.max_codes,
             args.sort_by,
             args.max_concurrent,
+            d_start,
+            d_end,
             args.output,
         )
     )

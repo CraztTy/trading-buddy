@@ -16,6 +16,9 @@ const limit = ref(500);
 /** 万分之几 */
 const feeWan = ref(0);
 const slipWan = ref(0);
+/** 可选日 K 过滤（含），单标的与批量扫描共用 → API start_date / end_date */
+const tradeStartDate = ref("");
+const tradeEndDate = ref("");
 
 const loading = ref(false);
 const error = ref("");
@@ -100,13 +103,25 @@ const chartOption = computed(() => {
 });
 
 function commonParams() {
-  return new URLSearchParams({
+  const p = new URLSearchParams({
     fast: String(fast.value),
     slow: String(slow.value),
     limit: String(limit.value),
     commission_rate: String(feeRate.value),
     slippage_rate: String(slipRate.value),
   });
+  const s = (tradeStartDate.value || "").trim();
+  const e = (tradeEndDate.value || "").trim();
+  if (s) p.set("start_date", s);
+  if (e) p.set("end_date", e);
+  return p;
+}
+
+function tradeRangeInvalidMsg() {
+  const s = (tradeStartDate.value || "").trim();
+  const e = (tradeEndDate.value || "").trim();
+  if (s && e && s > e) return "起始日不能晚于结束日";
+  return "";
 }
 
 /** 扫描 / CSV 下载在 common 基础上附加排序与并发 */
@@ -147,10 +162,28 @@ function downloadSingleJson() {
   URL.revokeObjectURL(url);
 }
 
+function downloadScanJson() {
+  if (!scanResult.value?.items?.length) return;
+  const text = JSON.stringify(scanResult.value, null, 2);
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ma_cross_scan_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function runBacktest() {
   loading.value = true;
   error.value = "";
   result.value = null;
+  const rangeErr = tradeRangeInvalidMsg();
+  if (rangeErr) {
+    error.value = rangeErr;
+    loading.value = false;
+    return;
+  }
   const c = (props.code || "").trim();
   if (!c) {
     error.value = "请先选择标的";
@@ -172,6 +205,12 @@ async function runScan() {
   scanLoading.value = true;
   scanError.value = "";
   scanResult.value = null;
+  const rangeErr = tradeRangeInvalidMsg();
+  if (rangeErr) {
+    scanError.value = rangeErr;
+    scanLoading.value = false;
+    return;
+  }
   const raw = (scanCodesText.value || "").trim();
   if (!raw) {
     scanError.value = "请填写至少一个代码";
@@ -195,6 +234,11 @@ function fillPresetMajors() {
 }
 
 async function downloadScanCsv() {
+  const rangeErr = tradeRangeInvalidMsg();
+  if (rangeErr) {
+    scanError.value = rangeErr;
+    return;
+  }
   const raw = (scanCodesText.value || "").trim();
   if (!raw) {
     scanError.value = "请填写至少一个代码";
@@ -254,6 +298,21 @@ watch(
         批量扫描
       </button>
     </div>
+
+    <div class="trade-range-row">
+      <label class="field">
+        <span class="lbl">区间起始（可选，含）</span>
+        <input v-model="tradeStartDate" type="date" class="inp mono" />
+      </label>
+      <label class="field">
+        <span class="lbl">区间结束（可选，含）</span>
+        <input v-model="tradeEndDate" type="date" class="inp mono" />
+      </label>
+    </div>
+    <p class="trade-range-note">
+      留空则按 K 根数从最新往回取；填写后作用于单标的与批量扫描（对应接口
+      <span class="mono">start_date</span> / <span class="mono">end_date</span>）。
+    </p>
 
     <template v-if="innerTab === 'single'">
       <header class="hd">
@@ -390,6 +449,14 @@ watch(
           >
             {{ scanCsvLoading ? "导出中…" : "下载 CSV" }}
           </button>
+          <button
+            type="button"
+            class="run secondary"
+            :disabled="!scanResult?.items?.length"
+            @click="downloadScanJson"
+          >
+            下载 JSON
+          </button>
         </div>
       </header>
 
@@ -458,6 +525,10 @@ watch(
         <span>滑点 {{ wanFromRate(scanResult.slippage_rate) }}‱</span>
         <span class="scan-meta-sep">·</span>
         <span>{{ scanResult.items.length }} 行</span>
+        <template v-if="scanResult.start_date || scanResult.end_date">
+          <span class="scan-meta-sep">·</span>
+          <span>区间 {{ scanResult.start_date || "—" }} → {{ scanResult.end_date || "—" }}</span>
+        </template>
       </p>
 
       <div v-if="scanResult?.items?.length" class="scan-wrap">
@@ -546,6 +617,28 @@ watch(
   color: var(--meridian);
   border-color: rgba(62, 224, 255, 0.4);
   background: rgba(62, 224, 255, 0.08);
+}
+
+.trade-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 20px;
+  margin-bottom: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule-faint);
+}
+
+.trade-range-note {
+  margin: 0 0 18px;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--mist-dim);
+}
+
+.trade-range-note .mono {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--mist-dim);
 }
 
 .hd {

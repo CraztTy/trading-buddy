@@ -60,6 +60,8 @@ class MaCrossScanResponse(BaseModel):
     slippage_rate: float
     sort_by: str
     max_concurrent: int
+    start_date: str | None = None
+    end_date: str | None = None
     items: list[MaCrossScanRow]
 
 
@@ -101,6 +103,8 @@ async def ma_cross_scan(
             status_code=400,
             detail="commission_rate 与 slippage_rate 之和勿超过 0.08",
         )
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
     try:
         sort_norm = normalize_sort_by(sort_by)
     except ValueError as e:
@@ -132,6 +136,8 @@ async def ma_cross_scan(
             commission_rate=round(commission_rate, 8),
             slippage_rate=round(slippage_rate, 8),
             sort_by=sort_norm,
+            start_date=start_date,
+            end_date=end_date,
         )
         return Response(
             content=body,
@@ -150,6 +156,8 @@ async def ma_cross_scan(
         slippage_rate=round(slippage_rate, 8),
         sort_by=sort_norm,
         max_concurrent=max_concurrent,
+        start_date=start_date.isoformat() if start_date else None,
+        end_date=end_date.isoformat() if end_date else None,
         items=rows,
     )
 
@@ -183,6 +191,8 @@ async def ma_cross_backtest(
             status_code=400,
             detail="commission_rate 与 slippage_rate 之和勿超过 0.08",
         )
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
 
     repo = KlineRepository(session)
     klines = await repo.get_daily(

@@ -107,6 +107,7 @@ trading-buddy/
 ## 最小回测（双均线）
 
 - **单标的 HTTP**：`GET /api/backtest/ma-cross?code=sh.000001&fast=5&slow=20&limit=500`  
+  - `start_date`、`end_date`（可选，ISO 日期，含）：与 `limit` 一并约束取用的日 K；若二者均填且 `start_date` > `end_date` 则 400。  
   - `commission_rate`、`slippage_rate`：单边费率，在**持仓翻转日**各扣一次（与手续费同口径）；二者之和勿超过 `0.08`。  
   - 返回总收益、买入持有、**超额收益**（策略 − 买入持有）、最大回撤、夏普（252 日年化）、翻转次数、权益曲线采样点。
 - **批量扫描**：`GET /api/backtest/ma-cross/scan?codes=sh.000001,sh.000300&fast=5&slow=20&limit=500`  
@@ -114,8 +115,9 @@ trading-buddy/
   - `sort_by`：`total_return`（默认）| `excess_return` | `sharpe` | `buy_hold`，按对应指标降序。  
   - `max_concurrent`（默认 8，上限 20）：**MySQL** 下并行拉各标日 K 的并发；**SQLite** 下为单会话顺序拉取，避免锁竞争。  
   - `export=csv`：返回 **UTF-8 BOM** CSV（首行为参数注释，含 `sort_by`），便于 Excel；`export=json`（默认）。  
-  - CLI：`python scripts/scan_backtest.py --codes "sh.000001,sh.000300" -o scan.csv`；可选 `--sort-by excess_return`、`--max-concurrent 12`
-- **Vue**：**策略回测** 内「单标的 / 批量扫描」；手续费与滑点均为「万分之」；单标的 **下载 JSON**；批量 **下载 CSV**、**填入主要指数**。
+  - CLI：`python scripts/scan_backtest.py --codes "sh.000001,sh.000300" -o scan.csv`；可选 `--sort-by excess_return`、`--max-concurrent 12`、`--start-date` / `--end-date`（YYYY-MM-DD）。  
+  - JSON 响应含 `start_date` / `end_date` 回显（与请求一致，未传则为 `null`）。
+- **Vue**：**策略回测** 内「单标的 / 批量扫描」；**共用**可选区间日与 K 根数；手续费与滑点均为「万分之」；单标的 **下载 JSON**；批量 **下载 CSV / JSON**、**填入主要指数**。
 - **CLI**（读当前 `.env` 数据库）：
 
 ```bash
