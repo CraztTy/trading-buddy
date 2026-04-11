@@ -17,11 +17,11 @@ import pandas as pd
 from src.data.models import KLine
 
 
-def _long_segment_total_returns_pct(
+def _long_hold_segments_start_and_return_pct(
     hold: pd.Series, strat_ret: pd.Series
-) -> list[float]:
+) -> list[tuple[int, float]]:
     """
-    连续多头段内日策略收益复利，返回每段总收益（百分点，与 total_return_pct 同口径）。
+    连续多头段：返回 (段首索引, 段总收益百分点)，与 total_return_pct 同口径。
     hold 为滞后一日的有效仓位，与 strat_ret 逐行对齐。
     """
     h = hold.to_numpy(dtype=float)
@@ -29,7 +29,7 @@ def _long_segment_total_returns_pct(
     n = len(h)
     if len(r) != n:
         raise ValueError("hold 与 strat_ret 长度须一致")
-    out: list[float] = []
+    out: list[tuple[int, float]] = []
     i = 0
     while i < n:
         if h[i] < 0.5:
@@ -39,9 +39,33 @@ def _long_segment_total_returns_pct(
         while j + 1 < n and h[j + 1] >= 0.5:
             j += 1
         chunk = r[i : j + 1]
-        out.append(float(np.prod(1.0 + chunk) - 1.0) * 100.0)
+        out.append((i, float(np.prod(1.0 + chunk) - 1.0) * 100.0))
         i = j + 1
     return out
+
+
+def _equity_weighted_win_rate_pct(
+    segments: list[tuple[int, float]], equity: pd.Series
+) -> float:
+    """
+    按「段首日前一日权益」加权：胜率% = 100 × Σ(w_k·𝟙{r_k>0}) / Σ w_k。
+    段首日为 s 时 w_k = equity[s-1]（s=0 时用 1.0 表示期初净值）。
+    """
+    if not segments:
+        return 0.0
+    eq_arr = equity.to_numpy(dtype=float)
+    weights: list[float] = []
+    win_flags: list[float] = []
+    for s, rp in segments:
+        w = float(eq_arr[s - 1]) if s > 0 else 1.0
+        weights.append(w)
+        win_flags.append(1.0 if rp > 0.0 else 0.0)
+    w_np = np.array(weights, dtype=float)
+    wf_np = np.array(win_flags, dtype=float)
+    sw = float(w_np.sum())
+    if sw <= 1e-12:
+        return 0.0
+    return float(100.0 * float((w_np * wf_np).sum()) / sw)
 
 
 @dataclass(frozen=True)
@@ -75,7 +99,8 @@ class MaCrossBacktestResult:
             " 年化收益为区间复利换算：(1+总收益)^(252/区间交易日)−1。"
             " Calmar=年化收益÷|最大回撤|（回撤为负百分比时取绝对值）。"
             " 多头持仓段=有效仓位为多的最长连续区间；段内收益为日 strat_ret 复利。"
-            " 胜率=盈利段数/段数；平均持有收益为各段总收益（%）的简单平均。"
+            " 段胜率按金额加权：权重为段首日前一日累计权益，盈利段贡献其权重。"
+            " 平均持有收益为各段总收益（%）的简单平均。"
             " 信号基于收盘均线，收益为收盘到收盘且滞后一日。"
         )
         if self.commission_rate > 0:
@@ -202,11 +227,11 @@ def ma_cross_result_from_df(
     else:
         calmar_ratio = 0.0
 
-    seg_returns_pct = _long_segment_total_returns_pct(hold, strat_ret)
-    long_trades_count = len(seg_returns_pct)
+    seg_list = _long_hold_segments_start_and_return_pct(hold, strat_ret)
+    long_trades_count = len(seg_list)
     if long_trades_count > 0:
-        wins = sum(1 for x in seg_returns_pct if x > 0.0)
-        win_rate_pct = float(100.0 * wins / long_trades_count)
+        seg_returns_pct = [rp for _, rp in seg_list]
+        win_rate_pct = _equity_weighted_win_rate_pct(seg_list, equity)
         avg_holding_return_pct = float(np.mean(seg_returns_pct))
     else:
         win_rate_pct = 0.0

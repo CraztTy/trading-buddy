@@ -109,7 +109,7 @@ trading-buddy/
 - **单标的 HTTP**：`GET /api/backtest/ma-cross?code=sh.000001&fast=5&slow=20&limit=500`  
   - `start_date`、`end_date`（可选，ISO 日期，含）：与 `limit` 一并约束取用的日 K；若二者均填且 `start_date` > `end_date` 则 400。  
   - `commission_rate`、`slippage_rate`：单边费率，在**持仓翻转日**各扣一次（与手续费同口径）；二者之和勿超过 `0.08`。  
-  - 返回总收益、买入持有、**超额**、最大回撤、夏普 / **Sortino**、**Calmar**、年化与波动、**多头持仓段**统计（段数、**段胜率**、**段均收益 %**；段=有效仓位为多的连续区间，段内为日 `strat_ret` 复利）、翻转次数、权益曲线采样点。
+  - 返回总收益、买入持有、**超额**、最大回撤、夏普 / **Sortino**、**Calmar**、年化与波动、**多头持仓段**统计（段数、**段胜率（按段首前一日累计权益加权）**、**段均收益 %**；段=有效仓位为多的连续区间，段内为日 `strat_ret` 复利）、翻转次数、权益曲线采样点。
 - **批量扫描**：`GET /api/backtest/ma-cross/scan?codes=sh.000001,sh.000300&fast=5&slow=20&limit=500`  
   - `codes` 支持逗号或换行分隔，默认最多 **25** 只（`max_codes` 可调至 40）；无 K 线或回测失败的行带 `error` 并沉底。  
   - `sort_by`：`total_return`（默认）| `excess_return` | `sharpe` | `buy_hold` | `ann_return` | `sortino` | `calmar` | `win_rate` | `avg_holding`，按对应指标降序。  

@@ -140,7 +140,7 @@ const SORT_BY_LABELS = {
   ann_return: "年化收益",
   sortino: "Sortino",
   calmar: "Calmar",
-  win_rate: "胜率",
+  win_rate: "胜率(额权)",
   avg_holding: "均段收益",
 };
 
@@ -449,7 +449,7 @@ watch(
           <span class="mv mono">{{ result.long_trades_count ?? "—" }}</span>
         </div>
         <div class="m">
-          <span class="mk">段胜率 %</span>
+          <span class="mk">段胜率 %(额权)</span>
           <span class="mv mono">{{ result.win_rate_pct?.toFixed?.(1) ?? "—" }}</span>
         </div>
         <div class="m">
@@ -545,7 +545,7 @@ watch(
             <option value="calmar">Calmar</option>
             <option value="ann_return">年化收益 %</option>
             <option value="buy_hold">买入持有 %</option>
-            <option value="win_rate">段胜率 %</option>
+            <option value="win_rate">段胜率 %(额权)</option>
             <option value="avg_holding">段均收益 %</option>
           </select>
         </label>
@@ -604,7 +604,7 @@ watch(
               <th>So</th>
               <th>Ca</th>
               <th>段</th>
-              <th>胜率%</th>
+              <th>胜%权</th>
               <th>均段%</th>
               <th>翻转</th>
               <th>备注</th>

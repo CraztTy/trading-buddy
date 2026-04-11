@@ -8,7 +8,8 @@ import pandas as pd
 import pytest
 
 from src.backtest.ma_cross import (
-    _long_segment_total_returns_pct,
+    _equity_weighted_win_rate_pct,
+    _long_hold_segments_start_and_return_pct,
     ma_cross_result_from_df,
     run_ma_cross_backtest,
 )
@@ -43,14 +44,25 @@ def test_ma_cross_uptrend_positive_return():
     assert 0.0 <= res.win_rate_pct <= 100.0
 
 
-def test_long_segment_total_returns_pct_two_segments():
+def test_long_hold_segments_start_and_return_pct_two_segments():
     hold = pd.Series([0.0, 1.0, 1.0, 0.0, 1.0])
     r = pd.Series([0.0, 0.1, -0.05, 0.0, 0.2])
-    segs = _long_segment_total_returns_pct(hold, r)
+    segs = _long_hold_segments_start_and_return_pct(hold, r)
     assert len(segs) == 2
     exp0 = float(((1.1 * 0.95) - 1.0) * 100.0)
-    assert abs(segs[0] - exp0) < 1e-6
-    assert abs(segs[1] - 20.0) < 1e-6
+    assert segs[0][0] == 1
+    assert abs(segs[0][1] - exp0) < 1e-6
+    assert segs[1][0] == 4
+    assert abs(segs[1][1] - 20.0) < 1e-6
+
+
+def test_equity_weighted_win_rate_pct_not_equal_simple_count():
+    equity = pd.Series([1.0, 1.1, 0.99, 0.99, 1.188])
+    segs = [(1, -1.0), (4, 20.0)]
+    wr = _equity_weighted_win_rate_pct(segs, equity)
+    exp = 100.0 * 0.99 / (1.0 + 0.99)
+    assert abs(wr - exp) < 1e-6
+    assert abs(wr - 50.0) > 0.1
 
 
 def test_ma_cross_fast_ge_slow_raises():
