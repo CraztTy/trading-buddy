@@ -86,6 +86,15 @@
 - **请求体前向字段（可选，已落地）**：**`BacktestRunMvpRequest`** 已含 **`universe` / `interval` / `start` / `end` / `initial_cash` / `commission` / `slippage`** 可选占位字段，OpenAPI 中标注 **MVP 不参与调度**；**`model_config.extra = "ignore"`** 忽略未知键。调度仍以 **`strategy_id` + `params`** 为准。
 - **异步任务形态（已落地 MVP）**：**`POST /run?async=1`** 返回 **202** + **`job_id`** / **`status_path`**；**`GET /api/backtest/jobs/{job_id}`** 轮询 **`pending` / `running` / `completed` / `failed` / `cancelled`**；**`POST …/jobs/{job_id}/cancel`** 与 **`BACKTEST_ASYNC_JOB_STUCK_SEC`** 行为见上文 **「API 契约：异步任务（job）」**。当 **`REDIS_ENABLED`** 且 **`BACKTEST_ASYNC_JOB_STORE`** 为 **`auto`**（默认）时，任务入 **Redis 列表队列**（键 **`tb:backtest:job:queue`**）且状态写入 **Redis JSON**（键 **`tb:backtest:job:{job_id}`**，TTL 见 **`BACKTEST_ASYNC_JOB_TTL_SEC`**，默认 7 天），API 进程重启后仍可轮询（须在队列消费完成前保持 Redis 可用）。**`BACKTEST_ASYNC_JOB_STORE=memory`** 时始终用进程内表（重启清空）；**`=redis`** 时强制 Redis，未连接则 **503**。**`GET /api/backtest/catalog`** 的 **`async_job_persistence`** 为 **`memory`** 或 **`redis`**，与当前实例行为一致。默认不带 **`async`** 仍为 **200 同步**。
 - **第三套策略注册清单**：新 `strategy_id` 时同步 **`src/backtest/runner`** 常量、**`_backtest_engine_catalog_payload`**、**`GET /api/strategies/catalog`**、**`scripts/verify_stack.py`**、**`export_backtest_catalog_fixture.py`** / **`tests/test_openapi_contract.py`**（与仓库内既有 catalog 契约流程一致）。
+
+**新策略接入检查清单（复制勾选）**
+
+1. **`src/backtest/runner`**：注册 **`STRATEGY_ID_*`**，实现 **`execute_*`** 并在 **`POST /api/backtest/run`** 分支接线。  
+2. **`GET /api/backtest/catalog`**：在 **`_backtest_engine_catalog_payload`**（或等价）增加条目：**`strategy_id` / `strategy_version` / `response_shape` / `archive_kind` / `get_equivalent_paths`**，**`title`/`description`** 非空。  
+3. **`GET /api/strategies/catalog`**：**`src/strategies/catalog.py`** 增加 **`id`** 与 **`backtest_run`**（**`strategy_id`**、**`archive_kind`** 与上一步 **`archive_kind`** 一致）、**`backtest_archive_kinds`**、**`signal_params`**（无试算则 **`maxProperties: 0`**）。  
+4. **单测**：**`tests/test_backtest_api_http.py`**（**`POST /run`**）、**`tests/test_strategies_api_http.py`**（**`archive_kind`** 与 engine catalog 对齐已有用例）、**`tests/test_openapi_contract.py`**；必要时 **`tests/test_verify_stack_catalog_shape.py`**。  
+5. **文档与固件**：**`docs/GENERIC_BACKTEST_DRAFT.md`** / **`docs/STRATEGY_CONTRACT.md`**；**`python scripts/export_openapi.py`**；**`python scripts/export_backtest_catalog_fixture.py`**（或 **`export_all_e2e_catalogs.py`**）刷新 **`frontend/e2e/fixtures/backtest-catalog.json`**。  
+6. **异步行为**：若该策略支持 **`?async=1`**，确认 **Redis** 与 **memory** 路径下 worker 与 **`cancelled` / 回收** 语义仍成立（见上文 **API 契约：异步任务**）。
 - **指标与假设扩展**：在 **`assumptions`** 与响应 JSON 上增加版本号或可选块（如 `positions`）时， bump **`ENGINE_VERSION`** 并更新本文件与 **`verify_stack`** 断言。
 
 ## 非目标（本阶段不做）

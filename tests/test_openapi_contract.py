@@ -125,6 +125,19 @@ def test_openapi_backtest_jobs_path_uses_job_status_schema() -> None:
     assert ref == "#/components/schemas/BacktestRunJobStatusResponse"
 
 
+def test_openapi_backtest_job_cancel_path_documents_responses() -> None:
+    """异步 job 取消端点须在 OpenAPI 中声明，且 200 体绑定 BacktestJobCancelResponse。"""
+    spec = app.openapi()
+    path_key = "/api/backtest/jobs/{job_id}/cancel"
+    assert path_key in spec["paths"]
+    post = spec["paths"][path_key]["post"]
+    assert "200" in post.get("responses", {})
+    assert "404" in post.get("responses", {})
+    assert "409" in post.get("responses", {})
+    ref = post["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert ref == "#/components/schemas/BacktestJobCancelResponse"
+
+
 def test_openapi_backtest_job_status_schema_requires_async_job_persistence() -> None:
     spec = app.openapi()
     js = spec["components"]["schemas"]["BacktestRunJobStatusResponse"]
