@@ -73,6 +73,15 @@ curl -sS -X POST "http://127.0.0.1:8000/api/strategies/signal" \
 
 **`GET /api/backtest/catalog`** 中每条已注册 **`POST /api/backtest/run`** 策略的 **`archive_kind`** 与本节存档 **`kind`** 一致（例如 **`ma_cross`** → **`ma_cross_single`**，**`ma_cross_scan`** → **`ma_cross_scan`**），并与 **`GET /api/strategies/catalog`** 各条 **`backtest_run.archive_kind`** 对齐。看板 **策略回测** 页用该字段生成「存档类型」筛选选项与 **`GET /api/backtest/runs?kind=`** 的映射说明；新增 **`POST /run`** 策略时须在 **`_backtest_engine_catalog_payload`**（及策略 catalog）中同步 **`archive_kind`**，并刷新 E2E 固件（见 **`docs/GENERIC_BACKTEST_DRAFT.md`**）。
 
+#### 双 Catalog 对照（MVP 固定行）
+
+| `GET /api/strategies/catalog` 的 **`id`** | 同条 **`backtest_run.strategy_id`** | **`backtest_run.archive_kind`**（= 建议 **`POST /api/backtest/runs` 的 `kind`**） | `GET /api/backtest/catalog` 同行 **`strategy_id`** · **`archive_kind`** |
+|-------------------------------------------|---------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------|
+| **`ma_cross`** | `ma_cross` | **`ma_cross_single`** | `ma_cross` · **`ma_cross_single`** |
+| **`ma_cross_scan`** | `ma_cross_scan` | **`ma_cross_scan`** | `ma_cross_scan` · **`ma_cross_scan`** |
+
+**不变量**：对 **`backtest/catalog`** 中每一行 **`strategy_id`**，在 **`strategies/catalog`** 中恰有一条 **`backtest_run.strategy_id`** 相同且 **`backtest_run.archive_kind`** 与 **`backtest/catalog.strategies[].archive_kind`** 相等。仓库用例 **`tests/test_strategies_api_http.py::test_strategies_catalog_archive_kind_matches_backtest_engine_catalog`** 与栈脚本 **`scripts/verify_stack.py`**（策略 vs 回测 **`archive_kind`** 段）共同防止漂移。
+
 ## 通用回测 MVP（与 GET ma-cross 同核）
 
 ```http
@@ -131,6 +140,7 @@ Content-Type: application/json
 |------------|------|
 | 2026-04 | 初版：`signal_params`（`ma_cross`）、**`backtest_run`**（`params_schema` + **`archive_kind`**）、**`backtest_archive_kinds`**；**`POST /api/backtest/run`** 与 catalog 对齐。 |
 | 2026-04 | **`ma_cross_scan.signal_params`** 明确 **`maxProperties: 0`**；**`POST /api/strategies/signal`** 对 **`kind=ma_cross_scan`** 返回专用 **400** 说明。 |
+| 2026-04 | 双 Catalog **`archive_kind`** 对照表；**`test_strategies_catalog_archive_kind_matches_backtest_engine_catalog`** 与 **`verify_stack`** 防漂移。 |
 
 ## 修订
 

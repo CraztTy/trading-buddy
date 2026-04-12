@@ -24,6 +24,43 @@ def _bar(code: str, d: date, close: float) -> KLine:
     )
 
 
+async def test_strategies_catalog_archive_kind_matches_backtest_engine_catalog(http_test_client):
+    """策略目录 backtest_run.archive_kind 与回测引擎 catalog 逐条一致（契约 #3）。"""
+    sc = http_test_client.get("/api/strategies/catalog")
+    bc = http_test_client.get("/api/backtest/catalog")
+    assert sc.status_code == 200 and bc.status_code == 200
+    sc_body = sc.json()
+    bc_body = bc.json()
+    by_engine: dict[str, str] = {}
+    for row in bc_body.get("strategies") or []:
+        sid = row.get("strategy_id")
+        ak = row.get("archive_kind")
+        if isinstance(sid, str) and sid.strip() and isinstance(ak, str) and ak.strip():
+            by_engine[sid.strip()] = ak.strip()
+    assert by_engine, "backtest catalog strategies 为空或缺 archive_kind"
+    for st in sc_body.get("strategies") or []:
+        br = st.get("backtest_run") or {}
+        sid = br.get("strategy_id")
+        ak = br.get("archive_kind")
+        assert isinstance(sid, str) and sid.strip()
+        assert isinstance(ak, str) and ak.strip()
+        sid_n, ak_n = sid.strip(), ak.strip()
+        assert sid_n in by_engine, f"策略 catalog 含 strategy_id={sid_n!r} 但回测 engine catalog 无此 id"
+        assert (
+            by_engine[sid_n] == ak_n
+        ), f"archive_kind 不一致 strategy_id={sid_n!r} strategies={ak_n!r} backtest_engine={by_engine[sid_n]!r}"
+    engine_ids = frozenset(by_engine)
+    catalog_ids = frozenset(
+        (s.get("backtest_run") or {}).get("strategy_id", "").strip()
+        for s in sc_body.get("strategies") or []
+        if isinstance((s.get("backtest_run") or {}).get("strategy_id"), str)
+    )
+    assert engine_ids == catalog_ids, (
+        f"回测 engine 与策略 catalog 的 strategy_id 集合须一致 "
+        f"engine={sorted(engine_ids)!r} strategies={sorted(catalog_ids)!r}"
+    )
+
+
 async def test_strategies_catalog_lists_ma_cross(http_test_client):
     r = http_test_client.get("/api/strategies/catalog")
     assert r.status_code == 200
