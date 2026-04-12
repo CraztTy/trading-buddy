@@ -36,6 +36,10 @@ python scripts\fetch_trade_calendar.py --start 2020-01-01 --end 2025-12-31
 
 等价：`python scripts\fetch_data.py --mode calendar --source baostock`（可用 `--calendar-start` / `--calendar-end` 等）。日常增量拉数可加 **`--with-calendar`**（`fetch_data.py` 的 `daily` / `all`）顺带刷新日历尾部。
 
+### 云库「表齐 + verify_stack」验收（可选）
+
+若 **`python scripts\verify_stack.py`** 报错 **`trade_calendar` 表不存在**（或 MySQL 其它缺表）：先 **`python scripts\init_db.py`**，再按上一段灌 **`trade_calendar`**，然后**不加** **`--skip-db`** 重跑 **`verify_stack.py`**，应打印 **`stock_info` / `daily_kline` / `trade_calendar`** 行数，且 Redis、API 冒烟、catalog 契约与回测异步冒烟均为 **`[OK]`**。若库表未齐又需先验 API，可临时 **`python scripts\verify_stack.py --skip-db`**。
+
 ## 第三步：拉取初始数据
 
 ### 方式 A：一键喂数（推荐，云库 / 本地库通用）

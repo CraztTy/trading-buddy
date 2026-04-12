@@ -64,7 +64,9 @@ let watchlistE2eItems = [];
 let backtestRunsE2e = [];
 let backtestRunsE2eNextId = 1;
 
-/** POST /backtest/run?async=1 → 202 job；GET 第 1 次 running 第 2 次起 completed；POST …/cancel 仅首轮询前可 200 */
+/** 异步 mock：前 N 次 GET 为 pending，再 running → completed；POST cancel 仅在 pending 窗口内 200 */
+const ASYNC_E2E_PENDING_POLLS = 5;
+
 let backtestE2eAsyncJobs = new Map();
 let backtestE2eAsyncJobSeq = 0;
 
@@ -632,11 +634,11 @@ export async function installApiMocks(page) {
           body: JSON.stringify({ detail: "job 不存在" }),
         });
       }
-      if (recPost.polls >= 1 || recPost.cancelled) {
+      if (recPost.cancelled || recPost.polls > ASYNC_E2E_PENDING_POLLS) {
         return route.fulfill({
           status: 409,
           contentType: "application/json",
-          body: JSON.stringify({ detail: "e2e-mock: 仅首轮询前可取消" }),
+          body: JSON.stringify({ detail: "e2e-mock: 仅 pending 阶段可取消" }),
         });
       }
       recPost.cancelled = true;
@@ -684,7 +686,25 @@ export async function installApiMocks(page) {
         });
       }
       rec.polls += 1;
-      if (rec.polls === 1) {
+      if (rec.polls <= ASYNC_E2E_PENDING_POLLS) {
+        const t0 = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+        const q = typeof rec.queuedAt === "string" ? rec.queuedAt : t0;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            job_id: jobId,
+            status: "pending",
+            async_job_persistence: "memory",
+            result: null,
+            error: null,
+            queued_at: q,
+            started_at: null,
+            finished_at: null,
+          }),
+        });
+      }
+      if (rec.polls === ASYNC_E2E_PENDING_POLLS + 1) {
         const t0 = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
         const q = typeof rec.queuedAt === "string" ? rec.queuedAt : t0;
         rec.startedAt = t0;

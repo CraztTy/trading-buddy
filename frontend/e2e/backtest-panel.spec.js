@@ -16,6 +16,18 @@ test.describe("Backtest panel", () => {
     await expect(page.locator(".metrics").getByText("12.34")).toBeVisible();
   });
 
+  test("single MA cross async cancel queued job shows status and error", async ({ page }) => {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "策略回测" }).click();
+    await expect(page.getByTestId("backtest-engine-catalog")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("mvp-async-run").check();
+    await page.getByRole("button", { name: "运行回测" }).click();
+    await expect(page.getByTestId("mvp-async-cancel")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("mvp-async-cancel").click();
+    await expect(page.locator(".mvp-async-cancel-msg")).toContainText("已取消排队");
+    await expect(page.locator(".err")).toContainText(/cancelled|任务已取消/i);
+  });
+
   test("single MA cross shows mock metrics", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "策略回测" }).click();
