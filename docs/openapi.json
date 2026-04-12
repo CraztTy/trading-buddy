@@ -3,7 +3,7 @@
   "info": {
     "title": "Trading Buddy API",
     "description": "A股量化交易数据基础设施",
-    "version": "1.1.0"
+    "version": "1.1.1"
   },
   "paths": {
     "/api/stocks/list": {

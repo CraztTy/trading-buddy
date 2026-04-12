@@ -1,6 +1,6 @@
 # Trading Buddy - 精简版量化交易系统 V1
 
-> A股量化交易基础设施，聚焦数据层 + 可视化，为后续策略执行打基础。当前发布线：**1.1.0**（版本见 `src/common/__init__.py` 与 `GET /health` 的 `app_version`）。
+> A股量化交易基础设施，聚焦数据层 + 可视化，为后续策略执行打基础。当前发布线：**1.1.1**（版本见 `src/common/__init__.py` 与 `GET /health` 的 `app_version`）。
 
 长期目标与分阶段推进计划见 **[docs/ROADMAP.md](docs/ROADMAP.md)**（北极星、验收维度、阶段 A–F、并行轨道与近 90 天 backlog）。
 

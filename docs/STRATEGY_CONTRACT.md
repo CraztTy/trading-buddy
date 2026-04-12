@@ -141,6 +141,7 @@ Content-Type: application/json
 | 2026-04 | 初版：`signal_params`（`ma_cross`）、**`backtest_run`**（`params_schema` + **`archive_kind`**）、**`backtest_archive_kinds`**；**`POST /api/backtest/run`** 与 catalog 对齐。 |
 | 2026-04 | **`ma_cross_scan.signal_params`** 明确 **`maxProperties: 0`**；**`POST /api/strategies/signal`** 对 **`kind=ma_cross_scan`** 返回专用 **400** 说明。 |
 | 2026-04 | 双 Catalog **`archive_kind`** 对照表；**`test_strategies_catalog_archive_kind_matches_backtest_engine_catalog`** 与 **`verify_stack`** 防漂移。 |
+| 2026-04 | 发布 **1.1.1**：契约与 OpenAPI 无行为变更，仅版本号与文档/CI 小步。 |
 
 ## 修订
 

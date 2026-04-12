@@ -197,9 +197,9 @@ python scripts\fetch_data.py --mode daily
 
 也可使用 `scripts\scheduler.py` 在后台按固定时间触发（详见脚本内注释）；生产环境更推荐用系统计划任务直接执行上述命令之一。
 
-## V1.x 发布与归档（当前 **1.1.0**）
+## V1.x 发布与归档（当前 **1.1.1**）
 
-在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.1.0**）：
+在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.1.1**）：
 
 ```powershell
 cd C:\Users\Administrator\Desktop\trading-buddy
@@ -216,14 +216,14 @@ python scripts\verify_stack.py
 打**附注标签**并推送远程（按需）：
 
 ```powershell
-git tag -a v1.1.0 -m "Trading Buddy V1.1.0: 通用回测异步 cancel/回收、OpenAPI、因子/策略/纸交易/自选/交易日历、Playwright E2E、质量脚本"
-git push origin v1.1.0
+git tag -a v1.1.1 -m "Trading Buddy V1.1.1: 策略 catalog 对齐单测、OpenAPI cancel 契约、E2E 异步取消、CI workflow_dispatch、新策略检查清单"
+git push origin v1.1.1
 ```
 
 本地生成**源码归档包**（不依赖远程）：
 
 ```powershell
-git archive --format=zip -o trading-buddy-v1.1.0.zip v1.1.0
+git archive --format=zip -o trading-buddy-v1.1.1.zip v1.1.1
 ```
 
 版本号与 OpenAPI、`GET /`、`GET /health` 中的 `app_version` 一致，定义在 `src/common/__init__.py` 的 `__version__`。
