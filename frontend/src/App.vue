@@ -1,28 +1,98 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import MarketIndices from "./components/MarketIndices.vue";
+import TradeCalendarStatus from "./components/TradeCalendarStatus.vue";
 import KlineWorkspace from "./components/KlineWorkspace.vue";
 import RankBoard from "./components/RankBoard.vue";
 import BacktestPanel from "./components/BacktestPanel.vue";
+import StockListPanel from "./components/StockListPanel.vue";
+import PaperTradingPanel from "./components/PaperTradingPanel.vue";
+import WatchlistPanel from "./components/WatchlistPanel.vue";
+import FactorPreviewPanel from "./components/FactorPreviewPanel.vue";
+
+const SS_MAIN = "tb_mainView";
+const SS_CODE = "tb_currentCode";
+const SS_RANK = "tb_rankTab";
+const CODE_RE = /^(sh|sz|bj)\.[\w.-]+$/i;
 
 const mainView = ref("market");
 const currentCode = ref("sh.000001");
 const rankTab = ref("gainers");
 const clock = ref("");
+/** 从回测带入纸单的代码与股数 */
+const paperDraft = ref(null);
 
 function tick() {
   clock.value = new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
 let clockId;
 
+function restoreSessionPrefs() {
+  try {
+    const mv = sessionStorage.getItem(SS_MAIN);
+    if (
+      mv === "market" ||
+      mv === "stocks" ||
+      mv === "watchlist" ||
+      mv === "factors" ||
+      mv === "backtest" ||
+      mv === "paper"
+    )
+      mainView.value = mv;
+    const cc = sessionStorage.getItem(SS_CODE);
+    if (cc && CODE_RE.test(cc) && cc.length <= 48) currentCode.value = cc;
+    const rt = sessionStorage.getItem(SS_RANK);
+    if (rt === "gainers" || rt === "losers" || rt === "turnover") rankTab.value = rt;
+  } catch {
+    /* private mode / disabled storage */
+  }
+}
+
+function persistSessionPrefs() {
+  try {
+    sessionStorage.setItem(SS_MAIN, mainView.value);
+    sessionStorage.setItem(SS_CODE, currentCode.value);
+    sessionStorage.setItem(SS_RANK, rankTab.value);
+  } catch {
+    /* ignore */
+  }
+}
+
 onMounted(() => {
+  restoreSessionPrefs();
   tick();
   clockId = setInterval(tick, 1000);
+  persistSessionPrefs();
 });
 onUnmounted(() => clearInterval(clockId));
 
+watch([mainView, currentCode, rankTab], persistSessionPrefs);
+
 function onSelectCode(code) {
   currentCode.value = code;
+}
+
+function onStockListSelect(code) {
+  currentCode.value = code;
+  mainView.value = "market";
+}
+
+function onOpenPaper(payload) {
+  paperDraft.value = {
+    code: payload?.code || currentCode.value,
+    quantity: Math.max(1, Number(payload?.quantity) || 100),
+  };
+  mainView.value = "paper";
+}
+
+function onPaperNavigateBacktest() {
+  mainView.value = "backtest";
+}
+
+function onFactorOpenMarket(code) {
+  const c = (code || "").trim();
+  if (c) currentCode.value = c;
+  mainView.value = "market";
 }
 </script>
 
@@ -64,6 +134,8 @@ function onSelectCode(code) {
 
       <MarketIndices class="block" @select="onSelectCode" />
 
+      <TradeCalendarStatus class="block enter-stagger" />
+
       <nav class="view-tabs enter-stagger" aria-label="主视图">
         <button
           type="button"
@@ -76,10 +148,42 @@ function onSelectCode(code) {
         <button
           type="button"
           class="view-tab"
+          :class="{ active: mainView === 'stocks' }"
+          @click="mainView = 'stocks'"
+        >
+          股票列表
+        </button>
+        <button
+          type="button"
+          class="view-tab"
+          :class="{ active: mainView === 'watchlist' }"
+          @click="mainView = 'watchlist'"
+        >
+          自选
+        </button>
+        <button
+          type="button"
+          class="view-tab"
+          :class="{ active: mainView === 'factors' }"
+          @click="mainView = 'factors'"
+        >
+          因子预览
+        </button>
+        <button
+          type="button"
+          class="view-tab"
           :class="{ active: mainView === 'backtest' }"
           @click="mainView = 'backtest'"
         >
           策略回测
+        </button>
+        <button
+          type="button"
+          class="view-tab"
+          :class="{ active: mainView === 'paper' }"
+          @click="mainView = 'paper'"
+        >
+          纸交易
         </button>
       </nav>
 
@@ -90,11 +194,40 @@ function onSelectCode(code) {
           @update:code="onSelectCode"
         />
         <aside class="col side-col">
-          <p class="eyebrow">涨跌幅排行</p>
+          <p class="eyebrow">涨跌 / 成交额</p>
           <RankBoard v-model:tab="rankTab" @select="onSelectCode" />
         </aside>
       </div>
-      <BacktestPanel v-else class="block enter-stagger" :code="currentCode" />
+      <StockListPanel
+        v-else-if="mainView === 'stocks'"
+        class="block enter-stagger"
+        @select="onStockListSelect"
+      />
+      <WatchlistPanel
+        v-else-if="mainView === 'watchlist'"
+        class="block enter-stagger"
+        @select="onStockListSelect"
+      />
+      <FactorPreviewPanel
+        v-else-if="mainView === 'factors'"
+        class="block enter-stagger"
+        :code="currentCode"
+        @select-code="onSelectCode"
+        @open-market="onFactorOpenMarket"
+      />
+      <BacktestPanel
+        v-else-if="mainView === 'backtest'"
+        class="block enter-stagger"
+        :code="currentCode"
+        @open-paper="onOpenPaper"
+        @select-code="onSelectCode"
+      />
+      <PaperTradingPanel
+        v-else-if="mainView === 'paper'"
+        class="block enter-stagger"
+        :draft="paperDraft"
+        @navigate-backtest="onPaperNavigateBacktest"
+      />
     </main>
   </div>
 </template>

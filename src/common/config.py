@@ -107,6 +107,12 @@ class DatabaseSettings(BaseSettings):
                 or "false"
             ).strip().lower()
             data["ssl_enabled"] = v in ("1", "true", "yes", "on")
+        if "db_path" not in data:
+            dp = os.environ.get("DATABASE_SQLITE_PATH") or os.environ.get(
+                "DATABASE_DB_PATH"
+            )
+            if dp is not None and str(dp).strip():
+                data["db_path"] = str(dp).strip()
         super().__init__(**data)
 
     def mysql_connect_args(self) -> dict:
@@ -256,6 +262,50 @@ class LogSettings(BaseSettings):
         super().__init__(**data)
 
 
+class TradeCalendarSettings(BaseSettings):
+    """交易日历：看板下拉等用的 exchange 列表（环境变量配置）。
+
+    - ``TRADE_CALENDAR_EXCHANGE_OPTIONS``：逗号分隔，如 ``cn,hk,us``（最长 32、小写存储）。
+    - ``TRADE_CALENDAR_DEFAULT_EXCHANGE``：默认选中项，须出现在列表中；空或未命中则用列表首项。
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    exchange_options_csv: str = "cn"
+    default_exchange: str = ""
+
+    def __init__(self, **data):
+        if "exchange_options_csv" not in data:
+            v = os.environ.get("TRADE_CALENDAR_EXCHANGE_OPTIONS")
+            if v is not None and str(v).strip():
+                data["exchange_options_csv"] = str(v).strip()
+        if "default_exchange" not in data:
+            v = os.environ.get("TRADE_CALENDAR_DEFAULT_EXCHANGE")
+            if v is not None:
+                data["default_exchange"] = str(v).strip()
+        super().__init__(**data)
+
+    def exchange_option_values(self) -> list[str]:
+        parts = [p.strip().lower() for p in self.exchange_options_csv.split(",")]
+        out: list[str] = []
+        seen: set[str] = set()
+        for p in parts:
+            if not p or len(p) > 32:
+                continue
+            if p in seen:
+                continue
+            seen.add(p)
+            out.append(p)
+        return out if out else ["cn"]
+
+    def resolved_default_exchange(self) -> str:
+        opts = self.exchange_option_values()
+        d = self.default_exchange.strip().lower()
+        if d and d in opts:
+            return d
+        return opts[0]
+
+
 class Settings(BaseSettings):
     """全局配置
 
@@ -283,6 +333,7 @@ class Settings(BaseSettings):
     data_source: DataSourceSettings = Field(default_factory=DataSourceSettings)
     api: APISettings = Field(default_factory=APISettings)
     log: LogSettings = Field(default_factory=LogSettings)
+    trade_calendar: TradeCalendarSettings = Field(default_factory=TradeCalendarSettings)
 
     # 项目根目录
     project_root: Path = Path(__file__).parent.parent.parent

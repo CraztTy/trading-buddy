@@ -7,7 +7,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Market(str, Enum):
@@ -30,6 +30,9 @@ class StockType(str, Enum):
 
 class StockInfo(BaseModel):
     """股票基本信息"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     code: str = Field(..., description="股票代码，如 000001.SZ")
     name: str = Field(..., description="股票名称")
     ipo_date: Optional[date] = Field(None, description="上市日期")
@@ -39,13 +42,13 @@ class StockInfo(BaseModel):
     industry: Optional[str] = Field(None, description="所属行业")
     sector_code: Optional[str] = Field(None, description="板块代码（概念/行业）")
     is_trading: bool = Field(True, description="是否交易中（未停牌）")
-    
-    class Config:
-        from_attributes = True
 
 
 class KLine(BaseModel):
     """K线数据"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     code: str = Field(..., description="股票代码")
     trade_date: date = Field(..., description="交易日期")
     open: float = Field(..., description="开盘价")
@@ -63,13 +66,13 @@ class KLine(BaseModel):
     ma5: Optional[float] = Field(None, description="5日均线")
     ma10: Optional[float] = Field(None, description="10日均线")
     ma20: Optional[float] = Field(None, description="20日均线")
-    
-    class Config:
-        from_attributes = True
 
 
 class RealtimeQuote(BaseModel):
     """实时行情"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     code: str = Field(..., description="股票代码")
     name: str = Field(..., description="股票名称")
     open: float = Field(..., description="今日开盘价")
@@ -88,18 +91,15 @@ class RealtimeQuote(BaseModel):
     # 计算字段
     change: Optional[float] = Field(None, description="涨跌额")
     pct_change: Optional[float] = Field(None, description="涨跌幅")
-    
-    class Config:
-        from_attributes = True
 
 
 class SectorData(BaseModel):
     """板块数据"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     code: str = Field(..., description="板块代码")
     name: str = Field(..., description="板块名称")
     sector_type: str = Field(..., description="板块类型: industry=行业, concept=概念")
     stock_count: int = Field(0, description="成分股数量")
     leading_stocks: list[str] = Field(default_factory=list, description="龙头股代码列表")
-    
-    class Config:
-        from_attributes = True

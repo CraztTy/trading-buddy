@@ -3,6 +3,7 @@
 Trading Buddy - 统一数据拉取入口
 数据源由 .env 中 DATA_SOURCE 决定（baostock / mock / tushare），可用 --source 覆盖。
 链路: 数据源 -> 仓储 -> 库表，供 API 与 dashboard 读取。
+可选 --with-calendar（--mode daily 或 all，且数据源为 baostock）在流程末尾刷新 trade_calendar 尾部，便于质量脚本 B+D 门控。
 """
 
 from __future__ import annotations
@@ -26,6 +27,30 @@ from src.data.storage import (
 from src.data.sources import DataSourceFactory
 
 logger = get_logger("fetcher")
+
+
+async def _get_daily_kline_with_retries(
+    source,
+    code: str,
+    start: date,
+    end: date,
+    *,
+    retries: int,
+    backoff_sec: float,
+):
+    """对单次拉取做有限次重试（网络抖动 / 上游短暂错误）。"""
+    get_fn = getattr(source, "get_daily_kline")
+    for attempt in range(max(1, retries)):
+        try:
+            return await get_fn(code, start, end)
+        except Exception as e:
+            if attempt + 1 >= max(1, retries):
+                logger.warning(f"{code} K线在 {retries} 次尝试后仍失败: {e}")
+                raise
+            delay = backoff_sec * (2**attempt)
+            logger.info(f"{code} K线失败（{e!r}），{delay:.1f}s 后重试 {attempt + 2}/{retries}")
+            await asyncio.sleep(delay)
+
 
 INDICES = [
     ("sh.000001", "上证指数"),
@@ -87,6 +112,8 @@ async def fetch_daily_klines(
     *,
     incremental: bool = False,
     overlap_days: int = 7,
+    kline_retries: int = 3,
+    kline_retry_backoff_sec: float = 0.5,
 ) -> None:
     end = await kline_end_date(provider)
     window_start = end - timedelta(days=days)
@@ -145,7 +172,14 @@ async def fetch_daily_klines(
                     if start > end:
                         start = end - timedelta(days=1)
 
-                    klines = await source.get_daily_kline(code, start, end)
+                    klines = await _get_daily_kline_with_retries(
+                        source,
+                        code,
+                        start,
+                        end,
+                        retries=kline_retries,
+                        backoff_sec=kline_retry_backoff_sec,
+                    )
                     if klines:
                         await kline_repo.bulk_insert(klines)
                         total += len(klines)
@@ -168,6 +202,8 @@ async def fetch_index_data(
     *,
     incremental: bool = False,
     overlap_days: int = 7,
+    kline_retries: int = 3,
+    kline_retry_backoff_sec: float = 0.5,
 ) -> None:
     end = await kline_end_date(provider)
     window_start = end - timedelta(days=index_days)
@@ -202,7 +238,20 @@ async def fetch_index_data(
                 if start > end:
                     start = end - timedelta(days=1)
 
-                klines = await source.get_index_data(code, start, end)
+                get_idx = getattr(source, "get_index_data")
+                klines = []
+                for attempt in range(max(1, kline_retries)):
+                    try:
+                        klines = await get_idx(code, start, end)
+                        break
+                    except Exception as e:
+                        if attempt + 1 >= max(1, kline_retries):
+                            raise
+                        delay = kline_retry_backoff_sec * (2**attempt)
+                        logger.info(
+                            f"{name} ({code}) 失败（{e!r}），{delay:.1f}s 后重试 {attempt + 2}/{kline_retries}"
+                        )
+                        await asyncio.sleep(delay)
                 if not klines:
                     logger.warning(
                         f"{name} ({code}): 数据源未返回K线（日期 {start}~{end} 或网络/限流）"
@@ -219,6 +268,35 @@ async def fetch_index_data(
         await source.disconnect()
 
 
+async def maybe_refresh_trade_calendar_tail(
+    args: argparse.Namespace,
+    provider: str,
+) -> None:
+    """``--with-calendar``：用 Baostock 刷新 ``trade_calendar`` 最近一截（与 ``--calendar-exchange`` / ``--calendar-chunk-days`` 共用）。"""
+    if not args.with_calendar:
+        return
+    if provider != "baostock":
+        logger.warning("--with-calendar 需要 baostock 数据源，已跳过")
+        return
+    from src.data.ingest import ingest_trade_calendar_from_baostock
+
+    end = await kline_end_date(provider)
+    span = max(1, int(args.with_calendar_span_days))
+    start = end - timedelta(days=span)
+    ex = args.calendar_exchange.strip().lower()
+    chunk = max(1, int(args.calendar_chunk_days))
+    logger.info(
+        f"--with-calendar: exchange={ex} {start} ~ {end}（向前 {span} 自然日），chunk={chunk} 天"
+    )
+    n = await ingest_trade_calendar_from_baostock(
+        start=start,
+        end=end,
+        exchange=ex,
+        chunk_days=chunk,
+    )
+    logger.info(f"trade_calendar 尾部刷新完成，约 {n} 行 upsert")
+
+
 async def run(args: argparse.Namespace) -> None:
     provider = (args.source or "").strip().lower() if args.source else None
     if provider:
@@ -233,10 +311,45 @@ async def run(args: argparse.Namespace) -> None:
 
     logger.info(f"数据写入目标: {describe_database_write_target()}")
 
+    kr = max(1, int(args.kline_retries))
+    kb = float(args.kline_retry_backoff)
+
     try:
         codes: list[str] | None = list(args.codes) if args.codes else None
 
-        if args.mode == "daily":
+        if args.mode == "calendar":
+            if provider != "baostock":
+                raise SystemExit(
+                    f"交易日历仅支持数据源 baostock（当前为 {provider!r}），"
+                    "请设置 DATA_SOURCE=baostock 或使用 --source baostock"
+                )
+            from src.data.ingest import ingest_trade_calendar_from_baostock
+
+            cal_end = (
+                date.fromisoformat(args.calendar_end)
+                if args.calendar_end
+                else date.today()
+            )
+            cal_start = (
+                date.fromisoformat(args.calendar_start)
+                if args.calendar_start
+                else cal_end - timedelta(days=max(1, int(args.calendar_span_days)))
+            )
+            if cal_start > cal_end:
+                raise SystemExit("--calendar-start 不能晚于 --calendar-end / 默认结束日")
+            ex = args.calendar_exchange.strip().lower()
+            chunk = max(1, int(args.calendar_chunk_days))
+            logger.info(
+                f"灌交易日历 baostock exchange={ex} {cal_start} ~ {cal_end} chunk={chunk} 天"
+            )
+            n = await ingest_trade_calendar_from_baostock(
+                start=cal_start,
+                end=cal_end,
+                exchange=ex,
+                chunk_days=chunk,
+            )
+            logger.info(f"交易日历完成，累计 upsert 约 {n} 行")
+        elif args.mode == "daily":
             # 收盘后日常：刷新股票表 + 增量指数 + 增量个股日K（全市场，适合定时任务）
             await fetch_stock_list(provider)
             await fetch_index_data(
@@ -244,6 +357,8 @@ async def run(args: argparse.Namespace) -> None:
                 index_days=args.index_days,
                 incremental=True,
                 overlap_days=args.overlap_days,
+                kline_retries=kr,
+                kline_retry_backoff_sec=kb,
             )
             await fetch_daily_klines(
                 provider,
@@ -253,6 +368,8 @@ async def run(args: argparse.Namespace) -> None:
                 delay_sec=args.baostock_delay,
                 incremental=True,
                 overlap_days=args.overlap_days,
+                kline_retries=kr,
+                kline_retry_backoff_sec=kb,
             )
         else:
             if args.mode in ("all", "stocks"):
@@ -269,6 +386,8 @@ async def run(args: argparse.Namespace) -> None:
                     delay_sec=args.baostock_delay,
                     incremental=args.incremental,
                     overlap_days=args.overlap_days,
+                    kline_retries=kr,
+                    kline_retry_backoff_sec=kb,
                 )
 
             # 指数写入 daily_kline：all / indices 会跑；单独 klines 时也要跑——
@@ -283,7 +402,12 @@ async def run(args: argparse.Namespace) -> None:
                     index_days=args.index_days,
                     incremental=args.incremental,
                     overlap_days=args.overlap_days,
+                    kline_retries=kr,
+                    kline_retry_backoff_sec=kb,
                 )
+
+        if args.mode in ("daily", "all"):
+            await maybe_refresh_trade_calendar_tail(args, provider)
 
         logger.info("数据拉取流程结束")
     finally:
@@ -302,9 +426,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--mode",
-        choices=["all", "stocks", "klines", "indices", "daily"],
+        choices=["all", "stocks", "klines", "indices", "daily", "calendar"],
         default="all",
-        help="daily=日常增量(股票表+指数+全市场日K); klines 且未指定 --codes 时会自动拉主要指数; 可与 --incremental 配合",
+        help="calendar=仅灌 trade_calendar（Baostock，见 --calendar-*）; daily=日常增量; klines 无 --codes 时会拉主要指数",
     )
     p.add_argument(
         "--incremental",
@@ -336,6 +460,59 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.12,
         help="baostock 请求间隔秒数，降低限流风险",
+    )
+    p.add_argument(
+        "--kline-retries",
+        type=int,
+        default=3,
+        help="单标的日 K / 指数拉取抛错时的最大尝试次数（含首次），≥1",
+    )
+    p.add_argument(
+        "--kline-retry-backoff",
+        type=float,
+        default=0.5,
+        help="重试基础等待秒数（指数退避：0.5, 1, 2, …）",
+    )
+    p.add_argument(
+        "--calendar-start",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="--mode calendar 起始日；省略则按 --calendar-end 与 --calendar-span-days 回推",
+    )
+    p.add_argument(
+        "--calendar-end",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="--mode calendar 结束日，默认今天",
+    )
+    p.add_argument(
+        "--calendar-span-days",
+        type=int,
+        default=730,
+        help="未指定 --calendar-start 时，从结束日向前回推的自然日跨度（默认约两年）",
+    )
+    p.add_argument(
+        "--calendar-exchange",
+        default="cn",
+        help="trade_calendar.exchange，默认 cn",
+    )
+    p.add_argument(
+        "--calendar-chunk-days",
+        type=int,
+        default=400,
+        help="单次 Baostock query_trade_dates 覆盖的自然日跨度（亦用于 --with-calendar）",
+    )
+    p.add_argument(
+        "--with-calendar",
+        action="store_true",
+        help="在 --mode daily 或 all 结束后，用 Baostock 灌 trade_calendar 最近区间（仅 baostock；见 --with-calendar-span-days）",
+    )
+    p.add_argument(
+        "--with-calendar-span-days",
+        type=int,
+        default=450,
+        metavar="N",
+        help="--with-calendar 时从最后交易日起向前覆盖的自然日跨度（默认 450）",
     )
     return p
 

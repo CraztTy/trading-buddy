@@ -144,31 +144,31 @@ async def get_top_losers(
 @router.get("/turnover")
 async def get_high_turnover(
     request: Request,
+    trade_date: date | None = Query(
+        None, description="交易日期；省略则用库中最新交易日（与涨跌榜口径一致）"
+    ),
     limit: int = Query(10, le=50),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """获取成交额排行榜（简化版）"""
-    stock_repo = StockRepository(session)
-    stock_codes = await stock_repo.get_all_codes(is_trading=True)
-    slice_codes = stock_codes[:limit]
-    redis = getattr(request.app.state, "redis", None)
-    name_map = await resolve_stock_names(stock_repo, slice_codes, redis_client=redis)
-
+    """获取成交额排行榜：全市场（有 ``stock_info`` 且交易中）在指定日按 ``amount`` 降序 Top ``limit``。"""
     repo = KlineRepository(session)
-    results = []
+    klines = await repo.get_top_by_amount(trade_date, limit, trading_stocks_only=True)
 
-    for code in slice_codes:
-        klines = await repo.get_daily(code=code, limit=1)
-        if klines:
-            k = klines[-1]
-            results.append({
-                "code": code,
-                "name": name_map.get(code, code),
+    stock_repo = StockRepository(session)
+    redis = getattr(request.app.state, "redis", None)
+    name_map = await resolve_stock_names(
+        stock_repo, [k.code for k in klines], redis_client=redis
+    )
+
+    return {
+        "stocks": [
+            {
+                "code": k.code,
+                "name": name_map.get(k.code, k.code),
                 "price": k.close,
                 "volume": k.volume,
                 "amount": k.amount,
-            })
-    
-    # 按成交额排序
-    results.sort(key=lambda x: x["amount"], reverse=True)
-    return {"stocks": results[:limit]}
+            }
+            for k in klines
+        ]
+    }

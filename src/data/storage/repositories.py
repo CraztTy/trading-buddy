@@ -6,7 +6,7 @@ Trading Buddy - 数据仓库
 from datetime import date, datetime
 from typing import Sequence
 
-from sqlalchemy import select, func
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common import get_logger
@@ -35,6 +35,30 @@ def _int_to_stock_type(i: int) -> StockType:
         4: StockType.GROWTH,
         5: StockType.BEIJING,
     }.get(i, StockType.COMMON)
+
+
+def _sql_like_prefix_pattern(raw: str) -> str:
+    """LIKE 前缀匹配用字面量：`%` / `_` / `\\` 转义，末尾追加 `%`。"""
+    esc = (
+        raw.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"{esc}%"
+
+
+def _stock_type_filter_int(raw: str | None) -> int | None:
+    """Query 参数 `stock_type` → 与 stock_info.stock_type 一致的整型；未知值返回 None（不过滤）。"""
+    if raw is None or not str(raw).strip():
+        return None
+    key = str(raw).strip().lower()
+    return {
+        "common": 1,
+        "st": 2,
+        "star": 3,
+        "growth": 4,
+        "beijing": 5,
+    }.get(key)
 
 
 class StockRepository:
@@ -90,6 +114,30 @@ class StockRepository:
             )
         return None
 
+    @staticmethod
+    def _stock_list_filter_clauses(
+        market: str | None,
+        is_trading: bool | None,
+        industry: str | None,
+        stock_type: str | None,
+    ) -> list:
+        clauses: list = []
+        if market:
+            clauses.append(StockInfoModel.market == market)
+        if is_trading is not None:
+            clauses.append(StockInfoModel.is_trading.is_(is_trading))
+        ind_key = (industry or "").strip()
+        if ind_key:
+            clauses.append(
+                StockInfoModel.industry.like(
+                    _sql_like_prefix_pattern(ind_key), escape="\\"
+                )
+            )
+        st_i = _stock_type_filter_int(stock_type)
+        if st_i is not None:
+            clauses.append(StockInfoModel.stock_type == st_i)
+        return clauses
+
     async def get_name_map(self, codes: Sequence[str]) -> dict[str, str]:
         """批量查询 code -> 显示名（单次 IN 查询，供看板等聚合接口使用）。"""
         uniq = list(dict.fromkeys(c for c in codes if c))
@@ -104,20 +152,73 @@ class StockRepository:
             for row in result.all()
         }
     
-    async def get_all_codes(self, market: str | None = None, is_trading: bool = True) -> list[str]:
-        """获取所有股票代码"""
+    async def count_stock_codes(
+        self,
+        market: str | None = None,
+        is_trading: bool = True,
+        *,
+        industry: str | None = None,
+        stock_type: str | None = None,
+    ) -> int:
+        """与 `get_all_codes` / `list_stock_codes_page` 相同过滤条件下的总行数。"""
+        clauses = self._stock_list_filter_clauses(
+            market, is_trading, industry, stock_type
+        )
+        stmt = select(func.count(StockInfoModel.code))
+        if clauses:
+            stmt = stmt.where(and_(*clauses))
+        n = (await self._session.execute(stmt)).scalar_one()
+        return int(n or 0)
+
+    async def list_stock_codes_page(
+        self,
+        limit: int,
+        offset: int,
+        market: str | None = None,
+        is_trading: bool = True,
+        *,
+        industry: str | None = None,
+        stock_type: str | None = None,
+    ) -> list[str]:
+        """按 `code` 排序后 `LIMIT`/`OFFSET` 取一页（`limit`/`offset` 由调用方保证合法）。"""
+        clauses = self._stock_list_filter_clauses(
+            market, is_trading, industry, stock_type
+        )
         stmt = select(StockInfoModel.code)
-        if market:
-            stmt = stmt.where(StockInfoModel.market == market)
-        if is_trading is not None:
-            stmt = stmt.where(StockInfoModel.is_trading.is_(is_trading))
-        
+        if clauses:
+            stmt = stmt.where(and_(*clauses))
+        stmt = stmt.order_by(StockInfoModel.code).limit(limit).offset(offset)
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
+
+    async def get_all_codes(
+        self,
+        market: str | None = None,
+        is_trading: bool = True,
+        *,
+        industry: str | None = None,
+        stock_type: str | None = None,
+    ) -> list[str]:
+        """获取股票代码列表；可选市场、行业**前缀**（与 `get_by_industry` 同口径）、`stock_type`（common/st/star/growth/beijing）。"""
+        clauses = self._stock_list_filter_clauses(
+            market, is_trading, industry, stock_type
+        )
+        stmt = select(StockInfoModel.code)
+        if clauses:
+            stmt = stmt.where(and_(*clauses))
+        stmt = stmt.order_by(StockInfoModel.code)
         result = await self._session.execute(stmt)
         return [row[0] for row in result.all()]
     
     async def get_by_industry(self, industry: str) -> list[StockInfo]:
-        """根据行业查询股票"""
-        stmt = select(StockInfoModel).where(StockInfoModel.industry == industry)
+        """根据行业查询股票（**前缀匹配**：`industry` 字段以参数字符串开头；空串返回空列表）。"""
+        key = (industry or "").strip()
+        if not key:
+            return []
+        pat = _sql_like_prefix_pattern(key)
+        stmt = select(StockInfoModel).where(
+            StockInfoModel.industry.like(pat, escape="\\")
+        )
         result = await self._session.execute(stmt)
         models = result.scalars().all()
         
@@ -351,6 +452,50 @@ class KlineRepository:
                 close=float(m.close),
                 volume=m.volume or 0,
                 amount=float(m.amount) if m.amount else 0.0,
+                pct_change=float(m.change_pct) if m.change_pct else None,
+            )
+            for m in models
+        ]
+
+    async def get_top_by_amount(
+        self,
+        trade_date: date | None,
+        limit: int = 10,
+        *,
+        trading_stocks_only: bool = True,
+    ) -> list[KLine]:
+        """指定交易日成交额 Top；`trade_date` 为 None 时用全表最新交易日。
+
+        默认 **INNER JOIN** ``stock_info`` 且 ``is_trading``，排除无基础信息的代码（如仅存在于 K 表的指数）。
+        """
+        if trade_date is None:
+            latest = select(func.max(DailyKlineModel.trade_date)).scalar_subquery()
+            date_clause = DailyKlineModel.trade_date == latest
+        else:
+            date_clause = DailyKlineModel.trade_date == trade_date
+        stmt = select(DailyKlineModel).where(date_clause)
+        if trading_stocks_only:
+            stmt = stmt.join(
+                StockInfoModel, StockInfoModel.code == DailyKlineModel.code
+            ).where(StockInfoModel.is_trading.is_(True))
+        stmt = (
+            stmt.where(DailyKlineModel.amount.isnot(None))
+            .order_by(DailyKlineModel.amount.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        models = result.scalars().all()
+        return [
+            KLine(
+                code=m.code,
+                trade_date=m.trade_date,
+                open=float(m.open),
+                high=float(m.high),
+                low=float(m.low),
+                close=float(m.close),
+                volume=m.volume or 0,
+                amount=float(m.amount) if m.amount else 0.0,
+                turnover_rate=float(m.turnover_rate) if m.turnover_rate else None,
                 pct_change=float(m.change_pct) if m.change_pct else None,
             )
             for m in models

@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
 Trading Buddy - 数据库初始化脚本
-创建所有表结构
+创建所有表结构（含 ``trade_calendar``）。
+
+建表完成后**建议**尽快灌交易日历（Baostock，需网络），否则看板「交易日历」与
+``check_daily_kline_quality.py`` 的交易日缺口 / B+D 门控无数据可依：
+
+  python scripts/fetch_trade_calendar.py --start 2020-01-01 --end 2025-12-31
+
+等价入口：``python scripts/fetch_data.py --mode calendar --source baostock``（见 ``--calendar-*``）。
+日常拉数可在 ``--mode daily`` / ``all`` 时加 ``--with-calendar`` 顺带刷新尾部区间。
 """
 
 import sys
@@ -43,6 +51,11 @@ async def init_database():
         # 创建所有表
         await db.create_tables()
         logger.info("Database tables created successfully")
+        logger.info(
+            "建议：灌交易日历 trade_calendar（Baostock）→ "
+            "python scripts/fetch_trade_calendar.py --start 2020-01-01 --end 2025-12-31 "
+            "或 fetch_data.py --mode calendar；详见 init_db 模块说明。"
+        )
         
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

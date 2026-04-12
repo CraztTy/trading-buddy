@@ -43,6 +43,7 @@ async def _async_main(
     max_concurrent: int,
     start_date: date | None,
     end_date: date | None,
+    benchmark_code: str | None,
     out_path: Path | None,
 ) -> int:
     sys.path.insert(0, str(project_root))
@@ -53,7 +54,7 @@ async def _async_main(
         parse_scan_codes,
     )
     from src.common.config import describe_database_write_target
-    from src.data.storage import dispose_database
+    from src.data.storage import dispose_database, get_database, KlineRepository
 
     try:
         sort_norm = normalize_sort_by(sort_by)
@@ -67,6 +68,22 @@ async def _async_main(
         print("错误: 无有效代码", file=sys.stderr)
         return 2
 
+    bench_norm = (benchmark_code or "").strip().lower() or None
+    bench_klines = None
+    if bench_norm:
+        db0 = get_database()
+        async with db0.session() as sess:
+            repo0 = KlineRepository(sess)
+            bench_klines = await repo0.get_daily(
+                code=bench_norm,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+            )
+        if not bench_klines:
+            print(f"错误: 基准 {bench_norm} 无可用日 K", file=sys.stderr)
+            return 2
+
     try:
         items = await ma_cross_scan_items(
             parsed,
@@ -79,6 +96,7 @@ async def _async_main(
             slippage_rate=slippage_rate,
             sort_by=sort_norm,
             max_concurrent=max_concurrent,
+            benchmark_klines=bench_klines,
         )
     finally:
         await dispose_database()
@@ -93,6 +111,7 @@ async def _async_main(
         sort_by=sort_norm,
         start_date=start_date,
         end_date=end_date,
+        benchmark_code=bench_norm,
     )
     if out_path:
         out_path.write_bytes(blob)
@@ -140,6 +159,12 @@ def main() -> int:
         default=None,
         help="可选，K 线结束日（含），ISO 格式 YYYY-MM-DD",
     )
+    p.add_argument(
+        "--benchmark-code",
+        type=str,
+        default=None,
+        help="可选，β/α 对基准日收益回归，如 sh.000300",
+    )
     p.add_argument("-o", "--output", type=Path, default=None, help="输出文件；省略则打印到 stdout")
     args = p.parse_args()
 
@@ -178,6 +203,7 @@ def main() -> int:
             args.max_concurrent,
             d_start,
             d_end,
+            args.benchmark_code,
             args.output,
         )
     )

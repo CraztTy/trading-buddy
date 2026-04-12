@@ -78,6 +78,8 @@ class Database:
     
     async def create_tables(self):
         """创建所有表"""
+        import src.data.storage.models  # noqa: F401 — 注册 models 内全部 ORM 到 Base.metadata
+
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 

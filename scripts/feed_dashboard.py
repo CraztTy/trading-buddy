@@ -6,6 +6,9 @@
   · quick / standard / full — 首次或要大范围补历史时用（全窗口日K，耗时长）。
   · daily — 日常定时用：刷新股票列表 + 指数/个股按库中最新交易日增量补数（省流量、省时间）。
 
+**交易日历**：非 ``--skip-calendar`` 时，在首刷（quick/standard/full）末尾执行 ``fetch_data.py --mode calendar --source baostock``；
+``daily`` 则在同一条命令上加 ``--with-calendar``（仅 Baostock 会写库，其它数据源由 fetch_data 打日志跳过）。不需要日历或无外网时用 ``--skip-calendar``。
+
 必须在项目根目录配置好 .env，并由你在本机执行。
 
 用法（在项目根目录）:
@@ -13,6 +16,7 @@
   python scripts/feed_dashboard.py --profile quick
   python scripts/feed_dashboard.py --profile daily --skip-init
   python scripts/feed_dashboard.py --profile full --source baostock
+  python scripts/feed_dashboard.py --skip-calendar
   python scripts/feed_dashboard.py --dry-run
 """
 
@@ -66,6 +70,11 @@ def main() -> None:
         action="store_true",
         help="只打印将执行的命令，不真正运行",
     )
+    parser.add_argument(
+        "--skip-calendar",
+        action="store_true",
+        help="跳过 trade_calendar 灌数（不跑 calendar 模式，也不在 daily 上加 --with-calendar）",
+    )
     args = parser.parse_args()
 
     py = sys.executable
@@ -112,6 +121,8 @@ def main() -> None:
             "--overlap-days",
             "7",
         ]
+        if not args.skip_calendar:
+            daily_argv.append("--with-calendar")
         run_step("日常增量拉数（股票表+指数+全市场日K）", daily_argv, args.dry_run)
     else:
         run_step("拉取股票列表", base + ["--mode", "stocks"], args.dry_run)
@@ -124,6 +135,19 @@ def main() -> None:
         if k_limit > 0:
             k_argv += ["--limit", str(k_limit)]
         run_step("拉取股票日K（样本）", k_argv, args.dry_run)
+        if not args.skip_calendar:
+            run_step(
+                "灌交易日历 trade_calendar（Baostock）",
+                [
+                    py,
+                    str(project_root / "scripts" / "fetch_data.py"),
+                    "--mode",
+                    "calendar",
+                    "--source",
+                    "baostock",
+                ],
+                args.dry_run,
+            )
 
     if args.dry_run:
         print("\n(dry-run 结束，未执行任何命令)")

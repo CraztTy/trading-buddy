@@ -1,19 +1,25 @@
 {
   "name": "trading-buddy-dashboard",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "node ./e2e/preflight.cjs && node ./e2e/run-pw-heartbeat.cjs",
+    "test:e2e:diag-import": "node ./e2e/measure-import.mjs",
+    "test:e2e:ui": "node ./e2e/preflight.cjs && node ./node_modules/@playwright/test/cli.js test --ui",
+    "e2e:preview": "npm run build && vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },
   "dependencies": {
     "echarts": "^5.5.0",
+    "jszip": "^3.10.1",
     "vue": "^3.4.21",
     "vue-echarts": "^6.6.9"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@vitejs/plugin-vue": "^5.0.4",
     "vite": "^5.2.8"
   }

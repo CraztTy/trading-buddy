@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""本地冒烟：用 raw SQL 写 daily_kline（需已配置 .env 并 init_db）。"""
+from __future__ import annotations
+
+import asyncio
+import sys
+from datetime import date
+from pathlib import Path
+
+from sqlalchemy import text
+
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.data.storage import dispose_database, get_database
+
+
+async def main() -> None:
+    db = get_database()
+    print("[smoke] Inserting with raw SQL...")
+
+    async with db.session() as session:
+        result = await session.execute(
+            text("""
+            INSERT INTO daily_kline (code, trade_date, open, high, low, close, volume, amount, change_pct, turnover_rate)
+            VALUES (:code, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :turnover_rate)
+        """),
+            {
+                "code": "sh.600000",
+                "trade_date": date(2026, 3, 2),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.8,
+                "close": 10.2,
+                "volume": 1000000,
+                "amount": 10200000.0,
+                "change_pct": 2.0,
+                "turnover_rate": 2.5,
+            },
+        )
+        print(f"[smoke] Raw SQL insert, rows affected: {result.rowcount}")
+
+    print("[smoke] Verifying with raw SQL query...")
+    async with db.session() as session:
+        result = await session.execute(
+            text(
+                "SELECT id, code, trade_date, close, change_pct FROM daily_kline ORDER BY id DESC LIMIT 5"
+            )
+        )
+        rows = result.fetchall()
+        print(f"[smoke] Found {len(rows)} rows:")
+        for row in rows:
+            print(f"  id={row[0]} code={row[1]} date={row[2]} close={row[3]} pct={row[4]}")
+
+    await dispose_database()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

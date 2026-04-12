@@ -6,18 +6,36 @@ const props = defineProps({
   tab: { type: String, default: "gainers" },
 });
 
-const emit = defineEmits(["select"]);
+const emit = defineEmits(["select", "update:tab"]);
 
 const rows = ref([]);
 const loading = ref(true);
 const error = ref("");
+/** 仅「成交额」页：可选 YYYY-MM-DD，空则走后端默认最新交易日 */
+const turnoverDate = ref("");
+
+function fmtAmount(v) {
+  if (v == null || !Number.isFinite(Number(v))) return "—";
+  const x = Number(v);
+  if (x >= 1e8) return `${(x / 1e8).toFixed(2)} 亿`;
+  if (x >= 1e4) return `${(x / 1e4).toFixed(1)} 万`;
+  return `${x.toFixed(0)}`;
+}
 
 async function load() {
   loading.value = true;
   error.value = "";
-  const ep = props.tab === "gainers" ? "gainers" : "losers";
   try {
-    rows.value = await fetchJson(`dashboard/${ep}?limit=20`);
+    if (props.tab === "turnover") {
+      const p = new URLSearchParams({ limit: "20" });
+      const d = (turnoverDate.value || "").trim();
+      if (d) p.set("trade_date", d);
+      const data = await fetchJson(`dashboard/turnover?${p.toString()}`);
+      rows.value = Array.isArray(data?.stocks) ? data.stocks : [];
+    } else {
+      const ep = props.tab === "gainers" ? "gainers" : "losers";
+      rows.value = await fetchJson(`dashboard/${ep}?limit=20`);
+    }
   } catch (e) {
     error.value = e?.message || "加载失败";
     rows.value = [];
@@ -31,6 +49,10 @@ watch(
   () => load(),
   { immediate: true }
 );
+
+watch(turnoverDate, () => {
+  if (props.tab === "turnover") load();
+});
 </script>
 
 <template>
@@ -40,7 +62,7 @@ watch(
         type="button"
         class="tab"
         :class="{ active: tab === 'gainers' }"
-        @click="$emit('update:tab', 'gainers')"
+        @click="emit('update:tab', 'gainers')"
       >
         <span class="tab-icon up">▲</span>
         涨幅榜
@@ -49,11 +71,28 @@ watch(
         type="button"
         class="tab"
         :class="{ active: tab === 'losers' }"
-        @click="$emit('update:tab', 'losers')"
+        @click="emit('update:tab', 'losers')"
       >
         <span class="tab-icon down">▼</span>
         跌幅榜
       </button>
+      <button
+        type="button"
+        class="tab"
+        :class="{ active: tab === 'turnover' }"
+        @click="emit('update:tab', 'turnover')"
+      >
+        <span class="tab-icon vol">◇</span>
+        成交额
+      </button>
+    </div>
+
+    <div v-if="tab === 'turnover'" class="turnover-opts">
+      <label class="dt-lbl">
+        <span>交易日（可选）</span>
+        <input v-model="turnoverDate" type="date" class="dt-inp mono" />
+      </label>
+      <span class="dt-hint mono">空 = 库中最新交易日</span>
     </div>
 
     <div v-if="loading" class="state shimmer">
@@ -79,7 +118,11 @@ watch(
           <span class="nm">{{ stock.name }}</span>
           <span class="cd mono">{{ stock.code }}</span>
         </div>
-        <div class="rhs">
+        <div v-if="tab === 'turnover'" class="rhs rhs-turnover">
+          <span class="mono pr">{{ stock.price?.toFixed(2) ?? "—" }}</span>
+          <span class="mono amt">{{ fmtAmount(stock.amount) }}</span>
+        </div>
+        <div v-else class="rhs">
           <span class="mono pr">{{ stock.price?.toFixed(2) ?? "—" }}</span>
           <span
             class="mono pct"
@@ -105,7 +148,7 @@ watch(
 
 .tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 0;
   padding: 6px;
   background: var(--void);
@@ -114,13 +157,13 @@ watch(
 
 .tab {
   position: relative;
-  padding: 12px 10px;
+  padding: 12px 8px;
   border: none;
   border-radius: 2px;
   background: transparent;
   color: var(--paper-muted);
   font-family: var(--font-ui);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -145,6 +188,10 @@ watch(
   color: var(--danger);
 }
 
+.tab-icon.vol {
+  color: var(--meridian);
+}
+
 .tab.active {
   color: var(--mist);
   background: linear-gradient(180deg, var(--ink-highlight) 0%, var(--ink-card) 100%);
@@ -154,6 +201,38 @@ watch(
 .tab:focus-visible {
   outline: 2px solid var(--meridian);
   outline-offset: 2px;
+}
+
+.turnover-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.35);
+}
+
+.dt-lbl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.65rem;
+  color: var(--paper-muted);
+}
+
+.dt-inp {
+  border: 1px solid var(--rule-faint);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(8, 8, 12, 0.65);
+  color: var(--mist);
+  font-size: 0.8rem;
+}
+
+.dt-hint {
+  font-size: 0.62rem;
+  color: var(--mist-dim);
 }
 
 .state {
@@ -315,6 +394,14 @@ watch(
 
 .rhs {
   text-align: right;
+}
+
+.rhs-turnover .amt {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--meridian);
 }
 
 .pr {

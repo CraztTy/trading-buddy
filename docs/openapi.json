@@ -1,0 +1,4494 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Trading Buddy API",
+    "description": "A股量化交易数据基础设施",
+    "version": "1.1.0"
+  },
+  "paths": {
+    "/api/stocks/list": {
+      "get": {
+        "tags": [
+          "股票"
+        ],
+        "summary": "Get Stock List",
+        "description": "获取股票代码列表（分页），含 `name` 展示名与过滤后总数 `total`。",
+        "operationId": "get_stock_list_api_stocks_list_get",
+        "parameters": [
+          {
+            "name": "market",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "市场: sh/sz/bj",
+              "title": "Market"
+            },
+            "description": "市场: sh/sz/bj"
+          },
+          {
+            "name": "industry",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "行业前缀（与 GET /stocks/industry/{industry} 同口径）；未传或空则不过滤",
+              "title": "Industry"
+            },
+            "description": "行业前缀（与 GET /stocks/industry/{industry} 同口径）；未传或空则不过滤"
+          },
+          {
+            "name": "stock_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "类型: common | st | star | growth | beijing；未知值忽略（不过滤）",
+              "title": "Stock Type"
+            },
+            "description": "类型: common | st | star | growth | beijing；未知值忽略（不过滤）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "本页条数（结果按 code 排序后切片）",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "本页条数（结果按 code 排序后切片）"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "跳过前 offset 条；超过结果集时服务端钳制，响应 `offset` 为实际起点",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "跳过前 offset 条；超过结果集时服务端钳制，响应 `offset` 为实际起点"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stocks/{code}": {
+      "get": {
+        "tags": [
+          "股票"
+        ],
+        "summary": "Get Stock",
+        "description": "获取股票详情",
+        "operationId": "get_stock_api_stocks__code__get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/StockInfo"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  ],
+                  "title": "Response Get Stock Api Stocks  Code  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stocks/industry/{industry}": {
+      "get": {
+        "tags": [
+          "股票"
+        ],
+        "summary": "Get Stocks By Industry",
+        "description": "根据行业获取股票（行业字段**前缀匹配**，如「新能源」可命中「新能源 整车」）。",
+        "operationId": "get_stocks_by_industry_api_stocks_industry__industry__get",
+        "parameters": [
+          {
+            "name": "industry",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Industry"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StockInfo"
+                  },
+                  "title": "Response Get Stocks By Industry Api Stocks Industry  Industry  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/klines/analysis/{code}": {
+      "get": {
+        "tags": [
+          "K线"
+        ],
+        "summary": "Get Kline Analysis",
+        "description": "获取K线分析（包含技术指标与展示名称）",
+        "operationId": "get_kline_analysis_api_klines_analysis__code__get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 250,
+              "description": "用于计算均线的数据量",
+              "default": 60,
+              "title": "Limit"
+            },
+            "description": "用于计算均线的数据量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Kline Analysis Api Klines Analysis  Code  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/klines/latest/{code}": {
+      "get": {
+        "tags": [
+          "K线"
+        ],
+        "summary": "Get Latest Kline",
+        "description": "获取最新一根K线",
+        "operationId": "get_latest_kline_api_klines_latest__code__get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/KLine"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  ],
+                  "title": "Response Get Latest Kline Api Klines Latest  Code  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/klines/{code}": {
+      "get": {
+        "tags": [
+          "K线"
+        ],
+        "summary": "Get Kline",
+        "description": "获取K线数据",
+        "operationId": "get_kline_api_klines__code__get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "开始日期",
+              "title": "Start Date"
+            },
+            "description": "开始日期"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "结束日期",
+              "title": "End Date"
+            },
+            "description": "结束日期"
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "周期: daily/weekly/monthly",
+              "default": "daily",
+              "title": "Period"
+            },
+            "description": "周期: daily/weekly/monthly"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "description": "返回数量",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "返回数量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KLine"
+                  },
+                  "title": "Response Get Kline Api Klines  Code  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/realtime/quote": {
+      "get": {
+        "tags": [
+          "实时行情"
+        ],
+        "summary": "Get Realtime Quote",
+        "description": "获取实时行情",
+        "operationId": "get_realtime_quote_api_realtime_quote_get",
+        "parameters": [
+          {
+            "name": "codes",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码，多个用逗号分隔",
+              "title": "Codes"
+            },
+            "description": "股票代码，多个用逗号分隔"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RealtimeQuote"
+                  },
+                  "title": "Response Get Realtime Quote Api Realtime Quote Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/realtime/batch": {
+      "get": {
+        "tags": [
+          "实时行情"
+        ],
+        "summary": "Get Batch Quotes",
+        "description": "批量获取市场行情摘要（主要指数）",
+        "operationId": "get_batch_quotes_api_realtime_batch_get",
+        "parameters": [
+          {
+            "name": "market",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "市场: sh/sz/bj/all",
+              "default": "all",
+              "title": "Market"
+            },
+            "description": "市场: sh/sz/bj/all"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "description": "返回数量",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "返回数量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Batch Quotes Api Realtime Batch Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard/overview": {
+      "get": {
+        "tags": [
+          "看板"
+        ],
+        "summary": "Get Market Overview",
+        "description": "获取市场概览（从数据库获取）",
+        "operationId": "get_market_overview_api_dashboard_overview_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Market Overview Api Dashboard Overview Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard/gainers": {
+      "get": {
+        "tags": [
+          "看板"
+        ],
+        "summary": "Get Top Gainers",
+        "description": "获取涨幅榜",
+        "operationId": "get_top_gainers_api_dashboard_gainers_get",
+        "parameters": [
+          {
+            "name": "trade_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "交易日期；省略则用库中最新交易日",
+              "title": "Trade Date"
+            },
+            "description": "交易日期；省略则用库中最新交易日"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "description": "返回数量",
+              "default": 10,
+              "title": "Limit"
+            },
+            "description": "返回数量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Top Gainers Api Dashboard Gainers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard/losers": {
+      "get": {
+        "tags": [
+          "看板"
+        ],
+        "summary": "Get Top Losers",
+        "description": "获取跌幅榜",
+        "operationId": "get_top_losers_api_dashboard_losers_get",
+        "parameters": [
+          {
+            "name": "trade_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "交易日期；省略则用库中最新交易日",
+              "title": "Trade Date"
+            },
+            "description": "交易日期；省略则用库中最新交易日"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "description": "返回数量",
+              "default": 10,
+              "title": "Limit"
+            },
+            "description": "返回数量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Top Losers Api Dashboard Losers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard/turnover": {
+      "get": {
+        "tags": [
+          "看板"
+        ],
+        "summary": "Get High Turnover",
+        "description": "获取成交额排行榜：全市场（有 ``stock_info`` 且交易中）在指定日按 ``amount`` 降序 Top ``limit``。",
+        "operationId": "get_high_turnover_api_dashboard_turnover_get",
+        "parameters": [
+          {
+            "name": "trade_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "交易日期；省略则用库中最新交易日（与涨跌榜口径一致）",
+              "title": "Trade Date"
+            },
+            "description": "交易日期；省略则用库中最新交易日（与涨跌榜口径一致）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get High Turnover Api Dashboard Turnover Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/catalog": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Backtest Engine Catalog",
+        "description": "列出通用回测 MVP 已注册策略，供客户端与脚本发现 POST /run 契约。",
+        "operationId": "backtest_engine_catalog_api_backtest_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestEngineCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/ma-cross/signal": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Ma Cross Signal",
+        "description": "最近一根有效 K 上的双均线多空状态（无权益曲线、无费率）。",
+        "operationId": "ma_cross_signal_api_backtest_ma_cross_signal_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "标的代码",
+              "title": "Code"
+            },
+            "description": "标的代码"
+          },
+          {
+            "name": "fast",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 120,
+              "minimum": 1,
+              "default": 5,
+              "title": "Fast"
+            }
+          },
+          {
+            "name": "slow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 2,
+              "default": 20,
+              "title": "Slow"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Date"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "description": "与单标的回测一致；须 ≥ slow",
+              "default": 500,
+              "title": "Limit"
+            },
+            "description": "与单标的回测一致；须 ≥ slow"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaCrossSignalResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/ma-cross/scan": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Ma Cross Scan",
+        "operationId": "ma_cross_scan_api_backtest_ma_cross_scan_get",
+        "parameters": [
+          {
+            "name": "codes",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "逗号或换行分隔的标的列表，如 sh.600519,sz.000001",
+              "title": "Codes"
+            },
+            "description": "逗号或换行分隔的标的列表，如 sh.600519,sz.000001"
+          },
+          {
+            "name": "fast",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 120,
+              "minimum": 1,
+              "default": 5,
+              "title": "Fast"
+            }
+          },
+          {
+            "name": "slow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 2,
+              "default": 20,
+              "title": "Slow"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Date"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "default": 500,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "commission_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "default": 0.0,
+              "title": "Commission Rate"
+            }
+          },
+          {
+            "name": "slippage_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "default": 0.0,
+              "title": "Slippage Rate"
+            }
+          },
+          {
+            "name": "max_codes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 40,
+              "minimum": 1,
+              "default": 25,
+              "title": "Max Codes"
+            }
+          },
+          {
+            "name": "export",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "json（默认）或 csv；csv 带 UTF-8 BOM，适合 Excel",
+              "default": "json",
+              "title": "Export"
+            },
+            "description": "json（默认）或 csv；csv 带 UTF-8 BOM，适合 Excel"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "排序：total_return | excess_return | sharpe | buy_hold | ann_return | sortino | calmar | win_rate（额权）| avg_holding | underlying_beta | underlying_alpha",
+              "default": "total_return",
+              "title": "Sort By"
+            },
+            "description": "排序：total_return | excess_return | sharpe | buy_hold | ann_return | sortino | calmar | win_rate（额权）| avg_holding | underlying_beta | underlying_alpha"
+          },
+          {
+            "name": "max_concurrent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20,
+              "minimum": 1,
+              "description": "并行拉取 K 线的最大并发数",
+              "default": 8,
+              "title": "Max Concurrent"
+            },
+            "description": "并行拉取 K 线的最大并发数"
+          },
+          {
+            "name": "benchmark_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "可选，如 sh.000300；各标的 β/α 相对同一基准（按各标的交易日对齐）。不传则对标的自身日收益。无该基准日 K 时 400。",
+              "title": "Benchmark Code"
+            },
+            "description": "可选，如 sh.000300；各标的 β/α 相对同一基准（按各标的交易日对齐）。不传则对标的自身日收益。无该基准日 K 时 400。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/ma-cross": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Ma Cross Backtest",
+        "operationId": "ma_cross_backtest_api_backtest_ma_cross_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "标的代码，如 sh.000001",
+              "title": "Code"
+            },
+            "description": "标的代码，如 sh.000001"
+          },
+          {
+            "name": "fast",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 120,
+              "minimum": 1,
+              "description": "快线周期",
+              "default": 5,
+              "title": "Fast"
+            },
+            "description": "快线周期"
+          },
+          {
+            "name": "slow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 2,
+              "description": "慢线周期",
+              "default": 20,
+              "title": "Slow"
+            },
+            "description": "慢线周期"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "起始日（含）",
+              "title": "Start Date"
+            },
+            "description": "起始日（含）"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "结束日（含）",
+              "title": "End Date"
+            },
+            "description": "结束日（含）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "description": "最多使用多少根日 K（从新到旧取，再按时间正序回测）",
+              "default": 500,
+              "title": "Limit"
+            },
+            "description": "最多使用多少根日 K（从新到旧取，再按时间正序回测）"
+          },
+          {
+            "name": "commission_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "description": "单边手续费率（如万1.5填0.00015）；在持仓翻转日各扣一次",
+              "default": 0.0,
+              "title": "Commission Rate"
+            },
+            "description": "单边手续费率（如万1.5填0.00015）；在持仓翻转日各扣一次"
+          },
+          {
+            "name": "slippage_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "description": "滑点率（与手续费同口径，在调仓翻转日扣减）",
+              "default": 0.0,
+              "title": "Slippage Rate"
+            },
+            "description": "滑点率（与手续费同口径，在调仓翻转日扣减）"
+          },
+          {
+            "name": "benchmark_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS（标的交易日对齐、仅前向填充）。不传则对标的自身日收益。无该基准日 K 时 400。",
+              "title": "Benchmark Code"
+            },
+            "description": "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS（标的交易日对齐、仅前向填充）。不传则对标的自身日收益。无该基准日 K 时 400。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaCrossBacktestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "取消排队中的异步回测任务",
+        "description": "仅 **``pending``** 可取消并进入 **``cancelled``**；**``running`` / 终态** 返回 **409**。\nRedis 模式下已入队的任务仍会被 worker **BRPOP** 到，但执行前发现 **``cancelled``** 即跳过。",
+        "operationId": "backtest_run_mvp_job_cancel_api_backtest_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestJobCancelResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "job_id 不存在"
+          },
+          "409": {
+            "description": "仅 pending 可取消；running 请等待或依赖超时回收"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "查询异步回测任务状态",
+        "description": "轮询 ``POST /api/backtest/run?async=1`` 返回的 ``job_id``。\n响应体含 **``async_job_persistence``**，与 **``GET /api/backtest/catalog``** 同源，便于轮询端无需额外拉目录。\n**``running``** 若超过 **``BACKTEST_ASYNC_JOB_STUCK_SEC``**（默认 1800，``0`` 关闭）未结束，本接口可将任务置为 **``failed``** 并写 ``finished_at``。",
+        "operationId": "backtest_run_mvp_job_status_api_backtest_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunJobStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/run": {
+      "post": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "通用回测 MVP（同步或异步）",
+        "description": "通用回测 MVP：与 GET /api/backtest/ma-cross* 共用内核，额外返回 assumptions / engine_version。\n支持 strategy_id=`ma_cross`（单标的）或 `ma_cross_scan`（批量），strategy_version=`1`。\n\n默认同步 200；**``?async=1``** 时返回 **202** 及 ``job_id``，由 **GET /api/backtest/jobs/{job_id}** 轮询\n``pending`` / ``running`` / ``completed`` / ``failed`` / ``cancelled``（取消）。\n若 ``REDIS_ENABLED`` 且 ``BACKTEST_ASYNC_JOB_STORE`` 为 ``auto``（默认），任务入 **Redis 队列** 并持久化记录；\n否则为进程内表（重启清空）。``BACKTEST_ASYNC_JOB_STORE=redis`` 且 Redis 不可用时返回 **503**。",
+        "operationId": "backtest_run_mvp_api_backtest_run_post",
+        "parameters": [
+          {
+            "name": "async",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "为 true 时异步执行：返回 202 + job_id，通过 GET /api/backtest/jobs/{job_id} 取结果",
+              "default": false,
+              "title": "Async"
+            },
+            "description": "为 true 时异步执行：返回 202 + job_id，通过 GET /api/backtest/jobs/{job_id} 取结果"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRunMvpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "同步执行完成",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunMvpResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "已受理异步任务，请 GET /api/backtest/jobs/{job_id} 轮询",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunJobAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/runs": {
+      "post": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Backtest Run Create",
+        "description": "保存一次单标的回测或批量扫描的完整请求/响应 JSON（供日后查阅）。",
+        "operationId": "backtest_run_create_api_backtest_runs_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRunCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Backtest Run Create Api Backtest Runs Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Backtest Runs List",
+        "operationId": "backtest_runs_list_api_backtest_runs_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 30,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ma_cross_single",
+                    "ma_cross_scan"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "仅列出该类型的存档；不传则全部",
+              "title": "Kind"
+            },
+            "description": "仅列出该类型的存档；不传则全部"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "摘要子串过滤（LIKE %q%）",
+              "title": "Q"
+            },
+            "description": "摘要子串过滤（LIKE %q%）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunsListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/runs/{run_id}": {
+      "delete": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Backtest Run Delete",
+        "description": "删除一条存档（不可恢复）。",
+        "operationId": "backtest_run_delete_api_backtest_runs__run_id__delete",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Backtest Run Detail",
+        "operationId": "backtest_run_detail_api_backtest_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/state": {
+      "get": {
+        "tags": [
+          "纸交易"
+        ],
+        "summary": "Paper State",
+        "description": "账户现金、持仓、按最新日 K 估算的权益（成交列表见 GET /paper/orders）。",
+        "operationId": "paper_state_api_paper_state_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Paper State Api Paper State Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/orders": {
+      "get": {
+        "tags": [
+          "纸交易"
+        ],
+        "summary": "Paper List Orders",
+        "description": "分页查询成交记录（按订单 id 新→旧）。",
+        "operationId": "paper_list_orders_api_paper_orders_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "每页条数"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "跳过条数",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "跳过条数"
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 24
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "可选：只查该标的",
+              "title": "Code"
+            },
+            "description": "可选：只查该标的"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperOrdersListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "纸交易"
+        ],
+        "summary": "Paper Place Order",
+        "operationId": "paper_place_order_api_paper_orders_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperOrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperOrderResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/account/reset": {
+      "post": {
+        "tags": [
+          "纸交易"
+        ],
+        "summary": "Paper Reset",
+        "description": "清空纸单与持仓，现金回到 initial（开发/自测用）。",
+        "operationId": "paper_reset_api_paper_account_reset_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Paper Reset Api Paper Account Reset Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/watchlist/items": {
+      "get": {
+        "tags": [
+          "自选"
+        ],
+        "summary": "Watchlist Items",
+        "operationId": "watchlist_items_api_watchlist_items_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistItemsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "自选"
+        ],
+        "summary": "Watchlist Add Item",
+        "operationId": "watchlist_add_item_api_watchlist_items_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchlistAddRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Watchlist Add Item Api Watchlist Items Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/watchlist/items/{code}": {
+      "delete": {
+        "tags": [
+          "自选"
+        ],
+        "summary": "Watchlist Remove Item",
+        "operationId": "watchlist_remove_item_api_watchlist_items__code__delete",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Watchlist Remove Item Api Watchlist Items  Code  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/strategies/catalog": {
+      "get": {
+        "tags": [
+          "策略"
+        ],
+        "summary": "Get Strategy Catalog",
+        "description": "列出已注册策略：signal_params（试算信号）、backtest_run（POST /api/backtest/run 信封与 params_schema）、backtest_archive_kinds（与结果存档 kind 对齐）",
+        "operationId": "get_strategy_catalog_api_strategies_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/strategies/signal": {
+      "post": {
+        "tags": [
+          "策略"
+        ],
+        "summary": "Post Strategy Signal",
+        "description": "用 JSON 模板请求最新策略信号（当前仅 `ma_cross`）。\n与 `GET /api/backtest/ma-cross/signal` 语义一致，便于自动化与后续多策略扩展。",
+        "operationId": "post_strategy_signal_api_strategies_signal_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrategySignalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategySignalResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/factors/catalog": {
+      "get": {
+        "tags": [
+          "因子"
+        ],
+        "summary": "Factors Ops Catalog",
+        "description": "列出因子预览 API 支持的算子及 window/column 约定，供 UI 与外部脚本发现。",
+        "operationId": "factors_ops_catalog_api_factors_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactorCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/factors/preview": {
+      "get": {
+        "tags": [
+          "因子"
+        ],
+        "summary": "Factor Preview",
+        "description": "对单列日 K 序列跑一项因子原语，不落库。",
+        "operationId": "factor_preview_api_factors_preview_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "标的代码",
+              "title": "Code"
+            },
+            "description": "标的代码"
+          },
+          {
+            "name": "column",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount"
+              ],
+              "type": "string",
+              "description": "K 线列；op=atr/kdj/cci/williams_r/mfi/obv/adx/aroon/donchian/vwap 时忽略（obv 用 close+volume；mfi/vwap 用 H/L/C/V；adx/aroon/donchian 用 H/L；可填 close）；roc/trix 与 rolling_* 等同按 column 取列",
+              "title": "Column"
+            },
+            "description": "K 线列；op=atr/kdj/cci/williams_r/mfi/obv/adx/aroon/donchian/vwap 时忽略（obv 用 close+volume；mfi/vwap 用 H/L/C/V；adx/aroon/donchian 用 H/L；可填 close）；roc/trix 与 rolling_* 等同按 column 取列"
+          },
+          {
+            "name": "op",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "rolling_sum",
+                "rolling_mean",
+                "rolling_std",
+                "rolling_zscore",
+                "rolling_max",
+                "rolling_min",
+                "ema",
+                "pct_change_1",
+                "pct_change_n",
+                "diff_n",
+                "rsi",
+                "atr",
+                "bollinger",
+                "macd",
+                "kdj",
+                "cci",
+                "obv",
+                "williams_r",
+                "mfi",
+                "roc",
+                "trix",
+                "adx",
+                "aroon",
+                "donchian",
+                "vwap"
+              ],
+              "type": "string",
+              "description": "原语算子",
+              "title": "Op"
+            },
+            "description": "原语算子"
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 500,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "rolling_*、ema、atr、bollinger、kdj、cci、williams_r、mfi、roc、trix、adx、aroon、donchian 等须传 window；vwap 滚动时须传 window（日级累计不传）；pct_change_n/roc/diff_n/rsi 为 n 或 period；trix 的 window 为 EMA span；adx/aroon 的 window 为 period；donchian 的 window 为通道宽度；pct_change_1、macd、obv 忽略",
+              "title": "Window"
+            },
+            "description": "rolling_*、ema、atr、bollinger、kdj、cci、williams_r、mfi、roc、trix、adx、aroon、donchian 等须传 window；vwap 滚动时须传 window（日级累计不传）；pct_change_n/roc/diff_n/rsi 为 n 或 period；trix 的 window 为 EMA span；adx/aroon 的 window 为 period；donchian 的 window 为通道宽度；pct_change_1、macd、obv 忽略"
+          },
+          {
+            "name": "bb_k",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 12.0,
+              "minimum": 0.25,
+              "description": "仅 op=bollinger：上下轨 k 倍 rolling_std；写入 meta.bb_k",
+              "default": 2.0,
+              "title": "Bb K"
+            },
+            "description": "仅 op=bollinger：上下轨 k 倍 rolling_std；写入 meta.bb_k"
+          },
+          {
+            "name": "macd_fast",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "op=macd：快线 EMA span（须 < macd_slow）",
+              "default": 12,
+              "title": "Macd Fast"
+            },
+            "description": "op=macd：快线 EMA span（须 < macd_slow）"
+          },
+          {
+            "name": "macd_slow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "op=macd：慢线 EMA span",
+              "default": 26,
+              "title": "Macd Slow"
+            },
+            "description": "op=macd：慢线 EMA span"
+          },
+          {
+            "name": "macd_signal",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "op=macd：DEA 对 DIF 的 EMA span；写入 meta.signal",
+              "default": 9,
+              "title": "Macd Signal"
+            },
+            "description": "op=macd：DEA 对 DIF 的 EMA span；写入 meta.signal"
+          },
+          {
+            "name": "kdj_m1",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 30,
+              "minimum": 1,
+              "description": "op=kdj：K 平滑参数 m1（默认 3）；写入 meta.m1",
+              "default": 3,
+              "title": "Kdj M1"
+            },
+            "description": "op=kdj：K 平滑参数 m1（默认 3）；写入 meta.m1"
+          },
+          {
+            "name": "kdj_m2",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 30,
+              "minimum": 1,
+              "description": "op=kdj：D 平滑参数 m2（默认 3）；写入 meta.m2",
+              "default": 3,
+              "title": "Kdj M2"
+            },
+            "description": "op=kdj：D 平滑参数 m2（默认 3）；写入 meta.m2"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "description": "拉取日 K 根数上限（从新到旧再正序）",
+              "default": 500,
+              "title": "Limit"
+            },
+            "description": "拉取日 K 根数上限（从新到旧再正序）"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Date"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Date"
+            }
+          },
+          {
+            "name": "response_format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "type": "string",
+              "description": "json：series/meta；csv：value / bollinger / macd / kdj / adx / aroon / donchian / vwap",
+              "default": "json",
+              "title": "Response Format"
+            },
+            "description": "json：series/meta；csv：value / bollinger / macd / kdj / adx / aroon / donchian / vwap"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/trade-calendar/options": {
+      "get": {
+        "tags": [
+          "数据"
+        ],
+        "summary": "Get Trade Calendar Options",
+        "operationId": "get_trade_calendar_options_api_data_trade_calendar_options_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeCalendarOptionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/trade-calendar/status": {
+      "get": {
+        "tags": [
+          "数据"
+        ],
+        "summary": "Get Trade Calendar Status",
+        "operationId": "get_trade_calendar_status_api_data_trade_calendar_status_get",
+        "parameters": [
+          {
+            "name": "exchange",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "default": "cn",
+              "title": "Exchange"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeCalendarStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "description": "根路径",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "健康检查（仅反映配置，不探测连接；深度探活见 /health/ready）。",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "summary": "Health Ready",
+        "description": "就绪探针：执行 DB `SELECT 1`；若启用 Redis 则 PING。失败返回 503。",
+        "operationId": "health_ready_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BacktestEngineCatalogResponse": {
+        "properties": {
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version"
+          },
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestStrategyCatalogEntry"
+            },
+            "type": "array",
+            "title": "Strategies"
+          },
+          "post_run_path": {
+            "type": "string",
+            "title": "Post Run Path",
+            "description": "统一执行入口；默认同步 POST 返回 200；附加查询参数见 async_run_query_param",
+            "default": "/api/backtest/run"
+          },
+          "doc_ref": {
+            "type": "string",
+            "title": "Doc Ref",
+            "description": "接口草案与迁移路径",
+            "default": "docs/GENERIC_BACKTEST_DRAFT.md"
+          },
+          "async_run_query_param": {
+            "type": "string",
+            "title": "Async Run Query Param",
+            "description": "POST 到 post_run_path 时 ?async=1（或 true）受理异步任务（202 + job_id）",
+            "default": "async"
+          },
+          "async_job_status_path_template": {
+            "type": "string",
+            "title": "Async Job Status Path Template",
+            "description": "将 {job_id} 替换为 202 响应中的 job_id 后 GET 轮询状态",
+            "default": "/api/backtest/jobs/{job_id}"
+          },
+          "async_job_persistence": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "redis"
+            ],
+            "title": "Async Job Persistence",
+            "description": "异步任务状态存储：memory=进程内（重启丢失）；redis=Redis 列表队列 + JSON 记录（见 BACKTEST_ASYNC_JOB_STORE）",
+            "default": "memory"
+          },
+          "async_job_queue_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Async Job Queue Key",
+            "description": "Redis 异步时 BRPOP 的列表键；memory 时为 null"
+          },
+          "async_job_queue_depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Async Job Queue Depth",
+            "description": "Redis 异步时队列中待消费 job_id 条数（LLEN）；memory 时为 null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "engine_version",
+          "strategies"
+        ],
+        "title": "BacktestEngineCatalogResponse"
+      },
+      "BacktestJobCancelResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "const": "cancelled",
+            "title": "Status",
+            "default": "cancelled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "title": "BacktestJobCancelResponse",
+        "description": "``POST /api/backtest/jobs/{job_id}/cancel`` 成功时仅 ``pending`` 可取消。"
+      },
+      "BacktestRunCreate": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ma_cross_single",
+              "ma_cross_scan"
+            ],
+            "title": "Kind"
+          },
+          "request_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Request Params"
+          },
+          "response_payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Response Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "BacktestRunCreate"
+      },
+      "BacktestRunDetailResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "request_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Request Params"
+          },
+          "response_payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Response Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "summary",
+          "created_at",
+          "request_params",
+          "response_payload"
+        ],
+        "title": "BacktestRunDetailResponse"
+      },
+      "BacktestRunJobAcceptedResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "const": "accepted",
+            "title": "Status",
+            "default": "accepted"
+          },
+          "status_path": {
+            "type": "string",
+            "title": "Status Path",
+            "description": "GET 轮询路径（含 /api 前缀，不含 host）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status_path"
+        ],
+        "title": "BacktestRunJobAcceptedResponse",
+        "description": "``POST /api/backtest/run?async=1`` 受理后返回；结果经 ``GET /api/backtest/jobs/{job_id}`` 轮询。"
+      },
+      "BacktestRunJobStatusResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "async_job_persistence": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "redis"
+            ],
+            "title": "Async Job Persistence",
+            "description": "与 GET /api/backtest/catalog 同源；本条任务所在存储后端"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BacktestRunMvpResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "status=failed 时为错误文案；cancelled 时多为 cancelled"
+          },
+          "queued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued At",
+            "description": "任务入队/受理时间（UTC，ISO-8601 Z）；无则 null"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "执行开始时间（UTC）；pending 时为 null"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "终态时间（UTC）；completed/failed 时有值"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "async_job_persistence"
+        ],
+        "title": "BacktestRunJobStatusResponse"
+      },
+      "BacktestRunListItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "summary",
+          "created_at"
+        ],
+        "title": "BacktestRunListItem"
+      },
+      "BacktestRunMvpRequest": {
+        "properties": {
+          "strategy_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Strategy Id",
+            "default": "ma_cross"
+          },
+          "strategy_version": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Strategy Version",
+            "default": "1"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "universe": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Universe",
+            "description": "**MVP 占位、不参与调度**：草案中的标的范围（列表/映射/表达式等）；实际调度仅看 strategy_id 与 params"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval",
+            "description": "**MVP 占位、不参与调度**：草案中的周期/采样粒度等"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start",
+            "description": "**MVP 占位、不参与调度**：通用区间起点示意；MA MVP 请使用 params.start_date / params.end_date"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End",
+            "description": "**MVP 占位、不参与调度**：通用区间终点示意；MA MVP 请见 params.end_date"
+          },
+          "initial_cash": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Cash",
+            "description": "**MVP 占位、不参与调度**：初始资金等；MA 回测未读取"
+          },
+          "commission": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission",
+            "description": "**MVP 占位、不参与调度**：与 params.commission_rate 无关"
+          },
+          "slippage": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage",
+            "description": "**MVP 占位、不参与调度**：与 params.slippage_rate 无关"
+          }
+        },
+        "type": "object",
+        "title": "BacktestRunMvpRequest",
+        "description": "通用回测 MVP：同步执行；注册 ma_cross / ma_cross_scan v1。"
+      },
+      "BacktestRunMvpResponse": {
+        "properties": {
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version",
+            "description": "执行器版本，见 src/backtest/runner/ma_cross_executor.py"
+          },
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "strategy_version": {
+            "type": "string",
+            "title": "Strategy Version"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Assumptions",
+            "description": "与本次结果绑定的口径与数据假设，供审计与复现"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaCrossBacktestResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "strategy_id=ma_cross 时非空，与 GET /api/backtest/ma-cross 一致"
+          },
+          "scan_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaCrossScanResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "strategy_id=ma_cross_scan 时非空，与 GET /api/backtest/ma-cross/scan JSON 一致"
+          }
+        },
+        "type": "object",
+        "required": [
+          "engine_version",
+          "strategy_id",
+          "strategy_version"
+        ],
+        "title": "BacktestRunMvpResponse"
+      },
+      "BacktestRunsListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestRunListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "BacktestRunsListResponse"
+      },
+      "BacktestStrategyCatalogEntry": {
+        "properties": {
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "strategy_version": {
+            "type": "string",
+            "title": "Strategy Version"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "response_shape": {
+            "type": "string",
+            "enum": [
+              "result",
+              "scan_result"
+            ],
+            "title": "Response Shape",
+            "description": "成功响应中 BacktestRunMvpResponse 的非空字段名"
+          },
+          "archive_kind": {
+            "type": "string",
+            "title": "Archive Kind",
+            "description": "与 POST /api/backtest/runs 及 GET /api/backtest/runs?kind= 的 kind 字段一致"
+          },
+          "get_equivalent_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Get Equivalent Paths",
+            "description": "与本次执行同义的只读 GET 路径（不含 host）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "strategy_version",
+          "title",
+          "description",
+          "response_shape",
+          "archive_kind"
+        ],
+        "title": "BacktestStrategyCatalogEntry",
+        "description": "POST /api/backtest/run 可提交的已注册策略（与内核常量对齐）。"
+      },
+      "FactorCatalogResponse": {
+        "properties": {
+          "preview_path": {
+            "type": "string",
+            "title": "Preview Path",
+            "default": "/api/factors/preview"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/FactorOpCatalogEntry"
+            },
+            "type": "array",
+            "title": "Ops"
+          },
+          "doc_ref": {
+            "type": "string",
+            "title": "Doc Ref",
+            "default": "docs/FACTORS.md"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ops"
+        ],
+        "title": "FactorCatalogResponse"
+      },
+      "FactorOpCatalogEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "window": {
+            "type": "string",
+            "enum": [
+              "required",
+              "optional",
+              "unused"
+            ],
+            "title": "Window",
+            "description": "required：须传 window；optional：vwap 累计可不传、滚动须传；unused：忽略 window"
+          },
+          "column": {
+            "type": "string",
+            "enum": [
+              "ohlcv",
+              "ignored"
+            ],
+            "title": "Column",
+            "description": "ohlcv：按 column 取价量列；ignored：内部用 H/L/C/V，column 可填 close 占位"
+          },
+          "series_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Series Keys",
+            "description": "响应 body.series 中的键，与 trade_dates 等长"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "额外查询参数或边界（如 macd_fast/slow、bb_k、kdj_m1）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "window",
+          "column",
+          "series_keys"
+        ],
+        "title": "FactorOpCatalogEntry",
+        "description": "GET /api/factors/preview 支持的算子一条元数据（与 OpName / 校验逻辑对齐）。"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "KLine": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "股票代码"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Trade Date",
+            "description": "交易日期"
+          },
+          "open": {
+            "type": "number",
+            "title": "Open",
+            "description": "开盘价"
+          },
+          "high": {
+            "type": "number",
+            "title": "High",
+            "description": "最高价"
+          },
+          "low": {
+            "type": "number",
+            "title": "Low",
+            "description": "最低价"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close",
+            "description": "收盘价"
+          },
+          "volume": {
+            "type": "integer",
+            "title": "Volume",
+            "description": "成交量"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount",
+            "description": "成交额"
+          },
+          "turnover_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnover Rate",
+            "description": "换手率"
+          },
+          "adjust_flag": {
+            "type": "string",
+            "title": "Adjust Flag",
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+            "default": "3"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change",
+            "description": "涨跌额"
+          },
+          "pct_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Change",
+            "description": "涨跌幅"
+          },
+          "ma5": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ma5",
+            "description": "5日均线"
+          },
+          "ma10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ma10",
+            "description": "10日均线"
+          },
+          "ma20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ma20",
+            "description": "20日均线"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "trade_date",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume",
+          "amount"
+        ],
+        "title": "KLine",
+        "description": "K线数据"
+      },
+      "MaCrossBacktestResponse": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "fast_period": {
+            "type": "integer",
+            "title": "Fast Period"
+          },
+          "slow_period": {
+            "type": "integer",
+            "title": "Slow Period"
+          },
+          "bars_used": {
+            "type": "integer",
+            "title": "Bars Used"
+          },
+          "commission_rate": {
+            "type": "number",
+            "title": "Commission Rate",
+            "default": 0.0
+          },
+          "slippage_rate": {
+            "type": "number",
+            "title": "Slippage Rate",
+            "default": 0.0
+          },
+          "first_trade_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Trade Date"
+          },
+          "last_trade_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Trade Date"
+          },
+          "total_return_pct": {
+            "type": "number",
+            "title": "Total Return Pct"
+          },
+          "buy_hold_return_pct": {
+            "type": "number",
+            "title": "Buy Hold Return Pct"
+          },
+          "excess_return_pct": {
+            "type": "number",
+            "title": "Excess Return Pct"
+          },
+          "max_drawdown_pct": {
+            "type": "number",
+            "title": "Max Drawdown Pct"
+          },
+          "sharpe_ratio": {
+            "type": "number",
+            "title": "Sharpe Ratio"
+          },
+          "signal_changes": {
+            "type": "integer",
+            "title": "Signal Changes"
+          },
+          "annualized_return_pct": {
+            "type": "number",
+            "title": "Annualized Return Pct"
+          },
+          "buy_hold_annualized_return_pct": {
+            "type": "number",
+            "title": "Buy Hold Annualized Return Pct"
+          },
+          "annualized_volatility_pct": {
+            "type": "number",
+            "title": "Annualized Volatility Pct"
+          },
+          "sortino_ratio": {
+            "type": "number",
+            "title": "Sortino Ratio"
+          },
+          "calmar_ratio": {
+            "type": "number",
+            "title": "Calmar Ratio"
+          },
+          "long_trades_count": {
+            "type": "integer",
+            "title": "Long Trades Count"
+          },
+          "win_rate_pct": {
+            "type": "number",
+            "title": "Win Rate Pct"
+          },
+          "avg_holding_return_pct": {
+            "type": "number",
+            "title": "Avg Holding Return Pct"
+          },
+          "underlying_beta": {
+            "type": "number",
+            "title": "Underlying Beta"
+          },
+          "underlying_alpha_ann_pct": {
+            "type": "number",
+            "title": "Underlying Alpha Ann Pct"
+          },
+          "benchmark_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Code",
+            "description": "若请求传入 benchmark_code，则为小写回显；β/α 相对该基准日收益，否则为 null（相对标的自身）"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "equity_curve": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Equity Curve"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "fast_period",
+          "slow_period",
+          "bars_used",
+          "first_trade_date",
+          "last_trade_date",
+          "total_return_pct",
+          "buy_hold_return_pct",
+          "excess_return_pct",
+          "max_drawdown_pct",
+          "sharpe_ratio",
+          "signal_changes",
+          "annualized_return_pct",
+          "buy_hold_annualized_return_pct",
+          "annualized_volatility_pct",
+          "sortino_ratio",
+          "calmar_ratio",
+          "long_trades_count",
+          "win_rate_pct",
+          "avg_holding_return_pct",
+          "underlying_beta",
+          "underlying_alpha_ann_pct",
+          "note"
+        ],
+        "title": "MaCrossBacktestResponse"
+      },
+      "MaCrossScanResponse": {
+        "properties": {
+          "fast_period": {
+            "type": "integer",
+            "title": "Fast Period"
+          },
+          "slow_period": {
+            "type": "integer",
+            "title": "Slow Period"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "commission_rate": {
+            "type": "number",
+            "title": "Commission Rate"
+          },
+          "slippage_rate": {
+            "type": "number",
+            "title": "Slippage Rate"
+          },
+          "sort_by": {
+            "type": "string",
+            "title": "Sort By"
+          },
+          "max_concurrent": {
+            "type": "integer",
+            "title": "Max Concurrent"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "benchmark_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Code",
+            "description": "请求中的基准代码（小写）或未传 null；各行列的 β/α 均相对同一基准对齐序列"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MaCrossScanRow"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fast_period",
+          "slow_period",
+          "limit",
+          "commission_rate",
+          "slippage_rate",
+          "sort_by",
+          "max_concurrent",
+          "items"
+        ],
+        "title": "MaCrossScanResponse"
+      },
+      "MaCrossScanRow": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "bars_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bars Used"
+          },
+          "total_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Return Pct"
+          },
+          "buy_hold_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buy Hold Return Pct"
+          },
+          "excess_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excess Return Pct"
+          },
+          "max_drawdown_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Drawdown Pct"
+          },
+          "sharpe_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sharpe Ratio"
+          },
+          "signal_changes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Changes"
+          },
+          "annualized_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annualized Return Pct"
+          },
+          "buy_hold_annualized_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buy Hold Annualized Return Pct"
+          },
+          "annualized_volatility_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annualized Volatility Pct"
+          },
+          "sortino_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino Ratio"
+          },
+          "calmar_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calmar Ratio"
+          },
+          "long_trades_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Trades Count"
+          },
+          "win_rate_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate Pct"
+          },
+          "avg_holding_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Holding Return Pct"
+          },
+          "underlying_beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Beta"
+          },
+          "underlying_alpha_ann_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Alpha Ann Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "MaCrossScanRow"
+      },
+      "MaCrossSignalResponse": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "fast_period": {
+            "type": "integer",
+            "title": "Fast Period"
+          },
+          "slow_period": {
+            "type": "integer",
+            "title": "Slow Period"
+          },
+          "bars_used": {
+            "type": "integer",
+            "title": "Bars Used"
+          },
+          "as_of_date": {
+            "type": "string",
+            "title": "As Of Date"
+          },
+          "position": {
+            "type": "string",
+            "title": "Position",
+            "description": "long 或 flat（收盘后 MA 比较）"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close"
+          },
+          "ma_fast": {
+            "type": "number",
+            "title": "Ma Fast"
+          },
+          "ma_slow": {
+            "type": "number",
+            "title": "Ma Slow"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "fast_period",
+          "slow_period",
+          "bars_used",
+          "as_of_date",
+          "position",
+          "close",
+          "ma_fast",
+          "ma_slow",
+          "note"
+        ],
+        "title": "MaCrossSignalResponse"
+      },
+      "Market": {
+        "type": "string",
+        "enum": [
+          "sh",
+          "sz",
+          "bj",
+          "hk",
+          "us"
+        ],
+        "title": "Market",
+        "description": "市场类型"
+      },
+      "PaperOrderListItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity"
+          },
+          "fill_price": {
+            "type": "number",
+            "title": "Fill Price"
+          },
+          "fill_amount": {
+            "type": "number",
+            "title": "Fill Amount"
+          },
+          "trade_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade Date"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "side",
+          "quantity",
+          "fill_price",
+          "fill_amount",
+          "trade_date",
+          "created_at"
+        ],
+        "title": "PaperOrderListItem"
+      },
+      "PaperOrderRequest": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 24,
+            "minLength": 4,
+            "title": "Code",
+            "description": "标的代码，如 sh.600000"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side",
+            "description": "buy 或 sell"
+          },
+          "quantity": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 100.0,
+            "title": "Quantity",
+            "description": "股数：须为 100 的整数倍（A 股一手）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "side",
+          "quantity"
+        ],
+        "title": "PaperOrderRequest"
+      },
+      "PaperOrderResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity"
+          },
+          "fill_price": {
+            "type": "number",
+            "title": "Fill Price"
+          },
+          "fill_amount": {
+            "type": "number",
+            "title": "Fill Amount"
+          },
+          "trade_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade Date"
+          },
+          "cash_after": {
+            "type": "number",
+            "title": "Cash After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "side",
+          "quantity",
+          "fill_price",
+          "fill_amount",
+          "trade_date",
+          "cash_after"
+        ],
+        "title": "PaperOrderResponse"
+      },
+      "PaperOrdersListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PaperOrderListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "PaperOrdersListResponse"
+      },
+      "RealtimeQuote": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "股票代码"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "股票名称"
+          },
+          "open": {
+            "type": "number",
+            "title": "Open",
+            "description": "今日开盘价"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close",
+            "description": "昨日收盘价"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price",
+            "description": "当前价格"
+          },
+          "high": {
+            "type": "number",
+            "title": "High",
+            "description": "今日最高价"
+          },
+          "low": {
+            "type": "number",
+            "title": "Low",
+            "description": "今日最低价"
+          },
+          "volume": {
+            "type": "integer",
+            "title": "Volume",
+            "description": "成交量"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount",
+            "description": "成交额"
+          },
+          "bid1_price": {
+            "type": "number",
+            "title": "Bid1 Price",
+            "description": "买一价"
+          },
+          "bid1_volume": {
+            "type": "integer",
+            "title": "Bid1 Volume",
+            "description": "买一量"
+          },
+          "ask1_price": {
+            "type": "number",
+            "title": "Ask1 Price",
+            "description": "卖一价"
+          },
+          "ask1_volume": {
+            "type": "integer",
+            "title": "Ask1 Volume",
+            "description": "卖一量"
+          },
+          "update_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Update Time",
+            "description": "更新时间"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change",
+            "description": "涨跌额"
+          },
+          "pct_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Change",
+            "description": "涨跌幅"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "open",
+          "close",
+          "price",
+          "high",
+          "low",
+          "volume",
+          "amount",
+          "bid1_price",
+          "bid1_volume",
+          "ask1_price",
+          "ask1_volume",
+          "update_time"
+        ],
+        "title": "RealtimeQuote",
+        "description": "实时行情"
+      },
+      "StockInfo": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "股票代码，如 000001.SZ"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "股票名称"
+          },
+          "ipo_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ipo Date",
+            "description": "上市日期"
+          },
+          "out_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Out Date",
+            "description": "退市日期"
+          },
+          "stock_type": {
+            "$ref": "#/components/schemas/StockType",
+            "default": "common"
+          },
+          "market": {
+            "$ref": "#/components/schemas/Market",
+            "description": "交易市场"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Industry",
+            "description": "所属行业"
+          },
+          "sector_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector Code",
+            "description": "板块代码（概念/行业）"
+          },
+          "is_trading": {
+            "type": "boolean",
+            "title": "Is Trading",
+            "description": "是否交易中（未停牌）",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "market"
+        ],
+        "title": "StockInfo",
+        "description": "股票基本信息"
+      },
+      "StockListItem": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name"
+        ],
+        "title": "StockListItem"
+      },
+      "StockListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StockListItem"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "本页行（按 code 排序后切片）"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "过滤后的总条数（分页前）"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "description": "本页条数上限"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "description": "本页实际起始跳过条数（请求 `offset` 超界时钳到最后一页起点）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "StockListResponse",
+        "description": "分页列表体；`/docs` 中展示示例 JSON。",
+        "examples": [
+          {
+            "items": [
+              {
+                "code": "sh.600000",
+                "name": "浦发银行",
+                "status": "ok"
+              },
+              {
+                "code": "sz.000001",
+                "name": "平安银行",
+                "status": "ok"
+              }
+            ],
+            "limit": 100,
+            "offset": 0,
+            "total": 4281
+          }
+        ]
+      },
+      "StockType": {
+        "type": "string",
+        "enum": [
+          "common",
+          "st",
+          "star",
+          "growth",
+          "beijing"
+        ],
+        "title": "StockType",
+        "description": "股票类型"
+      },
+      "StrategyCatalogResponse": {
+        "properties": {
+          "strategies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Strategies",
+            "description": "各条目含 id、title、signal_params、backtest_run（含 strategy_id、strategy_version、archive_kind、params_schema）、backtest_archive_kinds、strategy_contract_version 等；字段语义见 docs/STRATEGY_CONTRACT.md"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategies"
+        ],
+        "title": "StrategyCatalogResponse",
+        "description": "GET /api/strategies/catalog 响应外壳（条目为 JSON 友好 dict，与 ``list_strategy_catalog`` 一致）。"
+      },
+      "StrategySignalRequest": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Code",
+            "description": "标的代码"
+          },
+          "kind": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Kind",
+            "default": "ma_cross"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "StrategySignalRequest",
+        "description": "POST /api/strategies/signal 请求体；params 按 kind 解析。"
+      },
+      "StrategySignalResponse": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "signal": {
+            "$ref": "#/components/schemas/MaCrossSignalResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "signal"
+        ],
+        "title": "StrategySignalResponse"
+      },
+      "TradeCalendarExchangeItem": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "trade_calendar.exchange"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "展示用短标签"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "TradeCalendarExchangeItem"
+      },
+      "TradeCalendarOptionsResponse": {
+        "properties": {
+          "exchanges": {
+            "items": {
+              "$ref": "#/components/schemas/TradeCalendarExchangeItem"
+            },
+            "type": "array",
+            "title": "Exchanges"
+          },
+          "default_exchange": {
+            "type": "string",
+            "title": "Default Exchange"
+          }
+        },
+        "type": "object",
+        "required": [
+          "exchanges",
+          "default_exchange"
+        ],
+        "title": "TradeCalendarOptionsResponse",
+        "description": "与 ``TRADE_CALENDAR_EXCHANGE_OPTIONS`` 等环境变量对齐，供前端下拉。"
+      },
+      "TradeCalendarStatus": {
+        "properties": {
+          "exchange": {
+            "type": "string",
+            "title": "Exchange",
+            "description": "分区键，默认 cn"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count",
+            "description": "该 exchange 下行数"
+          },
+          "date_min": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Min",
+            "description": "最小 calendar_date，无数据时为 null"
+          },
+          "date_max": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Max",
+            "description": "最大 calendar_date，无数据时为 null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "exchange",
+          "row_count"
+        ],
+        "title": "TradeCalendarStatus",
+        "description": "`trade_calendar` 在指定 exchange 下的覆盖概况。"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WatchlistAddRequest": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 24,
+            "minLength": 4,
+            "title": "Code",
+            "description": "标的代码，如 sh.600000"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "WatchlistAddRequest"
+      },
+      "WatchlistItemOut": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "WatchlistItemOut"
+      },
+      "WatchlistItemsResponse": {
+        "properties": {
+          "watchlist_id": {
+            "type": "integer",
+            "title": "Watchlist Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WatchlistItemOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "watchlist_id",
+          "items"
+        ],
+        "title": "WatchlistItemsResponse"
+      }
+    }
+  }
+}

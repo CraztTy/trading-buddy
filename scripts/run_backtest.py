@@ -25,6 +25,7 @@ async def _async_main(
     limit: int,
     commission_rate: float,
     slippage_rate: float,
+    benchmark_code: str | None,
     output_path: Path | None,
 ) -> int:
     sys.path.insert(0, str(project_root))
@@ -33,11 +34,18 @@ async def _async_main(
     from src.data.storage import KlineRepository, dispose_database, get_database
 
     print(f"数据读取目标: {describe_database_write_target()}", file=sys.stderr)
+    bench_norm = (benchmark_code or "").strip().lower() or None
     db = get_database()
     try:
         async with db.session() as session:
             repo = KlineRepository(session)
             klines = await repo.get_daily(code=code, limit=limit)
+            bench_klines = None
+            if bench_norm:
+                bench_klines = await repo.get_daily(code=bench_norm, limit=limit)
+                if not bench_klines:
+                    print(f"错误: 基准 {bench_norm} 无可用日 K", file=sys.stderr)
+                    return 2
     finally:
         await dispose_database()
 
@@ -51,6 +59,7 @@ async def _async_main(
         slow=slow,
         commission_rate=commission_rate,
         slippage_rate=slippage_rate,
+        benchmark_klines=bench_klines,
     )
     out = res.to_api_dict()
     out["equity_curve"] = curve
@@ -88,6 +97,12 @@ def main() -> int:
         default=None,
         help="将完整 JSON（含 equity_curve）写入文件；省略则打印到 stdout",
     )
+    p.add_argument(
+        "--benchmark-code",
+        type=str,
+        default=None,
+        help="可选，β/α 对基准日收益回归，如 sh.000300",
+    )
     args = p.parse_args()
     if args.fast >= args.slow:
         print("错误: fast 必须小于 slow", file=sys.stderr)
@@ -103,6 +118,7 @@ def main() -> int:
             args.limit,
             args.commission_rate,
             args.slippage_rate,
+            args.benchmark_code,
             args.output,
         )
     )

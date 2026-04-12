@@ -93,3 +93,41 @@ def test_ma_cross_scan_csv_comment_includes_date_range():
     s = b.decode("utf-8")
     assert "2023-01-01" in s
     assert "2023-06-30" in s
+
+
+def test_ma_cross_scan_csv_comment_includes_benchmark_code():
+    items = [
+        {
+            "code": "sh.x",
+            "error": None,
+            "bars_used": 10,
+            "total_return_pct": 0.0,
+            "buy_hold_return_pct": 0.0,
+            "excess_return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
+            "calmar_ratio": 0.0,
+            "annualized_return_pct": 0.0,
+            "buy_hold_annualized_return_pct": 0.0,
+            "annualized_volatility_pct": 0.0,
+            "long_trades_count": 0,
+            "win_rate_pct": 0.0,
+            "avg_holding_return_pct": 0.0,
+            "underlying_beta": 0.0,
+            "underlying_alpha_ann_pct": 0.0,
+            "signal_changes": 0,
+        }
+    ]
+    b = ma_cross_scan_csv_bytes(
+        items,
+        fast=5,
+        slow=20,
+        limit=500,
+        commission_rate=0.0,
+        slippage_rate=0.0,
+        sort_by="total_return",
+        benchmark_code="sh.000300",
+    )
+    first_line = b.decode("utf-8").splitlines()[0]
+    assert "benchmark_code=sh.000300" in first_line

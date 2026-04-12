@@ -200,6 +200,7 @@ class BaostockSource(BaseDataSource):
         
         logger.info(f"Fetching daily kline: {code} from {start_date} to {end_date}")
         
+        # adjustflag：1=后复权 2=前复权 3=不复权（与 docs/DATA_AND_ADJUSTMENT.md 默认口径一致）
         rs = bs.query_history_k_data_plus(
             code,
             "date,open,high,low,close,volume,amount,pctChg",

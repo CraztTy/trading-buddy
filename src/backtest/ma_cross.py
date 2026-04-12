@@ -17,6 +17,32 @@ import pandas as pd
 from src.data.models import KLine
 
 
+def benchmark_close_on_primary_dates(
+    d: pd.DataFrame, bench_klines: list[KLine]
+) -> pd.Series:
+    """
+    将基准收盘按标的 `d` 的 `trade_date` 对齐；缺省交易日仅前向填充（不 bfill，避免前视）。
+    """
+    if not bench_klines:
+        raise ValueError("benchmark_klines 为空")
+    by_date: dict[date, float] = {}
+    for k in bench_klines:
+        td = k.trade_date
+        dd = td if isinstance(td, date) else pd.Timestamp(td).date()
+        by_date[dd] = float(k.close)
+    raw: list[float] = []
+    for _, row in d.iterrows():
+        td = row["trade_date"]
+        dd = td if isinstance(td, date) else pd.Timestamp(td).date()
+        raw.append(by_date.get(dd, np.nan))
+    ser = pd.Series(raw, index=d.index, dtype=float).ffill()
+    if ser.isna().any():
+        raise ValueError(
+            "基准 K 线在标的样本起始日前无有效收盘，无法对齐（请增大 limit 或调整区间）"
+        )
+    return ser
+
+
 def _long_hold_segments_start_and_return_pct(
     hold: pd.Series, strat_ret: pd.Series
 ) -> list[tuple[int, float]]:
@@ -92,6 +118,7 @@ class MaCrossBacktestResult:
     avg_holding_return_pct: float
     underlying_beta: float
     underlying_alpha_ann_pct: float
+    benchmark_code: str | None = None
     commission_rate: float = 0.0
     slippage_rate: float = 0.0
 
@@ -103,8 +130,8 @@ class MaCrossBacktestResult:
             " 多头持仓段=有效仓位为多的最长连续区间；段内收益为日 strat_ret 复利。"
             " 段胜率按金额加权：权重为段首日前一日累计权益，盈利段贡献其权重。"
             " 平均持有收益为各段总收益（%）的简单平均。"
-            " underlying_beta / underlying_alpha_ann_pct：日策略收益对日标的收盘收益的 OLS（rf=0），"
-            " α 按 ×252 年化到百分点。"
+            " underlying_beta / underlying_alpha_ann_pct：日策略收益对「回归市场收益」的 OLS（rf=0），"
+            " α 按 ×252 年化到百分点；未传 benchmark 时为对标的自身日收益，传 benchmark 时为对基准日收益。"
             " 信号基于收盘均线，收益为收盘到收盘且滞后一日。"
         )
         if self.commission_rate > 0:
@@ -146,6 +173,7 @@ class MaCrossBacktestResult:
             "avg_holding_return_pct": round(self.avg_holding_return_pct, 4),
             "underlying_beta": round(self.underlying_beta, 4),
             "underlying_alpha_ann_pct": round(self.underlying_alpha_ann_pct, 4),
+            "benchmark_code": self.benchmark_code,
             "note": note,
         }
         return d
@@ -159,6 +187,7 @@ def ma_cross_result_from_df(
     slow: int,
     commission_rate: float = 0.0,
     slippage_rate: float = 0.0,
+    benchmark_klines: list[KLine] | None = None,
 ) -> tuple[MaCrossBacktestResult, pd.Series, pd.Series]:
     """
     df 须含列 trade_date, close；按时间升序。
@@ -178,6 +207,12 @@ def ma_cross_result_from_df(
         raise ValueError("commission_rate 与 slippage_rate 之和勿超过 0.08")
 
     d = df.sort_values("trade_date").reset_index(drop=True)
+    bench_c: str | None = None
+    bench_close_aligned: pd.Series | None = None
+    if benchmark_klines is not None:
+        bench_close_aligned = benchmark_close_on_primary_dates(d, benchmark_klines)
+        bench_c = str(benchmark_klines[0].code).strip().lower()
+
     close = d["close"].astype(float)
     ma_f = close.rolling(fast, min_periods=fast).mean()
     ma_s = close.rolling(slow, min_periods=slow).mean()
@@ -233,7 +268,11 @@ def ma_cross_result_from_df(
     else:
         calmar_ratio = 0.0
 
-    mkt_active = daily_ret.iloc[1:].astype(float)
+    if bench_close_aligned is not None:
+        mkt_line = bench_close_aligned.astype(float).pct_change().fillna(0.0)
+    else:
+        mkt_line = daily_ret
+    mkt_active = mkt_line.iloc[1:].astype(float)
     if len(mkt_active) == len(active) and len(active) > 1:
         m = mkt_active.to_numpy(dtype=float)
         s_arr = active.to_numpy(dtype=float)
@@ -291,6 +330,7 @@ def ma_cross_result_from_df(
         avg_holding_return_pct=avg_holding_return_pct,
         underlying_beta=underlying_beta,
         underlying_alpha_ann_pct=underlying_alpha_ann_pct,
+        benchmark_code=bench_c,
         commission_rate=float(commission_rate),
         slippage_rate=float(slippage_rate),
     )
@@ -305,6 +345,7 @@ def run_ma_cross_backtest(
     commission_rate: float = 0.0,
     slippage_rate: float = 0.0,
     include_equity_curve: bool = True,
+    benchmark_klines: list[KLine] | None = None,
 ) -> tuple[MaCrossBacktestResult, list[dict[str, Any]]]:
     """从 KLine 列表运行双均线回测；可跳过权益曲线采样以加速批量扫描。"""
     if not klines:
@@ -323,6 +364,7 @@ def run_ma_cross_backtest(
         slow=slow,
         commission_rate=commission_rate,
         slippage_rate=slippage_rate,
+        benchmark_klines=benchmark_klines,
     )
 
     if not include_equity_curve:
@@ -344,3 +386,62 @@ def run_ma_cross_backtest(
         for i in idx
     ]
     return res, curve
+
+
+def ma_cross_last_signal(
+    klines: list[KLine],
+    *,
+    fast: int,
+    slow: int,
+) -> dict[str, Any]:
+    """
+    最近一根「快慢均线均已就绪」的 K 上的多空状态（与 `ma_cross_result_from_df` 中 pos 同口径：收盘后比较 MA）。
+
+    返回字段供 API 使用；不含手续费与滑点（仅状态展示）。
+    """
+    if not klines:
+        raise ValueError("klines 为空")
+    if fast < 1 or slow < 2:
+        raise ValueError("fast 须 >=1，slow 须 >=2")
+    if fast >= slow:
+        raise ValueError("fast 须小于 slow")
+    raw_code = str(klines[0].code or "").strip()
+    code_norm = raw_code.lower()
+    df = pd.DataFrame(
+        {
+            "trade_date": [k.trade_date for k in klines],
+            "close": [float(k.close) for k in klines],
+        }
+    )
+    d = df.sort_values("trade_date").reset_index(drop=True)
+    if len(d) < slow:
+        raise ValueError(f"K 线不足：需要至少 slow={slow} 根，当前 {len(d)}")
+    close = d["close"].astype(float)
+    ma_f = close.rolling(fast, min_periods=fast).mean()
+    ma_s = close.rolling(slow, min_periods=slow).mean()
+    valid = ma_f.notna() & ma_s.notna()
+    if not valid.any():
+        raise ValueError("无有效均线")
+    last_i = int(valid[valid].index[-1])
+    td_raw = d.at[last_i, "trade_date"]
+    as_of = td_raw.isoformat() if hasattr(td_raw, "isoformat") else str(td_raw)
+    c_last = float(close.iloc[last_i])
+    mf = float(ma_f.iloc[last_i])
+    ms = float(ma_s.iloc[last_i])
+    position = "long" if mf > ms else "flat"
+    note = (
+        "与 ma-cross 回测同一均线口径：收盘后比较 MA_fast 与 MA_slow；"
+        "position 为截至 as_of_date 收盘的多空状态（回测中下一根 K 起按滞后一日 hold 生效）。"
+    )
+    return {
+        "code": code_norm,
+        "fast_period": fast,
+        "slow_period": slow,
+        "bars_used": len(d),
+        "as_of_date": as_of,
+        "position": position,
+        "close": round(c_last, 4),
+        "ma_fast": round(mf, 4),
+        "ma_slow": round(ms, 4),
+        "note": note,
+    }

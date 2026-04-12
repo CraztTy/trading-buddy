@@ -43,9 +43,9 @@ CREATE TABLE IF NOT EXISTS daily_kline (
     turnover_rate DECIMAL(10, 4) COMMENT '换手率',
     adjust_flag VARCHAR(2) DEFAULT '3' COMMENT '复权类型: 1=后复权 2=前复权 3=不复权',
     
-    -- 预计算字段（可选，后续使用）
+    -- 预计算字段（可选，后续使用）；列名与 ORM DailyKlineModel.change_pct 一致
     change DECIMAL(10, 2) COMMENT '涨跌额',
-    pct_change DECIMAL(10, 4) COMMENT '涨跌幅',
+    change_pct DECIMAL(10, 4) COMMENT '涨跌幅%',
     ma5 DECIMAL(10, 2) COMMENT '5日均线',
     ma10 DECIMAL(10, 2) COMMENT '10日均线',
     ma20 DECIMAL(10, 2) COMMENT '20日均线',
@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS daily_kline (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_code_date (code, trade_date),
     INDEX idx_trade_date (trade_date),
-    INDEX idx_code (code)
+    INDEX idx_code (code),
+    INDEX ix_daily_kline_trade_date_pct (trade_date, change_pct),
+    INDEX ix_daily_kline_trade_date_amount (trade_date, amount)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='日线K线数据';
 
 -- =============================================

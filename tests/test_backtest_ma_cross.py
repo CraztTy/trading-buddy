@@ -10,6 +10,7 @@ import pytest
 from src.backtest.ma_cross import (
     _equity_weighted_win_rate_pct,
     _long_hold_segments_start_and_return_pct,
+    benchmark_close_on_primary_dates,
     ma_cross_result_from_df,
     run_ma_cross_backtest,
 )
@@ -143,6 +144,54 @@ def test_slippage_reduces_return_like_commission():
     r1, _, _ = ma_cross_result_from_df(df, code="x", fast=3, slow=12, slippage_rate=0.001)
     assert r0.signal_changes > 0
     assert r1.total_return_pct < r0.total_return_pct
+
+
+def _kline(code: str, trade_date: date, close: float) -> KLine:
+    return KLine(
+        code=code,
+        trade_date=trade_date,
+        open=close,
+        high=close,
+        low=close,
+        close=close,
+        volume=0,
+        amount=0.0,
+    )
+
+
+def test_benchmark_close_on_primary_dates_ffill():
+    d0 = date(2020, 1, 2)
+    dates = [d0 + timedelta(days=i) for i in range(4)]
+    d = pd.DataFrame({"trade_date": dates, "close": [10.0] * 4})
+    bench = [
+        _kline("sh.b", dates[0], 100.0),
+        _kline("sh.b", dates[2], 104.0),
+    ]
+    ser = benchmark_close_on_primary_dates(d, bench)
+    assert ser.tolist() == [100.0, 100.0, 104.0, 104.0]
+
+
+def test_benchmark_close_on_primary_dates_raises_without_prior_bench_bar():
+    dates = [date(2020, 1, 2), date(2020, 1, 3)]
+    d = pd.DataFrame({"trade_date": dates, "close": [10.0, 10.0]})
+    bench = [_kline("sh.b", date(2020, 1, 4), 100.0)]
+    with pytest.raises(ValueError, match="标的样本起始日前"):
+        benchmark_close_on_primary_dates(d, bench)
+
+
+def test_ma_cross_benchmark_flat_index_beta_zero():
+    n = 80
+    closes = [100.0 + i * 0.5 for i in range(n)]
+    ds = _date_series(n)
+    df = pd.DataFrame({"trade_date": ds, "close": closes})
+    bench_k = [_kline("sh.bench", ds[i], 50.0) for i in range(n)]
+    r_self, _, _ = ma_cross_result_from_df(df, code="sh.x", fast=3, slow=10)
+    r_b, _, _ = ma_cross_result_from_df(
+        df, code="sh.x", fast=3, slow=10, benchmark_klines=bench_k
+    )
+    assert r_b.benchmark_code == "sh.bench"
+    assert r_b.underlying_beta == 0.0
+    assert abs(r_self.underlying_beta) > 1e-6
 
 
 def test_run_ma_cross_skip_equity_curve():

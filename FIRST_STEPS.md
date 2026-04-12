@@ -28,11 +28,19 @@ python scripts\init_db.py
 
 日志中出现表创建成功即可。使用 **云 MySQL** 时先在 `.env` 中设置 `DATABASE_MODE=mysql` 及 `DATABASE_*`（或兼容别名 `DB_*`），并确保库已创建。
 
+**建表后建议**：灌 **`trade_calendar`**（交易日历），否则看板「交易日历」区块与 `check_daily_kline_quality.py` 的交易日缺口 / B+D 门控没有日历数据。需 **Baostock** 与网络，在项目根执行例如：
+
+```powershell
+python scripts\fetch_trade_calendar.py --start 2020-01-01 --end 2025-12-31
+```
+
+等价：`python scripts\fetch_data.py --mode calendar --source baostock`（可用 `--calendar-start` / `--calendar-end` 等）。日常增量拉数可加 **`--with-calendar`**（`fetch_data.py` 的 `daily` / `all`）顺带刷新日历尾部。
+
 ## 第三步：拉取初始数据
 
 ### 方式 A：一键喂数（推荐，云库 / 本地库通用）
 
-在项目根目录配置好 `.env` 后执行（**首次**会依次：**建表 → 股票列表 → 指数 K 线 → 部分股票日 K**）：
+在项目根目录配置好 `.env` 后执行（**首次**会依次：**建表 → 股票列表 → 指数 K 线 → 部分股票日 K → 交易日历 `trade_calendar`（Baostock）**；不需要或无外网时加 **`--skip-calendar`**）：
 
 ```powershell
 # 默认 standard：约 90 天日 K、最多 120 只股票，指数约 730 天
@@ -51,7 +59,7 @@ python scripts\feed_dashboard.py --skip-init
 python scripts\feed_dashboard.py --dry-run
 ```
 
-**日常增量**（收盘后、定时任务推荐，按库中最新交易日补数，省时间省流量）：
+**日常增量**（收盘后、定时任务推荐，按库中最新交易日补数，省时间省流量；默认会在同次命令中带 **`--with-calendar`** 顺带刷新日历尾部，仅 Baostock 生效；不需要时加 **`--skip-calendar`**）：
 
 ```powershell
 python scripts\feed_dashboard.py --profile daily --skip-init
@@ -116,17 +124,18 @@ npm run dev
 
 ## 验证是否正常运行
 
-- 浏览器打开 Vue 看板（上一步的 `npm run dev` 地址）
+- 浏览器打开 Vue 看板（上一步的 `npm run dev` 地址）；侧栏 **策略回测** 为双均线单标的 / 批量扫描（可选日期区间、手续费、**基准代码** 用于 β/α）。
 - 或访问 API：http://127.0.0.1:8000/docs  
   - `GET /api/dashboard/overview` — 指数概览  
-  - `GET /api/klines/analysis/sh.000001` — 上证指数 K 线分析（路径以实际路由为准，可在 Docs 中查看）
+  - `GET /api/klines/analysis/sh.000001` — 上证指数 K 线分析（路径以实际路由为准，可在 Docs 中查看）  
+  - `GET /api/backtest/ma-cross` / `GET /api/backtest/ma-cross/scan` — 最小双均线回测（详见根目录 `README.md`「最小回测」）
 
 **健康与就绪（运维 / 负载均衡）：**
 
 - `GET /health` — 仅返回配置摘要（`database_mode`、`redis_enabled`），**不连库**
 - `GET /health/ready` — 执行数据库 `SELECT 1`；若启用 Redis 则 `PING`，失败时 **503**
 
-**一键自检（需已配置 `.env`，会连 MySQL / Redis 并冒烟若干路由）：**
+**一键自检（需已配置 `.env`，会连数据库（`mysql` / `sqlite`）/ Redis 并冒烟若干路由）：**
 
 ```powershell
 cd C:\Users\Administrator\Desktop\trading-buddy
@@ -136,8 +145,12 @@ python scripts\verify_stack.py
 自动化测试（不跑真实拉数）：
 
 ```powershell
-python -m pytest tests -q
+python -m pytest -q
 ```
+
+（`pytest.ini` 限定只跑 `tests/`；**`tests/test_cli_fetch.py`** 含 **`feed_dashboard.py --dry-run`** 等对一键喂数步骤的契约断言，不连库。手工 DB 冒烟见 `scripts/smoke_*.py` 与根 `README.md`「测试」。）
+
+**前端 Playwright（主视图导航、涨跌/成交额、股票列表、回测等；请求由 E2E mock，不依赖后端 API）：** 另需 Node 20+。`cd frontend` 后 `npm ci`；终端一 `npm run e2e:preview`；终端二（首次）`npx playwright install chromium`，再 `npm run test:e2e`。详见根目录 `README.md`「测试」。
 
 ## 常见问题
 
@@ -180,9 +193,9 @@ python scripts\fetch_data.py --mode daily
 
 也可使用 `scripts\scheduler.py` 在后台按固定时间触发（详见脚本内注释）；生产环境更推荐用系统计划任务直接执行上述命令之一。
 
-## V1.x 发布与归档（当前 **1.0.1**）
+## V1.x 发布与归档（当前 **1.1.0**）
 
-在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.0.1**）：
+在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.1.0**）：
 
 ```powershell
 cd C:\Users\Administrator\Desktop\trading-buddy
@@ -190,7 +203,7 @@ cd C:\Users\Administrator\Desktop\trading-buddy
 # 工作区应已提交，无未跟踪的重要文件
 git status
 
-python -m pytest tests
+python -m pytest -q
 
 # 可选：栈探活（需 API、MySQL、Redis 等按 .env 已可达）
 python scripts\verify_stack.py
@@ -199,14 +212,14 @@ python scripts\verify_stack.py
 打**附注标签**并推送远程（按需）：
 
 ```powershell
-git tag -a v1.0.1 -m "Trading Buddy V1.0.1: 云栈、指数 BIGINT、涨跌榜索引、K 线名称、Vue Meridian"
-git push origin v1.0.1
+git tag -a v1.1.0 -m "Trading Buddy V1.1.0: 通用回测异步 cancel/回收、OpenAPI、因子/策略/纸交易/自选/交易日历、Playwright E2E、质量脚本"
+git push origin v1.1.0
 ```
 
 本地生成**源码归档包**（不依赖远程）：
 
 ```powershell
-git archive --format=zip -o trading-buddy-v1.0.1.zip v1.0.1
+git archive --format=zip -o trading-buddy-v1.1.0.zip v1.1.0
 ```
 
 版本号与 OpenAPI、`GET /`、`GET /health` 中的 `app_version` 一致，定义在 `src/common/__init__.py` 的 `__version__`。
@@ -219,10 +232,11 @@ V1 功能已就绪：
 - [x] 日K线数据
 - [x] 实时行情
 - [x] Vue 看板（Meridian）
+- [x] 双均线日线最小回测（HTTP 扫描、CSV、CLI；β/α 可选相对指数基准）
 
 V2 规划中：
 
 - [ ] 策略模板解析
 - [ ] 信号计算引擎
-- [ ] 回测模块
+- [ ] 通用回测引擎（多策略、参数寻优、绩效归因）
 - [ ] 券商 API 对接

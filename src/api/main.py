@@ -10,13 +10,28 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from src.common import __version__, cors_allow_origins, setup_logger, get_settings
+from src.backtest.async_job_backend import (
+    start_backtest_async_job_consumer,
+    stop_backtest_async_job_consumer,
+)
 from src.common.redis_client import (
     close_redis_client,
     get_redis_client,
     init_redis_client,
 )
 from src.data.storage import dispose_database, get_database
-from .routers import stocks, klines, realtime, dashboard, backtest
+from .routers import (
+    stocks,
+    klines,
+    realtime,
+    dashboard,
+    backtest,
+    paper,
+    watchlist,
+    strategies,
+    factors,
+    trade_calendar,
+)
 
 
 # 初始化日志
@@ -39,9 +54,11 @@ async def lifespan(app: FastAPI):
         )
         app.state.redis = redis
         print(f"Redis connected: {settings.redis.host}:{settings.redis.port}")
+        await start_backtest_async_job_consumer(app)
 
     yield
 
+    await stop_backtest_async_job_consumer(app)
     await close_redis_client()
     await dispose_database()
     print("Trading Buddy API shutdown complete")
@@ -70,6 +87,11 @@ app.include_router(klines.router, prefix="/api/klines", tags=["K线"])
 app.include_router(realtime.router, prefix="/api/realtime", tags=["实时行情"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["看板"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["回测"])
+app.include_router(paper.router, prefix="/api/paper", tags=["纸交易"])
+app.include_router(watchlist.router, prefix="/api/watchlist", tags=["自选"])
+app.include_router(strategies.router, prefix="/api/strategies", tags=["策略"])
+app.include_router(factors.router, prefix="/api/factors", tags=["因子"])
+app.include_router(trade_calendar.router, prefix="/api/data", tags=["数据"])
 
 
 @app.get("/")
