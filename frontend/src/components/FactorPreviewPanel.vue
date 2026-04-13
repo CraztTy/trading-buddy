@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import VChart from "vue-echarts";
 import { apiUrl } from "../composables/api.js";
+import { useCrossSectionOverviewLink } from "../composables/crossSectionOverviewLink.js";
 
 const props = defineProps({
   code: { type: String, default: "sh.000001" },
@@ -36,6 +37,8 @@ const preview = ref(null);
 const catalogOps = ref([]);
 const catalogLoading = ref(true);
 const catalogLoadErr = ref("");
+
+const { crossSectionAsOf, crossSectionHref, refreshCrossSectionAsOf } = useCrossSectionOverviewLink();
 
 /** 下拉展示顺序（与后端 catalog 并存：有目录时按此排序） */
 const OP_UI_ORDER = [
@@ -208,6 +211,7 @@ watch(
 );
 
 onMounted(async () => {
+  void refreshCrossSectionAsOf();
   catalogLoadErr.value = "";
   catalogLoading.value = true;
   try {
@@ -871,6 +875,26 @@ const chartOption = computed(() => {
           <span class="mono">/api/factors/preview</span>（<span class="mono">series</span> +
           <span class="mono">response_format=json|csv</span>）· 只读不落库
         </p>
+        <p class="sub mono cross-section-api-line">
+          <template v-if="crossSectionHref">
+            <a
+              :href="crossSectionHref"
+              class="cross-section-api-link"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GET /api/factors/cross-section
+            </a>
+            <span>
+              · <span class="mono">ret_pct</span> + 价量列 · period=20 · max_codes=100 · 与 overview 同日
+              {{ crossSectionAsOf }}（新标签 JSON）
+            </span>
+          </template>
+          <template v-else>
+            <span class="cross-section-api-muted">GET /api/factors/cross-section</span>
+            <span> · 需 <span class="mono">as_of_date</span>；有指数 K 后显示链接</span>
+          </template>
+        </p>
       </div>
       <button type="button" class="ghost-link" @click="emit('open-market', normalizeCode(localCode))">
         打开行情看板（当前标的）
@@ -1086,6 +1110,24 @@ const chartOption = computed(() => {
 .sub {
   margin: 6px 0 0;
   font-size: 0.72rem;
+  color: var(--paper-muted);
+}
+
+.cross-section-api-line {
+  margin-top: 4px;
+}
+
+.cross-section-api-link {
+  color: var(--meridian);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cross-section-api-link:hover {
+  text-decoration: underline;
+}
+
+.cross-section-api-muted {
   color: var(--paper-muted);
 }
 

@@ -69,6 +69,7 @@ async def test_strategies_catalog_lists_ma_cross(http_test_client):
     ids = [s["id"] for s in data["strategies"]]
     assert "ma_cross" in ids
     assert "ma_cross_scan" in ids
+    assert "buy_hold" in ids
     ma = next(s for s in data["strategies"] if s["id"] == "ma_cross")
     assert ma.get("backtest_archive_kinds") == ["ma_cross_single", "ma_cross_scan"]
     assert ma.get("strategy_contract_version") == "1"
@@ -96,6 +97,14 @@ async def test_strategies_catalog_lists_ma_cross(http_test_client):
     sig_sc = scan.get("signal_params") or {}
     assert sig_sc.get("maxProperties") == 0
     assert sig_sc.get("additionalProperties") is False
+
+    bh = next(s for s in data["strategies"] if s["id"] == "buy_hold")
+    assert bh.get("backtest_archive_kinds") == ["buy_hold_single"]
+    br_bh = bh.get("backtest_run") or {}
+    assert br_bh.get("strategy_id") == "buy_hold"
+    assert br_bh.get("archive_kind") == "buy_hold_single"
+    ps_bh = br_bh.get("params_schema") or {}
+    assert "code" in (ps_bh.get("required") or [])
 
 
 async def test_strategies_signal_ma_cross_scan_kind_400(http_test_client):

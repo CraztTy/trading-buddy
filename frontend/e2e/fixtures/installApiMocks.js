@@ -116,6 +116,43 @@ function mockMaCrossSingleResponseJson(code, bench, fast, slow) {
 }
 
 /** 与 GET /api/backtest/ma-cross/scan JSON 体一致；供 E2E GET scan 与 POST /run（scan_result）复用 */
+/** 与 GET /api/backtest/buy-hold JSON 体一致；fast_period/slow_period 为占位 1/2 */
+function mockBuyHoldSingleResponseJson(code, bench) {
+  const c = (code || "sh.000001").trim() || "sh.000001";
+  return {
+    code: c,
+    fast_period: 1,
+    slow_period: 2,
+    bars_used: 120,
+    commission_rate: 0,
+    slippage_rate: 0,
+    first_trade_date: "2024-01-02",
+    last_trade_date: "2024-06-30",
+    total_return_pct: 3.21,
+    buy_hold_return_pct: 3.21,
+    excess_return_pct: 0,
+    max_drawdown_pct: -1.2,
+    sharpe_ratio: 0.35,
+    signal_changes: 0,
+    annualized_return_pct: 2.8,
+    buy_hold_annualized_return_pct: 2.8,
+    annualized_volatility_pct: 10.5,
+    sortino_ratio: 0.5,
+    calmar_ratio: 0.28,
+    long_trades_count: 1,
+    win_rate_pct: 55.0,
+    avg_holding_return_pct: 0.9,
+    underlying_beta: 1.0,
+    underlying_alpha_ann_pct: 0.1,
+    benchmark_code: bench || null,
+    note: "e2e-mock-buy-hold",
+    equity_curve: [
+      { trade_date: "2024-01-02", equity: 1.0 },
+      { trade_date: "2024-01-03", equity: 1.01 },
+    ],
+  };
+}
+
 function mockMaCrossScanResponseJson(sortBy) {
   return {
     fast_period: 5,
@@ -169,6 +206,11 @@ function e2eBuildBacktestRunSummary(kind, responsePayload) {
     const ok = items.filter((x) => x && typeof x === "object" && !x.error).length;
     return `批量 ${items.length} 行（有效 ${ok}）MA${fp}/${sp}`;
   }
+  if (kind === "buy_hold_single") {
+    const c = String(responsePayload?.code || "?");
+    const tr = responsePayload?.total_return_pct;
+    return `${c} 买入持有 策略${tr}%`;
+  }
   return String(kind || "unknown").slice(0, 200);
 }
 
@@ -218,6 +260,7 @@ export async function installApiMocks(page) {
       sessionStorage.removeItem("tb_currentCode");
       sessionStorage.removeItem("tb_rankTab");
       localStorage.removeItem("tb_backtest_mvp_async");
+      localStorage.removeItem("tb_backtest_single_strategy");
     } catch {
       /* ignore */
     }
@@ -456,6 +499,27 @@ export async function installApiMocks(page) {
                 params_schema: { type: "object", required: ["codes"], properties: {} },
               },
             },
+            {
+              id: "buy_hold",
+              title: "买入持有（日线收盘）",
+              description: "e2e-mock-catalog-buy-hold",
+              backtest_archive_kinds: ["buy_hold_single"],
+              strategy_contract_version: "1",
+              signal_params: {
+                type: "object",
+                description: "e2e-mock-no-signal",
+                properties: {},
+                required: [],
+                maxProperties: 0,
+                additionalProperties: false,
+              },
+              backtest_run: {
+                strategy_id: "buy_hold",
+                strategy_version: "1",
+                archive_kind: "buy_hold_single",
+                params_schema: { type: "object", required: ["code"], properties: {} },
+              },
+            },
           ],
         }),
       });
@@ -567,6 +631,44 @@ export async function installApiMocks(page) {
           body: JSON.stringify(syncBody),
         });
       }
+      if (sid === "buy_hold") {
+        const params = body.params && typeof body.params === "object" ? body.params : {};
+        const code = String(params.code || "sh.000001").trim() || "sh.000001";
+        const bench = String(params.benchmark_code || "").trim().toLowerCase();
+        const single = mockBuyHoldSingleResponseJson(code, bench);
+        const syncBody = {
+          engine_version: "0.1",
+          strategy_id: "buy_hold",
+          strategy_version: "1",
+          assumptions: ["e2e-mock-buy-hold-assumptions"],
+          result: single,
+          scan_result: null,
+        };
+        if (wantAsync) {
+          const jobId = backtestE2eNextJobId();
+          const queuedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+          backtestE2eAsyncJobs.set(jobId, {
+            polls: 0,
+            full: syncBody,
+            queuedAt,
+            cancelled: false,
+          });
+          return route.fulfill({
+            status: 202,
+            contentType: "application/json",
+            body: JSON.stringify({
+              job_id: jobId,
+              status: "accepted",
+              status_path: `/api/backtest/jobs/${jobId}`,
+            }),
+          });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(syncBody),
+        });
+      }
       if (sid === "ma_cross_scan") {
         const params = body.params && typeof body.params === "object" ? body.params : {};
         const sortBy =
@@ -609,7 +711,9 @@ export async function installApiMocks(page) {
       return route.fulfill({
         status: 400,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "e2e: POST /backtest/run 仅 mock ma_cross / ma_cross_scan" }),
+        body: JSON.stringify({
+          detail: "e2e: POST /backtest/run 仅 mock ma_cross / buy_hold / ma_cross_scan",
+        }),
       });
     }
 
@@ -763,6 +867,16 @@ export async function installApiMocks(page) {
       });
     }
 
+    if (path === "/api/backtest/buy-hold") {
+      const code = url.searchParams.get("code") || "sh.000001";
+      const bench = (url.searchParams.get("benchmark_code") || "").trim().toLowerCase();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(mockBuyHoldSingleResponseJson(code, bench)),
+      });
+    }
+
     if (path === "/api/backtest/runs" && req.method() === "GET") {
       const limit = Math.min(
         100,
@@ -770,7 +884,12 @@ export async function installApiMocks(page) {
       );
       const offset = Math.max(0, parseInt(url.searchParams.get("offset") || "0", 10) || 0);
       const kindRaw = (url.searchParams.get("kind") || "").trim();
-      if (kindRaw && kindRaw !== "ma_cross_single" && kindRaw !== "ma_cross_scan") {
+      if (
+        kindRaw &&
+        kindRaw !== "ma_cross_single" &&
+        kindRaw !== "ma_cross_scan" &&
+        kindRaw !== "buy_hold_single"
+      ) {
         return route.fulfill({
           status: 422,
           contentType: "application/json",
@@ -778,7 +897,7 @@ export async function installApiMocks(page) {
         });
       }
       let ordered = backtestRunsE2e.slice().reverse();
-      if (kindRaw === "ma_cross_single" || kindRaw === "ma_cross_scan") {
+      if (kindRaw === "ma_cross_single" || kindRaw === "ma_cross_scan" || kindRaw === "buy_hold_single") {
         ordered = ordered.filter((r) => r.kind === kindRaw);
       }
       const qRaw = (url.searchParams.get("q") || "").trim();
@@ -815,7 +934,7 @@ export async function installApiMocks(page) {
         body = {};
       }
       const kind = body.kind;
-      if (kind !== "ma_cross_single" && kind !== "ma_cross_scan") {
+      if (kind !== "ma_cross_single" && kind !== "ma_cross_scan" && kind !== "buy_hold_single") {
         return route.fulfill({
           status: 422,
           contentType: "application/json",

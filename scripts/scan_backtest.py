@@ -20,15 +20,14 @@ from datetime import date
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
+_root_s = str(project_root)
+if _root_s not in sys.path:
+    sys.path.insert(0, _root_s)
 
-
-def _opt_iso_date(s: str | None) -> date | None:
-    if s is None:
-        return None
-    t = str(s).strip()
-    if not t:
-        return None
-    return date.fromisoformat(t)
+from src.common.cli_iso_date import (  # noqa: E402
+    check_cli_date_order,
+    parse_cli_iso_date,
+)
 
 
 async def _async_main(
@@ -176,13 +175,14 @@ def main() -> int:
         return 2
 
     try:
-        d_start = _opt_iso_date(args.start_date)
-        d_end = _opt_iso_date(args.end_date)
-    except ValueError:
-        print("错误: --start-date / --end-date 须为 YYYY-MM-DD", file=sys.stderr)
+        d_start = parse_cli_iso_date("--start-date", args.start_date)
+        d_end = parse_cli_iso_date("--end-date", args.end_date)
+    except ValueError as e:
+        print(f"错误: {e}", file=sys.stderr)
         return 2
-    if d_start and d_end and d_start > d_end:
-        print("错误: --start-date 不能晚于 --end-date", file=sys.stderr)
+    bad_order = check_cli_date_order(d_start, d_end)
+    if bad_order:
+        print(f"错误: {bad_order}", file=sys.stderr)
         return 2
 
     if args.codes_file:

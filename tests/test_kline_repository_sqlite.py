@@ -334,3 +334,112 @@ async def test_get_latest_date_single_code(empty_sqlite_db):
     async with db.session() as session:
         d = await KlineRepository(session).get_latest_date("sh.lc")
     assert d == date(2024, 9, 10)
+
+
+async def test_get_daily_last_n_bars_per_code_matches_get_daily(empty_sqlite_db):
+    db = empty_sqlite_db
+    async with db.session() as session:
+        repo = KlineRepository(session)
+        await repo.bulk_insert(
+            [
+                _k("sh.pw", date(2024, 11, d), close=float(d), pct_change=0.1 * d)
+                for d in range(1, 9)
+            ]
+        )
+    end_d = date(2024, 11, 8)
+    async with db.session() as session:
+        repo = KlineRepository(session)
+        single = await repo.get_daily(code="sh.pw", end_date=end_d, limit=4)
+        multi = await repo.get_daily_last_n_bars_per_code(
+            ["sh.pw"], end_d, max_bars=4
+        )
+    assert list(multi["sh.pw"]) == single
+    assert [k.trade_date for k in single] == [
+        date(2024, 11, 5),
+        date(2024, 11, 6),
+        date(2024, 11, 7),
+        date(2024, 11, 8),
+    ]
+
+
+async def test_get_daily_last_n_bars_per_code_filters_end_date_and_orders(
+    empty_sqlite_db,
+):
+    db = empty_sqlite_db
+    async with db.session() as session:
+        repo = KlineRepository(session)
+        await repo.bulk_insert(
+            [
+                _k("sh.px", date(2024, 12, 1), close=1.0, pct_change=None),
+                _k("sh.px", date(2024, 12, 10), close=2.0, pct_change=None),
+                _k("sh.py", date(2024, 12, 1), close=10.0, pct_change=None),
+                _k("sh.py", date(2024, 12, 5), close=11.0, pct_change=None),
+            ]
+        )
+    end_d = date(2024, 12, 5)
+    async with db.session() as session:
+        repo = KlineRepository(session)
+        m = await repo.get_daily_last_n_bars_per_code(
+            ["sh.px", "sh.py"], end_d, max_bars=10
+        )
+    assert set(m.keys()) == {"sh.px", "sh.py"}
+    assert [k.trade_date for k in m["sh.px"]] == [date(2024, 12, 1)]
+    assert [k.trade_date for k in m["sh.py"]] == [
+        date(2024, 12, 1),
+        date(2024, 12, 5),
+    ]
+
+
+async def test_get_daily_last_n_bars_per_code_empty_codes(empty_sqlite_db):
+    async with empty_sqlite_db.session() as session:
+        m = await KlineRepository(session).get_daily_last_n_bars_per_code(
+            [], date(2024, 1, 1), max_bars=5
+        )
+    assert m == {}
+
+
+async def test_get_daily_last_n_bars_per_code_in_chunks_merge(
+    empty_sqlite_db, monkeypatch
+):
+    monkeypatch.setattr("src.data.storage.repositories._KLINE_IN_CHUNK", 1)
+    d = date(2024, 12, 20)
+    async with empty_sqlite_db.session() as session:
+        repo = KlineRepository(session)
+        await repo.bulk_insert(
+            [
+                _k("sh.q1", d, close=1.0, pct_change=None),
+                _k("sh.q2", d, close=2.0, pct_change=None),
+                _k("sh.q3", d, close=3.0, pct_change=None),
+            ]
+        )
+    async with empty_sqlite_db.session() as session:
+        m = await KlineRepository(session).get_daily_last_n_bars_per_code(
+            ["sh.q1", "sh.q2", "sh.q3"], d, max_bars=1
+        )
+    assert set(m) == {"sh.q1", "sh.q2", "sh.q3"}
+    assert all(len(v) == 1 for v in m.values())
+
+
+async def test_list_codes_on_trade_date_sorted_and_limit(empty_sqlite_db):
+    db = empty_sqlite_db
+    d = date(2024, 10, 15)
+    async with db.session() as session:
+        repo = KlineRepository(session)
+        await repo.bulk_insert(
+            [
+                _k("sh.zz", d, close=1.0, pct_change=0.0),
+                _k("sh.aa", d, close=1.0, pct_change=0.0),
+                _k("sh.aa", date(2024, 9, 1), close=1.0, pct_change=0.0),
+            ]
+        )
+    async with db.session() as session:
+        repo = KlineRepository(session)
+        all_c = await repo.list_codes_on_trade_date(d)
+        assert all_c == ["sh.aa", "sh.zz"]
+        one = await repo.list_codes_on_trade_date(d, max_codes=1)
+        assert one == ["sh.aa"]
+        unlimited = await repo.list_codes_on_trade_date(d, max_codes=0)
+        assert unlimited == ["sh.aa", "sh.zz"]
+    async with db.session() as session:
+        empty = await KlineRepository(session).list_codes_on_trade_date(date(2020, 1, 1))
+    assert empty == []

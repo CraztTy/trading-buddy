@@ -20,6 +20,23 @@ def _single_payload():
     }
 
 
+def _buy_hold_payload():
+    return {
+        "kind": "buy_hold_single",
+        "request_params": {"code": "sh.000001", "limit": 120},
+        "response_payload": {
+            "code": "sh.000001",
+            "fast_period": 1,
+            "slow_period": 2,
+            "bars_used": 120,
+            "total_return_pct": 2.5,
+            "buy_hold_return_pct": 2.5,
+            "equity_curve": [],
+            "note": "test buy_hold",
+        },
+    }
+
+
 def _scan_payload():
     return {
         "kind": "ma_cross_scan",
@@ -79,6 +96,7 @@ async def test_backtest_run_bad_kind_400(http_test_client, empty_sqlite_db):
 async def test_backtest_runs_list_filter_kind(http_test_client, empty_sqlite_db):
     single_id = http_test_client.post("/api/backtest/runs", json=_single_payload()).json()["id"]
     scan_id = http_test_client.post("/api/backtest/runs", json=_scan_payload()).json()["id"]
+    bh_id = http_test_client.post("/api/backtest/runs", json=_buy_hold_payload()).json()["id"]
     only_scan = http_test_client.get("/api/backtest/runs", params={"kind": "ma_cross_scan", "limit": 20, "offset": 0})
     assert only_scan.status_code == 200
     body = only_scan.json()
@@ -87,8 +105,11 @@ async def test_backtest_runs_list_filter_kind(http_test_client, empty_sqlite_db)
     only_single = http_test_client.get("/api/backtest/runs", params={"kind": "ma_cross_single"})
     assert only_single.json()["total"] == 1
     assert only_single.json()["items"][0]["id"] == single_id
+    only_bh = http_test_client.get("/api/backtest/runs", params={"kind": "buy_hold_single"})
+    assert only_bh.json()["total"] == 1
+    assert only_bh.json()["items"][0]["id"] == bh_id
     all_rows = http_test_client.get("/api/backtest/runs", params={"limit": 50, "offset": 0})
-    assert all_rows.json()["total"] == 2
+    assert all_rows.json()["total"] == 3
 
 
 async def test_backtest_runs_list_bad_kind_query_422(http_test_client, empty_sqlite_db):

@@ -1,6 +1,7 @@
 <script setup>
-import { ref, watch } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { fetchJson } from "../composables/api.js";
+import { useCrossSectionOverviewLink } from "../composables/crossSectionOverviewLink.js";
 
 const props = defineProps({
   tab: { type: String, default: "gainers" },
@@ -13,6 +14,7 @@ const loading = ref(true);
 const error = ref("");
 /** 仅「成交额」页：可选 YYYY-MM-DD，空则走后端默认最新交易日 */
 const turnoverDate = ref("");
+const { crossSectionAsOf, crossSectionHref, refreshCrossSectionAsOf } = useCrossSectionOverviewLink();
 
 function fmtAmount(v) {
   if (v == null || !Number.isFinite(Number(v))) return "—";
@@ -52,6 +54,10 @@ watch(
 
 watch(turnoverDate, () => {
   if (props.tab === "turnover") load();
+});
+
+onMounted(() => {
+  refreshCrossSectionAsOf();
 });
 </script>
 
@@ -133,6 +139,24 @@ watch(turnoverDate, () => {
         </div>
       </li>
     </ul>
+
+    <p class="api-foot mono" role="note">
+      <template v-if="crossSectionHref">
+        <a
+          :href="crossSectionHref"
+          class="api-foot-link"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GET /api/factors/cross-section
+        </a>
+        <span class="api-foot-hint"> · period=20 · max_codes=100 · 与主要指数同日 {{ crossSectionAsOf }}</span>
+      </template>
+      <template v-else>
+        <span class="api-foot-muted">GET /api/factors/cross-section</span>
+        <span class="api-foot-hint"> · 需 as_of_date；有指数 K 后此处出现新标签链接</span>
+      </template>
+    </p>
   </section>
 </template>
 
@@ -421,5 +445,33 @@ watch(turnoverDate, () => {
 
 .pct.down {
   color: var(--danger);
+}
+
+.api-foot {
+  margin: 0;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.45);
+  font-size: 0.62rem;
+  line-height: 1.45;
+  color: var(--mist-dim);
+}
+
+.api-foot-link {
+  color: var(--meridian);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.api-foot-link:hover {
+  text-decoration: underline;
+}
+
+.api-foot-muted {
+  color: var(--paper-muted);
+}
+
+.api-foot-hint {
+  color: var(--mist-dim);
 }
 </style>

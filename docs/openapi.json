@@ -3,7 +3,7 @@
   "info": {
     "title": "Trading Buddy API",
     "description": "A股量化交易数据基础设施",
-    "version": "1.1.1"
+    "version": "1.2.0"
   },
   "paths": {
     "/api/stocks/list": {
@@ -1295,6 +1295,148 @@
         }
       }
     },
+    "/api/backtest/buy-hold": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Buy Hold Backtest",
+        "operationId": "buy_hold_backtest_api_backtest_buy_hold_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "标的代码，如 sh.000001",
+              "title": "Code"
+            },
+            "description": "标的代码，如 sh.000001"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "起始日（含）",
+              "title": "Start Date"
+            },
+            "description": "起始日（含）"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "结束日（含）",
+              "title": "End Date"
+            },
+            "description": "结束日（含）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "description": "最多使用多少根日 K（从新到旧取，再按时间正序回测）",
+              "default": 500,
+              "title": "Limit"
+            },
+            "description": "最多使用多少根日 K（从新到旧取，再按时间正序回测）"
+          },
+          {
+            "name": "commission_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "description": "单边手续费率；买入持有用双边一次近似，见 assumptions / note",
+              "default": 0.0,
+              "title": "Commission Rate"
+            },
+            "description": "单边手续费率；买入持有用双边一次近似，见 assumptions / note"
+          },
+          {
+            "name": "slippage_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "description": "滑点率（与手续费同口径）",
+              "default": 0.0,
+              "title": "Slippage Rate"
+            },
+            "description": "滑点率（与手续费同口径）"
+          },
+          {
+            "name": "benchmark_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS（标的交易日对齐、仅前向填充）。不传则对标的自身日收益。无该基准日 K 时 400。",
+              "title": "Benchmark Code"
+            },
+            "description": "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS（标的交易日对齐、仅前向填充）。不传则对标的自身日收益。无该基准日 K 时 400。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaCrossBacktestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/backtest/jobs/{job_id}/cancel": {
       "post": {
         "tags": [
@@ -1393,7 +1535,7 @@
           "回测"
         ],
         "summary": "通用回测 MVP（同步或异步）",
-        "description": "通用回测 MVP：与 GET /api/backtest/ma-cross* 共用内核，额外返回 assumptions / engine_version。\n支持 strategy_id=`ma_cross`（单标的）或 `ma_cross_scan`（批量），strategy_version=`1`。\n\n默认同步 200；**``?async=1``** 时返回 **202** 及 ``job_id``，由 **GET /api/backtest/jobs/{job_id}** 轮询\n``pending`` / ``running`` / ``completed`` / ``failed`` / ``cancelled``（取消）。\n若 ``REDIS_ENABLED`` 且 ``BACKTEST_ASYNC_JOB_STORE`` 为 ``auto``（默认），任务入 **Redis 队列** 并持久化记录；\n否则为进程内表（重启清空）。``BACKTEST_ASYNC_JOB_STORE=redis`` 且 Redis 不可用时返回 **503**。",
+        "description": "通用回测 MVP：与 GET /api/backtest/ma-cross* / buy-hold 共用内核，额外返回 assumptions / engine_version。\n支持 strategy_id=`ma_cross`（单标的）、`buy_hold`（买入持有单标的）或 `ma_cross_scan`（批量），strategy_version=`1`。\n\n默认同步 200；**``?async=1``** 时返回 **202** 及 ``job_id``，由 **GET /api/backtest/jobs/{job_id}** 轮询\n``pending`` / ``running`` / ``completed`` / ``failed`` / ``cancelled``（取消）。\n若 ``REDIS_ENABLED`` 且 ``BACKTEST_ASYNC_JOB_STORE`` 为 ``auto``（默认），任务入 **Redis 队列** 并持久化记录；\n否则为进程内表（重启清空）。``BACKTEST_ASYNC_JOB_STORE=redis`` 且 Redis 不可用时返回 **503**。",
         "operationId": "backtest_run_mvp_api_backtest_run_post",
         "parameters": [
           {
@@ -1425,7 +1567,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BacktestRunMvpResponse"
+                  "$ref": "#/components/schemas/BacktestRunMvpResponse-Input"
                 }
               }
             }
@@ -1535,7 +1677,8 @@
                 {
                   "enum": [
                     "ma_cross_single",
-                    "ma_cross_scan"
+                    "ma_cross_scan",
+                    "buy_hold_single"
                   ],
                   "type": "string"
                 },
@@ -2020,6 +2163,80 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FactorCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/factors/cross-section": {
+      "get": {
+        "tags": [
+          "因子"
+        ],
+        "summary": "Factor Cross Section",
+        "description": "全市场（截断）截面：价量 + N 期收益；不落库。依赖 **ROW_NUMBER** 批量拉数（与 ``KlineRepository.get_daily_last_n_bars_per_code`` 一致）。",
+        "operationId": "factor_cross_section_api_factors_cross_section_get",
+        "parameters": [
+          {
+            "name": "as_of_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "截面交易日（``daily_kline.trade_date``）",
+              "title": "As Of Date"
+            },
+            "description": "截面交易日（``daily_kline.trade_date``）"
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 250,
+              "minimum": 1,
+              "description": "``pct_change_n`` 的 N",
+              "default": 20,
+              "title": "Period"
+            },
+            "description": "``pct_change_n`` 的 N"
+          },
+          {
+            "name": "max_codes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "从该日有 K 的 code 中取前多少个（按 code 升序；与导出脚本 ``--max-codes`` 语义一致）",
+              "default": 100,
+              "title": "Max Codes"
+            },
+            "description": "从该日有 K 的 code 中取前多少个（按 code 升序；与导出脚本 ``--max-codes`` 语义一致）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactorCrossSectionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -2522,7 +2739,8 @@
             "type": "string",
             "enum": [
               "ma_cross_single",
-              "ma_cross_scan"
+              "ma_cross_scan",
+              "buy_hold_single"
             ],
             "title": "Kind"
           },
@@ -2638,7 +2856,7 @@
           "result": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/BacktestRunMvpResponse"
+                "$ref": "#/components/schemas/BacktestRunMvpResponse-Output"
               },
               {
                 "type": "null"
@@ -2842,9 +3060,9 @@
         },
         "type": "object",
         "title": "BacktestRunMvpRequest",
-        "description": "通用回测 MVP：同步执行；注册 ma_cross / ma_cross_scan v1。"
+        "description": "通用回测 MVP：同步执行；注册 ma_cross / buy_hold / ma_cross_scan v1。"
       },
-      "BacktestRunMvpResponse": {
+      "BacktestRunMvpResponse-Input": {
         "properties": {
           "engine_version": {
             "type": "string",
@@ -2876,7 +3094,61 @@
                 "type": "null"
               }
             ],
-            "description": "strategy_id=ma_cross 时非空，与 GET /api/backtest/ma-cross 一致"
+            "description": "strategy_id=ma_cross 或 buy_hold 时非空；与对应 GET /api/backtest/ma-cross|buy-hold 一致"
+          },
+          "scan_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaCrossScanResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "strategy_id=ma_cross_scan 时非空，与 GET /api/backtest/ma-cross/scan JSON 一致"
+          }
+        },
+        "type": "object",
+        "required": [
+          "engine_version",
+          "strategy_id",
+          "strategy_version"
+        ],
+        "title": "BacktestRunMvpResponse"
+      },
+      "BacktestRunMvpResponse-Output": {
+        "properties": {
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version",
+            "description": "执行器版本，见 src/backtest/runner/ma_cross_executor.py"
+          },
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "strategy_version": {
+            "type": "string",
+            "title": "Strategy Version"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Assumptions",
+            "description": "与本次结果绑定的口径与数据假设，供审计与复现"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaCrossBacktestResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "strategy_id=ma_cross 或 buy_hold 时非空；与对应 GET /api/backtest/ma-cross|buy-hold 一致"
           },
           "scan_result": {
             "anyOf": [
@@ -3007,6 +3279,117 @@
           "ops"
         ],
         "title": "FactorCatalogResponse"
+      },
+      "FactorCrossSectionResponse": {
+        "properties": {
+          "as_of_trade_date": {
+            "type": "string",
+            "format": "date",
+            "title": "As Of Trade Date"
+          },
+          "period": {
+            "type": "integer",
+            "title": "Period"
+          },
+          "max_codes_requested": {
+            "type": "integer",
+            "title": "Max Codes Requested"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count"
+          },
+          "doc_ref": {
+            "type": "string",
+            "title": "Doc Ref",
+            "default": "docs/FACTORS.md"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/FactorCrossSectionRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of_trade_date",
+          "period",
+          "max_codes_requested",
+          "row_count",
+          "rows"
+        ],
+        "title": "FactorCrossSectionResponse"
+      },
+      "FactorCrossSectionRow": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close"
+          },
+          "volume": {
+            "type": "integer",
+            "title": "Volume"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "turnover_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnover Rate"
+          },
+          "pct_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Change",
+            "description": "当日涨跌幅 %（入库 ``change_pct``）"
+          },
+          "ret_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ret Pct",
+            "description": "N 期简单收益 %（``pct_change_n`` 在截面日上的值）"
+          },
+          "meta_bars": {
+            "type": "integer",
+            "title": "Meta Bars",
+            "description": "参与计算 ``ret_pct`` 的日 K 根数（≤ period+1）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "close",
+          "volume",
+          "amount",
+          "meta_bars"
+        ],
+        "title": "FactorCrossSectionRow"
       },
       "FactorOpCatalogEntry": {
         "properties": {
@@ -4400,13 +4783,6 @@
           "type": {
             "type": "string",
             "title": "Error Type"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "ctx": {
-            "type": "object",
-            "title": "Context"
           }
         },
         "type": "object",

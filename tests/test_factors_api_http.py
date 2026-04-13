@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import get_args
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -1169,3 +1170,76 @@ async def test_factors_preview_williams_r_window_lt_2_422(http_test_client, empt
         params={"code": code, "column": "close", "op": "williams_r", "window": 1, "limit": 50},
     )
     assert r.status_code == 422
+
+
+async def test_factors_cross_section_json_two_codes(http_test_client, empty_sqlite_db):
+    as_of = date(2024, 6, 11)
+    period = 2
+    rows_db = []
+    for code, closes in (
+        ("sh.xs_a", (8.0, 9.0, 10.0)),
+        ("sh.xs_b", (80.0, 90.0, 100.0)),
+    ):
+        for i, d in enumerate((date(2024, 6, 9), date(2024, 6, 10), as_of)):
+            rows_db.append(
+                _daily_row(code, d, closes[i]).model_copy(
+                    update={"volume": 1000 + i, "turnover_rate": 1.2, "pct_change": 0.5 * (i + 1)}
+                )
+            )
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows_db)
+
+    r = http_test_client.get(
+        "/api/factors/cross-section",
+        params={"as_of_date": as_of.isoformat(), "period": period, "max_codes": 50},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["as_of_trade_date"] == as_of.isoformat()
+    assert body["period"] == period
+    assert body["max_codes_requested"] == 50
+    assert body["doc_ref"] == "docs/FACTORS.md"
+    assert body["row_count"] == 2
+    by_code = {row["code"]: row for row in body["rows"]}
+    assert set(by_code) == {"sh.xs_a", "sh.xs_b"}
+    assert by_code["sh.xs_a"]["close"] == pytest.approx(10.0)
+    assert by_code["sh.xs_a"]["meta_bars"] == 3
+    assert by_code["sh.xs_a"]["ret_pct"] == pytest.approx((10.0 / 8.0 - 1.0) * 100.0)
+    assert by_code["sh.xs_a"]["volume"] == 1002
+    assert by_code["sh.xs_a"]["turnover_rate"] == pytest.approx(1.2)
+    assert by_code["sh.xs_a"]["pct_change"] == pytest.approx(1.5)
+
+
+async def test_factors_cross_section_no_codes_on_day_400(http_test_client, empty_sqlite_db):
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(
+            [_daily_row("sh.xs0", date(2024, 1, 5), 10.0)]
+        )
+    r = http_test_client.get(
+        "/api/factors/cross-section",
+        params={"as_of_date": "2024-06-01", "period": 1, "max_codes": 10},
+    )
+    assert r.status_code == 400
+
+
+async def test_factors_cross_section_batch_failure_503(http_test_client, empty_sqlite_db):
+    as_of = date(2024, 8, 1)
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(
+            [
+                _daily_row("sh.xs503", as_of - timedelta(days=1), 9.0),
+                _daily_row("sh.xs503", as_of, 10.0),
+            ]
+        )
+
+    with patch(
+        "src.api.routers.factors.KlineRepository.get_daily_last_n_bars_per_code",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("window fn missing"),
+    ):
+        r = http_test_client.get(
+            "/api/factors/cross-section",
+            params={"as_of_date": as_of.isoformat(), "period": 1, "max_codes": 10},
+        )
+    assert r.status_code == 503
+    assert "legacy-per-code-fetch" in (r.json().get("detail") or "").lower()

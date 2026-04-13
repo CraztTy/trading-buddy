@@ -158,4 +158,65 @@ def list_strategy_catalog() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "id": "buy_hold",
+            "title": "买入持有（日线收盘）",
+            "description": (
+                "全样本做多；与 GET /api/backtest/buy-hold 及 POST /api/backtest/run（strategy_id=buy_hold）等价；"
+                "无独立 signal 端点。"
+            ),
+            "backtest_archive_kinds": ["buy_hold_single"],
+            "strategy_contract_version": "1",
+            "signal_params": {
+                "type": "object",
+                "description": "不提供 POST /api/strategies/signal；请使用回测 GET/POST。",
+                "properties": {},
+                "required": [],
+                "maxProperties": 0,
+                "additionalProperties": False,
+            },
+            "backtest_run": {
+                "strategy_id": "buy_hold",
+                "strategy_version": "1",
+                "archive_kind": "buy_hold_single",
+                "description": (
+                    "params：code, limit, start_date, end_date, commission_rate, slippage_rate, benchmark_code；"
+                    "无 fast/slow。"
+                ),
+                "params_schema": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "description": "标的代码，如 sh.000001",
+                        },
+                        "limit": {"type": "integer", "minimum": 30, "maximum": 5000, "default": 500},
+                        "start_date": {"type": "string", "format": "date", "nullable": True},
+                        "end_date": {"type": "string", "format": "date", "nullable": True},
+                        "commission_rate": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 0.05,
+                            "default": 0,
+                            "description": "单边手续费率；与 slippage_rate 之和勿超过 0.08",
+                        },
+                        "slippage_rate": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 0.05,
+                            "default": 0,
+                        },
+                        "benchmark_code": {
+                            "type": "string",
+                            "nullable": True,
+                            "maxLength": 64,
+                            "description": "可选；β/α 相对该基准日收益",
+                        },
+                    },
+                    "required": ["code"],
+                },
+            },
+        },
     ]

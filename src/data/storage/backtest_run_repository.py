@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import BacktestRunModel
 
-ALLOWED_KINDS = frozenset({"ma_cross_single", "ma_cross_scan"})
+ALLOWED_KINDS = frozenset({"ma_cross_single", "ma_cross_scan", "buy_hold_single"})
 # request_params + response_payload 序列化后合计上限（避免撑爆 DB）
 MAX_BACKTEST_RUN_TOTAL_BYTES = 2 * 1024 * 1024
 
@@ -41,6 +41,10 @@ def build_summary(kind: str, response_payload: dict[str, Any]) -> str:
         sp = response_payload.get("slow_period")
         ok = sum(1 for x in items if isinstance(x, dict) and not x.get("error"))
         return f"批量 {len(items)} 行（有效 {ok}）MA{fp}/{sp}"
+    if kind == "buy_hold_single":
+        c = str(response_payload.get("code") or "?")
+        tr = response_payload.get("total_return_pct")
+        return f"{c} 买入持有 策略{tr}%"
     return (kind or "unknown")[:200]
 
 

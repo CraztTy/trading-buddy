@@ -2,12 +2,12 @@
 """
 验证当前 .env：数据库（MySQL 或 SQLite）/ Redis 是否按配置工作，并冒烟测试核心 API 路由
 （含 ``/openapi.json``、``/api/data/trade-calendar/options``、``status``、``/api/strategies/catalog``、
-``/api/backtest/catalog``、``/api/factors/catalog``）。
+``/api/backtest/catalog``、``/api/factors/catalog``）；有指数 overview 日期时再冒烟 **``GET /api/factors/cross-section``**。
 契约通过后另做回测异步轻量校验：**``GET /api/backtest/jobs/{不存在}`` → 404**；
 **``POST /api/backtest/jobs/{不存在}/cancel`` → 404**；
 **``POST /api/backtest/run?async=true``** 且非法 ``strategy_id`` → **400**（不创建 job）。
 在全部 GET 返回 200 后，额外校验：
-（1）``/api/strategies/catalog`` 含 ``ma_cross`` / ``ma_cross_scan``；**``strategy_contract_version``** 为 ``1``；
+（1）``/api/strategies/catalog`` 含 ``ma_cross`` / ``ma_cross_scan`` / ``buy_hold``；**``strategy_contract_version``** 为 ``1``；
 **``id``** 与 **``backtest_run.strategy_id``** 一致；**``signal_params``** 为对象、**``backtest_archive_kinds``** 非空且与
 条目约定一致；**``backtest_run.params_schema``** 为对象；
 各条目 **``backtest_run.archive_kind``** 须出现在 **``backtest_archive_kinds``** 中；
@@ -21,6 +21,7 @@
 （3）``/api/factors/catalog``：**``preview_path``** / **``doc_ref``** 与 **``FactorCatalogResponse``** 默认一致；
 ``ops`` 非空且每条含 ``id`` / ``window`` / ``column`` / ``series_keys``（``window``∈``required|optional|unused``，
 ``column``∈``ohlcv|ignored``），且 **``ops[].id`` 集合与 ``OpName``** 一致。
+（4）若 **``GET /api/dashboard/overview``** 的 **``indices[0].date``** 存在：``GET /api/factors/cross-section``（同 **``as_of_date``**，**``period=20``**，**``max_codes=20``**）须 **200**，且体与 **``FactorCrossSectionResponse``** 字段一致；**503**（窗口查询失败）记 **FAIL**。无指数日期时打印 **[SKIP]** 跳过本条。
 
 **设计约定**：栈探测需导入 ``src``（``app``、存储、``ENGINE_VERSION``、``OpName`` 等），属正常依赖。
 **catalog 形态与跨 catalog 对齐的纯断言函数保留在本文件**（单测通过 ``importlib`` 加载本模块复用），
@@ -125,6 +126,7 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
     """校验 GET /api/backtest/catalog：engine_version、条目字段、archive_kind、strategy_id 集合与 POST /run 一致。"""
     from src.backtest.runner import (
         ENGINE_VERSION,
+        STRATEGY_ID_BUY_HOLD,
         STRATEGY_ID_MA_CROSS,
         STRATEGY_ID_MA_CROSS_SCAN,
     )
@@ -132,6 +134,7 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
     _expected_shape_paths: dict[str, tuple[str, list[str]]] = {
         STRATEGY_ID_MA_CROSS: ("result", ["/api/backtest/ma-cross"]),
         STRATEGY_ID_MA_CROSS_SCAN: ("scan_result", ["/api/backtest/ma-cross/scan"]),
+        STRATEGY_ID_BUY_HOLD: ("result", ["/api/backtest/buy-hold"]),
     }
 
     if not isinstance(data, dict):
@@ -276,7 +279,12 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
             "backtest catalog: ma_cross_scan 的 archive_kind 应为 ma_cross_scan，"
             f"实际 {by_sid.get('ma_cross_scan')!r}"
         )
-    expected_ids = frozenset({STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN})
+    if by_sid.get("buy_hold") != "buy_hold_single":
+        return (
+            "backtest catalog: buy_hold 的 archive_kind 应为 buy_hold_single，"
+            f"实际 {by_sid.get('buy_hold')!r}"
+        )
+    expected_ids = frozenset({STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN, STRATEGY_ID_BUY_HOLD})
     got_ids = frozenset(by_sid.keys())
     if got_ids != expected_ids:
         return (
@@ -371,8 +379,114 @@ def _factors_catalog_op_ids_match_opname(data: object) -> str | None:
     return None
 
 
+_ROW_KEYS = frozenset(
+    ("code", "close", "volume", "amount", "turnover_rate", "pct_change", "ret_pct", "meta_bars")
+)
+
+
+def _factors_cross_section_body_errors(
+    data: object,
+    *,
+    expect_as_of: str,
+    expect_period: int,
+    expect_max_codes: int,
+) -> str | None:
+    """校验 ``GET /api/factors/cross-section`` 200 JSON 与请求参数、行字段一致。"""
+    if not isinstance(data, dict):
+        return "factors cross-section: 响应体不是 JSON 对象"
+    for k in ("as_of_trade_date", "period", "max_codes_requested", "row_count", "rows", "doc_ref"):
+        if k not in data:
+            return f"factors cross-section: 缺字段 {k!r}"
+    if data.get("doc_ref") != "docs/FACTORS.md":
+        return f"factors cross-section: doc_ref 应为 'docs/FACTORS.md' got={data.get('doc_ref')!r}"
+    asof = data.get("as_of_trade_date")
+    asof_s = asof if isinstance(asof, str) else (str(asof) if asof is not None else "")
+    if asof_s != expect_as_of:
+        return (
+            "factors cross-section: as_of_trade_date 与请求不一致 "
+            f"got={asof_s!r} expect={expect_as_of!r}"
+        )
+    if data.get("period") != expect_period:
+        return f"factors cross-section: period 期望 {expect_period} 实际 {data.get('period')!r}"
+    if data.get("max_codes_requested") != expect_max_codes:
+        return (
+            "factors cross-section: max_codes_requested 期望 "
+            f"{expect_max_codes} 实际 {data.get('max_codes_requested')!r}"
+        )
+    rows = data.get("rows")
+    if not isinstance(rows, list):
+        return "factors cross-section: rows 非列表"
+    rc = data.get("row_count")
+    if not isinstance(rc, int) or rc < 0 or rc > expect_max_codes:
+        return f"factors cross-section: row_count 异常 {rc!r}"
+    if len(rows) != rc:
+        return "factors cross-section: len(rows) 与 row_count 不一致"
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return f"factors cross-section: rows[{i}] 非对象"
+        if frozenset(row.keys()) != _ROW_KEYS:
+            return (
+                f"factors cross-section: rows[{i}] 键集合异常 "
+                f"got={sorted(row.keys())!r}"
+            )
+        if not isinstance(row.get("code"), str) or not str(row.get("code")).strip():
+            return f"factors cross-section: rows[{i}].code 无效"
+        if not isinstance(row.get("meta_bars"), int) or row["meta_bars"] < 1:
+            return f"factors cross-section: rows[{i}].meta_bars 须为正整数"
+    return None
+
+
+def _verify_factors_cross_section_smoke() -> tuple[str | None, bool]:
+    """依赖 overview 首条指数 ``date``。返回 ``(错误信息, 是否跳过)``；成功为 ``(None, False)``。"""
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+
+    period = 20
+    max_codes = 20
+
+    with TestClient(app) as client:
+        ro = client.get("/api/dashboard/overview")
+        if ro.status_code != 200:
+            return (
+                f"/api/dashboard/overview -> HTTP {ro.status_code}（截面冒烟依赖 overview）",
+                False,
+            )
+        ob = ro.json()
+        indices = ob.get("indices") if isinstance(ob, dict) else None
+        first = indices[0] if isinstance(indices, list) and indices else None
+        d_raw = first.get("date") if isinstance(first, dict) else None
+        if not isinstance(d_raw, str) or not d_raw.strip():
+            return (None, True)
+        as_of = d_raw.strip()
+        r = client.get(
+            "/api/factors/cross-section",
+            params={"as_of_date": as_of, "period": period, "max_codes": max_codes},
+        )
+        if r.status_code == 503:
+            return (
+                "factors cross-section: HTTP 503（批量日 K 失败；需 MySQL 8+ / SQLite 3.25+ "
+                "或脚本 --legacy-per-code-fetch）",
+                False,
+            )
+        if r.status_code != 200:
+            return (
+                f"/api/factors/cross-section?as_of_date={as_of!r} -> HTTP {r.status_code}",
+                False,
+            )
+        err = _factors_cross_section_body_errors(
+            r.json(),
+            expect_as_of=as_of,
+            expect_period=period,
+            expect_max_codes=max_codes,
+        )
+        if err:
+            return (err, False)
+    return (None, False)
+
+
 def _strategies_catalog_shape_errors(sc_body: object) -> str | None:
-    """校验 GET /api/strategies/catalog：strategies 非空，含 ma_cross / ma_cross_scan，且含 backtest_run。"""
+    """校验 GET /api/strategies/catalog：strategies 非空，须含 ma_cross / ma_cross_scan；含 buy_hold 时校验其 Kinds。"""
     if not isinstance(sc_body, dict):
         return "strategies catalog: 响应体不是 JSON 对象"
     strategies = sc_body.get("strategies")
@@ -439,6 +553,12 @@ def _strategies_catalog_shape_errors(sc_body: object) -> str | None:
                     "strategies catalog: ma_cross_scan 的 backtest_archive_kinds 应为 "
                     f"['ma_cross_scan'] 实际 {bak!r}"
                 )
+        elif entry_id == "buy_hold":
+            if bak != ["buy_hold_single"]:
+                return (
+                    "strategies catalog: buy_hold 的 backtest_archive_kinds 应为 "
+                    f"['buy_hold_single'] 实际 {bak!r}"
+                )
         if not all(isinstance(x, str) for x in bak):
             return (
                 f"strategies catalog: strategies[{i}].backtest_archive_kinds "
@@ -484,6 +604,7 @@ def _strategy_catalog_vs_backtest_archive_errors(client: Any) -> str | None:
         if isinstance(s, dict) and "strategy_id" in s and "archive_kind" in s
     }
     strategies = sc_body["strategies"]
+    strat_sids: set[str] = set()
     for j, st in enumerate(strategies):
         if not isinstance(st, dict):
             continue
@@ -492,6 +613,8 @@ def _strategy_catalog_vs_backtest_archive_errors(client: Any) -> str | None:
             continue
         sid = br.get("strategy_id")
         ak = br.get("archive_kind")
+        if isinstance(sid, str) and sid.strip():
+            strat_sids.add(sid.strip())
         if not isinstance(sid, str) or sid not in by_engine:
             continue
         if not isinstance(ak, str):
@@ -501,6 +624,12 @@ def _strategy_catalog_vs_backtest_archive_errors(client: Any) -> str | None:
                 f"archive_kind 不一致: strategy_id={sid!r} "
                 f"strategies.catalog={ak!r} backtest.catalog={by_engine[sid]!r}"
             )
+    eng_keys = frozenset(by_engine.keys())
+    if frozenset(strat_sids) != eng_keys:
+        return (
+            "strategies catalog 与 backtest catalog 的 strategy_id 集合须完全一致 "
+            f"engine={sorted(eng_keys)!r} strategies={sorted(strat_sids)!r}"
+        )
     return None
 
 
@@ -653,6 +782,22 @@ def main(argv: list[str] | None = None) -> int:
             "  [OK] strategies catalog 形态；backtest/strategies archive_kind 对齐；"
             "factors catalog 顶层与 ops 形态及 OpName 对齐"
         )
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        return 1
+
+    print("\n=== 因子截面 cross-section（overview 填日）===")
+    try:
+        xs_err, xs_skip = _verify_factors_cross_section_smoke()
+        if xs_err:
+            print(f"  [FAIL] {xs_err}")
+            return 1
+        if xs_skip:
+            print(
+                "  [SKIP] factors cross-section: overview 无 indices[0].date，跳过截面冒烟"
+            )
+        else:
+            print("  [OK] GET /api/factors/cross-section（period=20, max_codes=20）")
     except Exception as e:
         print(f"  [FAIL] {e}")
         return 1

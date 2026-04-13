@@ -14,9 +14,11 @@ from starlette.responses import JSONResponse, Response
 
 from src.backtest.runner import (
     ENGINE_VERSION,
+    STRATEGY_ID_BUY_HOLD,
     STRATEGY_ID_MA_CROSS,
     STRATEGY_ID_MA_CROSS_SCAN,
     build_ma_cross_scan_assumptions,
+    execute_buy_hold_single,
     execute_ma_cross_scan,
     execute_ma_cross_single,
 )
@@ -164,8 +166,20 @@ class MaCrossRunParamsBody(BaseModel):
     benchmark_code: str | None = None
 
 
+class BuyHoldRunParamsBody(BaseModel):
+    """POST /api/backtest/run 在 strategy_id=buy_hold 时的 params 形状（无 fast/slow）。"""
+
+    code: str
+    limit: int = Field(500, ge=30, le=5000)
+    start_date: date | None = None
+    end_date: date | None = None
+    commission_rate: float = Field(0.0, ge=0.0, le=0.05)
+    slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
+    benchmark_code: str | None = None
+
+
 class BacktestRunMvpRequest(BaseModel):
-    """通用回测 MVP：同步执行；注册 ma_cross / ma_cross_scan v1。"""
+    """通用回测 MVP：同步执行；注册 ma_cross / buy_hold / ma_cross_scan v1。"""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -228,7 +242,7 @@ class BacktestRunMvpResponse(BaseModel):
     )
     result: MaCrossBacktestResponse | None = Field(
         None,
-        description="strategy_id=ma_cross 时非空，与 GET /api/backtest/ma-cross 一致",
+        description="strategy_id=ma_cross 或 buy_hold 时非空；与对应 GET /api/backtest/ma-cross|buy-hold 一致",
     )
     scan_result: MaCrossScanResponse | None = Field(
         None,
@@ -359,7 +373,7 @@ async def _cancel_memory_job(job_id: str) -> Literal["absent", "ok", "bad_state"
 
 
 def _validate_mvp_request(body: BacktestRunMvpRequest) -> None:
-    supported = (STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN)
+    supported = (STRATEGY_ID_MA_CROSS, STRATEGY_ID_BUY_HOLD, STRATEGY_ID_MA_CROSS_SCAN)
     if body.strategy_id not in supported or body.strategy_version != "1":
         raise HTTPException(
             status_code=400,
@@ -371,6 +385,12 @@ def _validate_mvp_request(body: BacktestRunMvpRequest) -> None:
     if body.strategy_id == STRATEGY_ID_MA_CROSS:
         try:
             MaCrossRunParamsBody.model_validate(body.params)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors()) from e
+        return
+    if body.strategy_id == STRATEGY_ID_BUY_HOLD:
+        try:
+            BuyHoldRunParamsBody.model_validate(body.params)
         except ValidationError as e:
             raise HTTPException(status_code=422, detail=e.errors()) from e
         return
@@ -405,6 +425,30 @@ async def _execute_run_mvp(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+        return BacktestRunMvpResponse(
+            engine_version=ENGINE_VERSION,
+            strategy_id=body.strategy_id,
+            strategy_version=body.strategy_version,
+            assumptions=assumptions,
+            result=MaCrossBacktestResponse(**payload),
+            scan_result=None,
+        )
+
+    if body.strategy_id == STRATEGY_ID_BUY_HOLD:
+        p = BuyHoldRunParamsBody.model_validate(body.params)
+        try:
+            payload, assumptions = await execute_buy_hold_single(
+                session,
+                code=p.code.strip(),
+                limit=p.limit,
+                start_date=p.start_date,
+                end_date=p.end_date,
+                commission_rate=p.commission_rate,
+                slippage_rate=p.slippage_rate,
+                benchmark_code=p.benchmark_code,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         return BacktestRunMvpResponse(
             engine_version=ENGINE_VERSION,
             strategy_id=body.strategy_id,
@@ -550,6 +594,19 @@ def _backtest_engine_catalog_payload() -> BacktestEngineCatalogResponse:
                 response_shape="scan_result",
                 archive_kind="ma_cross_scan",
                 get_equivalent_paths=["/api/backtest/ma-cross/scan"],
+            ),
+            BacktestStrategyCatalogEntry(
+                strategy_id=STRATEGY_ID_BUY_HOLD,
+                strategy_version="1",
+                title="买入持有 · 单标的",
+                description=(
+                    "params 与 GET /api/backtest/buy-hold 查询参数同义（code, limit, "
+                    "start_date, end_date, commission_rate, slippage_rate, benchmark_code）；"
+                    "无 fast/slow；响应中 fast_period/slow_period 为占位。"
+                ),
+                response_shape="result",
+                archive_kind="buy_hold_single",
+                get_equivalent_paths=["/api/backtest/buy-hold"],
             ),
         ],
     )
@@ -772,6 +829,58 @@ async def ma_cross_backtest(
     return MaCrossBacktestResponse(**body)
 
 
+@router.get("/buy-hold", response_model=MaCrossBacktestResponse)
+async def buy_hold_backtest(
+    code: str = Query(..., description="标的代码，如 sh.000001"),
+    start_date: date | None = Query(None, description="起始日（含）"),
+    end_date: date | None = Query(None, description="结束日（含）"),
+    limit: int = Query(500, ge=30, le=5000, description="最多使用多少根日 K（从新到旧取，再按时间正序回测）"),
+    commission_rate: float = Query(
+        0.0,
+        ge=0.0,
+        le=0.05,
+        description="单边手续费率；买入持有用双边一次近似，见 assumptions / note",
+    ),
+    slippage_rate: float = Query(
+        0.0,
+        ge=0.0,
+        le=0.05,
+        description="滑点率（与手续费同口径）",
+    ),
+    benchmark_code: str | None = Query(
+        None,
+        description=(
+            "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS（标的交易日对齐、仅前向填充）。"
+            "不传则对标的自身日收益。无该基准日 K 时 400。"
+        ),
+    ),
+    session: AsyncSession = Depends(get_session),
+):
+    if commission_rate + slippage_rate > 0.08:
+        raise HTTPException(
+            status_code=400,
+            detail="commission_rate 与 slippage_rate 之和勿超过 0.08",
+        )
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+
+    try:
+        body, _assumptions = await execute_buy_hold_single(
+            session,
+            code=code.strip(),
+            limit=limit,
+            start_date=start_date,
+            end_date=end_date,
+            commission_rate=commission_rate,
+            slippage_rate=slippage_rate,
+            benchmark_code=benchmark_code,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return MaCrossBacktestResponse(**body)
+
+
 @router.post(
     "/jobs/{job_id}/cancel",
     response_model=BacktestJobCancelResponse,
@@ -879,8 +988,8 @@ async def backtest_run_mvp(
     ),
 ):
     """
-    通用回测 MVP：与 GET /api/backtest/ma-cross* 共用内核，额外返回 assumptions / engine_version。
-    支持 strategy_id=`ma_cross`（单标的）或 `ma_cross_scan`（批量），strategy_version=`1`。
+    通用回测 MVP：与 GET /api/backtest/ma-cross* / buy-hold 共用内核，额外返回 assumptions / engine_version。
+    支持 strategy_id=`ma_cross`（单标的）、`buy_hold`（买入持有单标的）或 `ma_cross_scan`（批量），strategy_version=`1`。
 
     默认同步 200；**``?async=1``** 时返回 **202** 及 ``job_id``，由 **GET /api/backtest/jobs/{job_id}** 轮询
     ``pending`` / ``running`` / ``completed`` / ``failed`` / ``cancelled``（取消）。
@@ -905,7 +1014,7 @@ async def backtest_run_mvp(
 
 
 class BacktestRunCreate(BaseModel):
-    kind: Literal["ma_cross_single", "ma_cross_scan"]
+    kind: Literal["ma_cross_single", "ma_cross_scan", "buy_hold_single"]
     request_params: dict[str, Any] = Field(default_factory=dict)
     response_payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -961,7 +1070,7 @@ async def backtest_runs_list(
     session: AsyncSession = Depends(get_session),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    kind: Literal["ma_cross_single", "ma_cross_scan"] | None = Query(
+    kind: Literal["ma_cross_single", "ma_cross_scan", "buy_hold_single"] | None = Query(
         None, description="仅列出该类型的存档；不传则全部"
     ),
     q: str | None = Query(None, max_length=120, description="摘要子串过滤（LIKE %q%）"),

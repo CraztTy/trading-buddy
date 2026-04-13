@@ -16,6 +16,9 @@ from .models import StockInfoModel, DailyKlineModel, SectorInfoModel
 
 logger = get_logger("repository")
 
+# SQLite 默认 SQLITE_MAX_VARIABLE_NUMBER≈999；IN 占位 + WHERE 留余量
+_KLINE_IN_CHUNK = 400
+
 
 def _stock_type_to_int(st: StockType) -> int:
     return {
@@ -388,7 +391,109 @@ class KlineRepository:
         stmt = select(func.max(DailyKlineModel.trade_date))
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
-    
+
+    async def list_codes_on_trade_date(
+        self, trade_date: date, *, max_codes: int | None = None
+    ) -> list[str]:
+        """在指定 ``trade_date`` 有日 K 的 ``code`` 列表（按 ``code`` 升序）。
+
+        ``max_codes`` 为 ``None`` 或 **≤0** 时不限制条数；**>0** 时等价 **LIMIT**。
+        """
+        stmt = (
+            select(DailyKlineModel.code)
+            .where(DailyKlineModel.trade_date == trade_date)
+            .order_by(DailyKlineModel.code)
+        )
+        if max_codes is not None and max_codes > 0:
+            stmt = stmt.limit(max_codes)
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
+
+    async def get_daily_last_n_bars_per_code(
+        self,
+        codes: Sequence[str],
+        end_date: date,
+        *,
+        max_bars: int,
+    ) -> dict[str, list[KLine]]:
+        """一次（或多次分块 **IN**）查询：各 ``code`` 在 ``trade_date <= end_date`` 下最近 ``max_bars`` 根日 K（**时间升序**）。
+
+        依赖 **ROW_NUMBER** 窗口（MySQL **8+**、SQLite **3.25+**）。无数据的 ``code`` 不出现在 dict。
+        """
+        uniq = list(dict.fromkeys(c for c in codes if c))
+        if not uniq or max_bars < 1:
+            return {}
+
+        out: dict[str, list[KLine]] = {}
+        for i in range(0, len(uniq), _KLINE_IN_CHUNK):
+            chunk = uniq[i : i + _KLINE_IN_CHUNK]
+            part = await self._get_daily_last_n_bars_per_code_chunk(
+                chunk, end_date, max_bars=max_bars
+            )
+            out.update(part)
+        return out
+
+    async def _get_daily_last_n_bars_per_code_chunk(
+        self,
+        codes: list[str],
+        end_date: date,
+        *,
+        max_bars: int,
+    ) -> dict[str, list[KLine]]:
+        _rn = (
+            func.row_number()
+            .over(
+                partition_by=DailyKlineModel.code,
+                order_by=DailyKlineModel.trade_date.desc(),
+            )
+            .label("_rn")
+        )
+        inner = (
+            select(
+                DailyKlineModel.code,
+                DailyKlineModel.trade_date,
+                DailyKlineModel.open,
+                DailyKlineModel.high,
+                DailyKlineModel.low,
+                DailyKlineModel.close,
+                DailyKlineModel.volume,
+                DailyKlineModel.amount,
+                DailyKlineModel.turnover_rate,
+                DailyKlineModel.change_pct,
+                _rn,
+            )
+            .where(
+                DailyKlineModel.code.in_(codes),
+                DailyKlineModel.trade_date <= end_date,
+            )
+        ).subquery()
+        stmt = (
+            select(inner)
+            .where(inner.c._rn <= max_bars)
+            .order_by(inner.c.code, inner.c.trade_date)
+        )
+        result = await self._session.execute(stmt)
+        out: dict[str, list[KLine]] = {}
+        for row in result.mappings():
+            kline = KLine(
+                code=row["code"],
+                trade_date=row["trade_date"],
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=row["volume"] or 0,
+                amount=float(row["amount"]) if row["amount"] else 0.0,
+                turnover_rate=float(row["turnover_rate"])
+                if row["turnover_rate"] is not None
+                else None,
+                pct_change=float(row["change_pct"])
+                if row["change_pct"] is not None
+                else None,
+            )
+            out.setdefault(kline.code, []).append(kline)
+        return out
+
     async def get_top_gainers(
         self, trade_date: date | None, limit: int = 10
     ) -> list[KLine]:

@@ -15,6 +15,14 @@ if (useChromeChannel) {
   process.stdout.write("[playwright] using channel=chrome (set PLAYWRIGHT_CHANNEL=chromium to force bundled)\n");
 }
 
+/** 本机 Windows 多 worker 易触发「browser closed」类噪声；可用 PLAYWRIGHT_WORKERS 覆盖。 */
+const playwrightWorkers =
+  process.env.PLAYWRIGHT_WORKERS != null && process.env.PLAYWRIGHT_WORKERS !== ""
+    ? Number(process.env.PLAYWRIGHT_WORKERS)
+    : process.platform === "win32" && process.env.CI !== "true"
+      ? 1
+      : undefined;
+
 export default defineConfig({
   globalSetup: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
@@ -23,6 +31,9 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 20_000 },
   fullyParallel: true,
+  ...(playwrightWorkers != null && !Number.isNaN(playwrightWorkers)
+    ? { workers: playwrightWorkers }
+    : {}),
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   // early-reporter：用例收集完、起浏览器前打一行；line：逐条用例输出

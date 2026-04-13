@@ -38,7 +38,7 @@ python scripts\fetch_trade_calendar.py --start 2020-01-01 --end 2025-12-31
 
 ### 云库「表齐 + verify_stack」验收（可选）
 
-若 **`python scripts\verify_stack.py`** 报错 **`trade_calendar` 表不存在**（或 MySQL 其它缺表）：先 **`python scripts\init_db.py`**，再按上一段灌 **`trade_calendar`**，然后**不加** **`--skip-db`** 重跑 **`verify_stack.py`**，应打印 **`stock_info` / `daily_kline` / `trade_calendar`** 行数，且 Redis、API 冒烟、catalog 契约与回测异步冒烟均为 **`[OK]`**。若库表未齐又需先验 API，可临时 **`python scripts\verify_stack.py --skip-db`**。
+若 **`python scripts\verify_stack.py`** 报错 **`trade_calendar` 表不存在**（或 MySQL 其它缺表）：先 **`python scripts\init_db.py`**，再按上一段灌 **`trade_calendar`**，然后**不加** **`--skip-db`** 重跑 **`verify_stack.py`**，应打印 **`stock_info` / `daily_kline` / `trade_calendar`** 行数，且 Redis、API 冒烟、catalog 契约、**因子截面**（**`GET /api/factors/cross-section`**，依赖 **overview** 首条指数 **`date`**；无指数数据时为 **`[SKIP]`**）与回测异步冒烟均为 **`[OK]`**（或截面为 **`[SKIP]`**）。若库表未齐又需先验 API，可临时 **`python scripts\verify_stack.py --skip-db`**。
 
 ## 第三步：拉取初始数据
 
@@ -128,11 +128,12 @@ npm run dev
 
 ## 验证是否正常运行
 
-- 浏览器打开 Vue 看板（上一步的 `npm run dev` 地址）；侧栏 **策略回测** 为双均线单标的 / 批量扫描（可选日期区间、手续费、**基准代码** 用于 β/α）。
+- 浏览器打开 Vue 看板（上一步的 `npm run dev` 地址）；侧栏 **策略回测** 为单标的（**双均线** 或 **买入持有**）/ 批量扫描（可选日期区间、手续费、**基准代码** 用于 β/α）。
 - 或访问 API：http://127.0.0.1:8000/docs  
   - `GET /api/dashboard/overview` — 指数概览  
   - `GET /api/klines/analysis/sh.000001` — 上证指数 K 线分析（路径以实际路由为准，可在 Docs 中查看）  
-  - `GET /api/backtest/ma-cross` / `GET /api/backtest/ma-cross/scan` — 最小双均线回测（详见根目录 `README.md`「最小回测」）
+  - `GET /api/backtest/ma-cross` / `GET /api/backtest/ma-cross/scan` — 双均线单标的 / 批量扫描（详见根目录 `README.md`「最小回测」）  
+  - `GET /api/backtest/buy-hold` — 买入持有单标的（无 `fast`/`slow`；与 `POST /api/backtest/run` 的 `strategy_id=buy_hold` 同核）
 
 **健康与就绪（运维 / 负载均衡）：**
 
@@ -146,13 +147,25 @@ cd C:\Users\Administrator\Desktop\trading-buddy
 python scripts\verify_stack.py
 ```
 
+**截面因子 CSV（可选，需 `daily_kline` 已入库）：** 与 **`docs/FACTORS.md`** 草案一致；默认 **`KlineRepository.get_daily_last_n_bars_per_code`**（**ROW_NUMBER**，需 **MySQL 8+** / **SQLite 3.25+**）；老库加 **`--legacy-per-code-fetch`**（并调 **`--max-concurrent`**），或先试默认批量并加 **`--auto-legacy-fallback`**。写入 **`experiments\<实验>\outputs\`** 时根 **`.gitignore`** 已忽略 **`experiments/**/outputs/`**。
+
+```powershell
+cd C:\Users\Administrator\Desktop\trading-buddy
+python scripts\export_factor_cross_section.py --as-of-date 2024-06-28 --dry-run
+```
+
+**`--dry-run`** 只统计当日有 K 的标的数；去掉后加 **`-o`** 写 CSV（列含 **`close`**、**`volume`**、**`amount`**、**`turnover_rate`**、**`pct_change`**、**`ret_{N}d`** 等）。详见脚本顶部注释与 **`experiments/README.md`**。
+
+**截面 HTTP（只读 JSON）：** **`GET /api/factors/cross-section`** 见 **`docs/FACTORS.md`**。启动 Vue 看板后，「行情看板」涨跌侧栏底部与「因子预览」页眉可新标签打开该接口（**`as_of_date`** 由 **`GET /api/dashboard/overview`** 首条指数 **`date`** 填入；默认 **period=20**、**max_codes=100**；实现 **`frontend/src/composables/crossSectionOverviewLink.js`**）。
+
 自动化测试（不跑真实拉数）：
 
 ```powershell
 python -m pytest -q
+python -m pytest tests/test_trend_v0_compare_helpers.py tests/test_cli_iso_date_scripts.py tests/test_export_factor_cross_section.py tests/test_factors_cross_section.py -q
 ```
 
-（`pytest.ini` 限定只跑 `tests/`；**`tests/test_cli_fetch.py`** 含 **`feed_dashboard.py --dry-run`** 等对一键喂数步骤的契约断言，不连库。手工 DB 冒烟见 `scripts/smoke_*.py` 与根 `README.md`「测试」。）
+（`pytest.ini` 限定只跑 `tests/`；**`tests/test_cli_fetch.py`** 含 **`feed_dashboard.py --dry-run`** 等对一键喂数步骤的契约断言，不连库；**`test_trend_v0_compare_helpers`**、**`test_cli_iso_date_scripts`** 无 DB——后者覆盖 **`src/common/cli_iso_date`** 及 **`run_backtest` / `scan_backtest` / 两条 `trend_v0_*`**、**`export_factor_cross_section`** 脚本的顶层加载；**`tests/test_export_factor_cross_section.py`** 在临时 SQLite 上验 **`export_factor_cross_section`** 批量 CSV、**`--codes-file`**（含 **`#`** 注释）、**`--dry-run`**、**legacy**、**`--auto-legacy-fallback`**，以及批量失败且未 fallback 时 **退出码 1**。**`tests/test_factors_cross_section.py`** 验 **`compute_cross_section_row`** 与 **`pct_change_n`** 末点一致。手工 DB 冒烟见 `scripts/smoke_*.py` 与根 `README.md`「测试」。**研究实验目录约定**见 **`experiments/README.md`**；CLI 日期与区间校验见 **`README.md`**「个股趋势 v0 脚本」段。）
 
 **前端 Playwright（主视图导航、涨跌/成交额、股票列表、回测等；请求由 E2E mock，不依赖后端 API）：** 另需 Node 20+。`cd frontend` 后 `npm ci`；终端一 `npm run e2e:preview`；终端二（首次）`npx playwright install chromium`，再 `npm run test:e2e`。详见根目录 `README.md`「测试」。
 
@@ -197,9 +210,9 @@ python scripts\fetch_data.py --mode daily
 
 也可使用 `scripts\scheduler.py` 在后台按固定时间触发（详见脚本内注释）；生产环境更推荐用系统计划任务直接执行上述命令之一。
 
-## V1.x 发布与归档（当前 **1.1.1**）
+## V1.x 发布与归档（当前 **1.2.0**）
 
-在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.1.1**）：
+在**拉数任务已全部跑完**（或日常增量已稳定）、且**测试通过**后，将当前代码树标记为发布版本（示例 **v1.2.0**）：
 
 ```powershell
 cd C:\Users\Administrator\Desktop\trading-buddy
@@ -216,14 +229,14 @@ python scripts\verify_stack.py
 打**附注标签**并推送远程（按需）：
 
 ```powershell
-git tag -a v1.1.1 -m "Trading Buddy V1.1.1: 策略 catalog 对齐单测、OpenAPI cancel 契约、E2E 异步取消、CI workflow_dispatch、新策略检查清单"
-git push origin v1.1.1
+git tag -a v1.2.0 -m "Trading Buddy V1.2.0: 因子截面 HTTP/CLI、看板链、verify_stack 烟囱、阶段 B 文档与 CHANGELOG（详见 CHANGELOG.md）"
+git push origin v1.2.0
 ```
 
 本地生成**源码归档包**（不依赖远程）：
 
 ```powershell
-git archive --format=zip -o trading-buddy-v1.1.1.zip v1.1.1
+git archive --format=zip -o trading-buddy-v1.2.0.zip v1.2.0
 ```
 
 版本号与 OpenAPI、`GET /`、`GET /health` 中的 `app_version` 一致，定义在 `src/common/__init__.py` 的 `__version__`。
@@ -236,7 +249,7 @@ V1 功能已就绪：
 - [x] 日K线数据
 - [x] 实时行情
 - [x] Vue 看板（Meridian）
-- [x] 双均线日线最小回测（HTTP 扫描、CSV、CLI；β/α 可选相对指数基准）
+- [x] 双均线与买入持有日线最小回测（HTTP / CSV / CLI **`scripts/run_backtest.py`** 含 **`--buy-hold`**；β/α 可选相对指数基准）
 
 V2 规划中：
 

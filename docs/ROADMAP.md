@@ -9,6 +9,8 @@
 
 将「最好」落成六类指标；**每个里程碑须能对照其中至少一类**说明贡献。
 
+**专项 backlog（个股趋势 v0）**：与阶段 A–C 对齐的可执行任务拆分见 **[TREND_ITERATION_BACKLOG.md](TREND_ITERATION_BACKLOG.md)**（小步迭代、守底线清单、束 A–E）。默认池、参数与基线存档步骤见 **[TREND_V0_SPEC.md](TREND_V0_SPEC.md)**。
+
 | 维度 | 含义 |
 |------|------|
 | **正确性** | 行情 / 复权 / 停牌 / 除权除息口径一致；回测、纸交易与（未来）实盘撮合规则可对齐解释。 |
@@ -31,7 +33,7 @@
 - **多数据源抽象**：在现有数据源之上抽象 provider 接口，为付费源 / Level2 留切换点。
 - **观测与运维**：结构化日志、健康检查；任务运行记录（耗时、行数）与简单告警钩子。
 
-**产出物**：数据质量报告脚本、口径文档（**[DATA_AND_ADJUSTMENT.md](DATA_AND_ADJUSTMENT.md)**）、CI 门禁（测试 + 前端构建 + E2E）、核心仓储与 HTTP 集成测覆盖。
+**产出物**：数据质量报告脚本、口径文档（**[DATA_AND_ADJUSTMENT.md](DATA_AND_ADJUSTMENT.md)**）、**[SLOW_QUERY_AND_INDEXES.md](SLOW_QUERY_AND_INDEXES.md)**（`daily_kline` 索引与热点查询）、CI 门禁（测试 + 前端构建 + E2E）、核心仓储与 HTTP 集成测覆盖。
 
 ---
 
@@ -44,6 +46,8 @@
 - **研究工作流**：Notebook / 脚本与 API 对齐的「可复现实验包」（配置 + 数据快照哈希 + 结果哈希）。
 
 **产出物**：策略注册表、最小因子包（见 **`docs/FACTORS.md`** 与 **`src/factors/`**）、实验复现说明（可放在本目录或 README 引用）。
+
+**对照与缺口（阶段 B）**：已落地与「尚未代码化」的下一小步见 **[PHASE_B_GAP_AND_NEXT.md](PHASE_B_GAP_AND_NEXT.md)**。舆情 / 叙事平行轨见 **[NARRATIVE_TRACK.md](NARRATIVE_TRACK.md)**（**`track:narrative`**，与阶段 B 验收独立）。
 
 ---
 
@@ -102,6 +106,7 @@
 | **安全** | 密钥管理、最小权限、依赖与供应链扫描。 |
 | **合规与披露** | 用户协议、风险提示、日志留存策略；不做违规荐股自动化。 |
 | **文档** | 「口径一页纸」+ API 与数据字典与代码同步更新。 |
+| **舆情 / 叙事（可选）** | 标签 **`track:narrative`**；边界与分期见 **[NARRATIVE_TRACK.md](NARRATIVE_TRACK.md)**；与「趋势轨」验收分离。 |
 
 ---
 
@@ -119,7 +124,7 @@
 | 1 | 门禁固定 | **已完成** | `.github/workflows/ci.yml`：`python -m pytest -q` 全量 + `frontend` 下 `npm run build` 与 **Playwright**（`npm run test:e2e`）；新 API 须有 `tests/test_*_api_http.py` 类单测；**`tests/test_cli_fetch.py`** 含 **`feed_dashboard --dry-run`** 步骤链契约。本地流程见根目录 `README.md`「测试」。 |
 | 2 | 数据质量 | **已完成（MVP）** | 脚本 + 库内报告 + **`docs/DATA_AND_ADJUSTMENT.md`**（含 **stock_info 中尚无日 K 的标的数**）；按交易日历的「空洞率」、全市场缺失率等为增强项，另排期。 |
 | 3 | 策略契约 | **已完成（MVP）** | Catalog 含 **`backtest_run`**（与 **`POST /api/backtest/run`** 的 `params_schema` / **`archive_kind`** 对齐）、**`signal_params`**、**`backtest_archive_kinds`**；**`backtest_run.archive_kind`** 与 **`GET /api/backtest/catalog`** 逐条一致（**`tests/test_strategies_api_http.py`**）；统一信号 **`POST /api/strategies/signal`** 已接 HTTP 测（含 **`ma_cross_scan`** **400**）。开发者说明与双 Catalog 表见 **`docs/STRATEGY_CONTRACT.md`**；看板 **策略回测** 顶栏 **策略目录 / 试算信号** 已加。 |
-| 4 | 通用回测 | **进行中（MVP+）** | **`docs/GENERIC_BACKTEST_DRAFT.md`**（含 **API 契约：异步 job**、**新策略接入检查清单**）；**`POST /api/backtest/run`**（`ma_cross` / `ma_cross_scan`）+ **`?async=1`**、**`GET /api/backtest/jobs/{job_id}`**、**`POST …/jobs/{id}/cancel`**（**`pending`**）、**`BACKTEST_ASYNC_JOB_STUCK_SEC`** 下 **GET 回收陈旧 `running`→`failed`**；**Redis 启用**时默认 **Redis 列表队列 + JSON 任务记录**（**`BACKTEST_ASYNC_JOB_STORE`** / **`BACKTEST_ASYNC_JOB_TTL_SEC`**）；请求体**前向占位**；**`GET /api/backtest/catalog`** 含 **`async_*`** 与 **`async_job_persistence`**；**`src/backtest/runner/`**、**`async_job_backend.py`**；Vue **策略回测**；**`scripts/verify_stack.py`**（含 cancel 404 冒烟）；**`tests/test_openapi_contract.py`** 断言 **OpenAPI** 含 **`POST …/jobs/{job_id}/cancel`**。 |
+| 4 | 通用回测 | **进行中（MVP+）** | **`docs/GENERIC_BACKTEST_DRAFT.md`**（含 **API 契约：异步 job**、**新策略接入检查清单**）；**`POST /api/backtest/run`**（`ma_cross` / **`buy_hold`** / `ma_cross_scan`）+ **`?async=1`**、**`GET /api/backtest/jobs/{job_id}`**、**`POST …/jobs/{id}/cancel`**（**`pending`**）、**`BACKTEST_ASYNC_JOB_STUCK_SEC`** 下 **GET 回收陈旧 `running`→`failed`**；**Redis 启用**时默认 **Redis 列表队列 + JSON 任务记录**（**`BACKTEST_ASYNC_JOB_STORE`** / **`BACKTEST_ASYNC_JOB_TTL_SEC`**）；请求体**前向占位**；**`GET /api/backtest/catalog`** 含 **`async_*`** 与 **`async_job_persistence`**；**`src/backtest/runner/`**、**`async_job_backend.py`**；Vue **策略回测**（单标的策略与存档 **`buy_hold_single`**）；**`scripts/verify_stack.py`**（含 cancel 404 冒烟）；**`tests/test_openapi_contract.py`** 断言 **OpenAPI** 含 **`POST …/jobs/{job_id}/cancel`**。 |
 
 ### 当前进度（随迭代更新）
 
@@ -143,3 +148,6 @@
 ## 修订
 
 本路线图随版本滚动更新；重大方向变更应更新本文件并保留简短变更说明（可写在 git commit message 与 release note）。
+
+- **2026-04-13**：阶段 A「产出物」补充 **[SLOW_QUERY_AND_INDEXES.md](SLOW_QUERY_AND_INDEXES.md)**（`daily_kline` 索引与热点查询清单）。
+- **2026-04-13**：阶段 B 链 **[PHASE_B_GAP_AND_NEXT.md](PHASE_B_GAP_AND_NEXT.md)**；并行轨增加 **舆情/叙事** 行；新增 **[NARRATIVE_TRACK.md](NARRATIVE_TRACK.md)**。

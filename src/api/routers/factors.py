@@ -19,6 +19,7 @@ from src.factors import (
     bollinger_bands,
     donchian,
     cci,
+    compute_cross_section_row,
     dmi_adx_wilder,
     diff_n,
     ema,
@@ -113,6 +114,30 @@ class FactorCatalogResponse(BaseModel):
     preview_path: str = "/api/factors/preview"
     ops: list[FactorOpCatalogEntry]
     doc_ref: str = "docs/FACTORS.md"
+
+
+class FactorCrossSectionRow(BaseModel):
+    code: str
+    close: float
+    volume: int
+    amount: float
+    turnover_rate: float | None = None
+    pct_change: float | None = Field(
+        None, description="当日涨跌幅 %（入库 ``change_pct``）"
+    )
+    ret_pct: float | None = Field(
+        None, description="N 期简单收益 %（``pct_change_n`` 在截面日上的值）"
+    )
+    meta_bars: int = Field(..., description="参与计算 ``ret_pct`` 的日 K 根数（≤ period+1）")
+
+
+class FactorCrossSectionResponse(BaseModel):
+    as_of_trade_date: date
+    period: int
+    max_codes_requested: int
+    row_count: int
+    doc_ref: str = "docs/FACTORS.md"
+    rows: list[FactorCrossSectionRow]
 
 
 def _factor_ops_catalog_entries() -> list[FactorOpCatalogEntry]:
@@ -480,6 +505,63 @@ async def _factor_preview_compute(
 async def factors_ops_catalog():
     """列出因子预览 API 支持的算子及 window/column 约定，供 UI 与外部脚本发现。"""
     return FactorCatalogResponse(ops=_factor_ops_catalog_entries())
+
+
+@router.get("/cross-section", response_model=FactorCrossSectionResponse)
+async def factor_cross_section(
+    as_of_date: date = Query(..., description="截面交易日（``daily_kline.trade_date``）"),
+    period: int = Query(20, ge=1, le=250, description="``pct_change_n`` 的 N"),
+    max_codes: int = Query(
+        100,
+        ge=1,
+        le=500,
+        description="从该日有 K 的 code 中取前多少个（按 code 升序；与导出脚本 ``--max-codes`` 语义一致）",
+    ),
+    session: AsyncSession = Depends(get_session),
+):
+    """全市场（截断）截面：价量 + N 期收益；不落库。依赖 **ROW_NUMBER** 批量拉数（与 ``KlineRepository.get_daily_last_n_bars_per_code`` 一致）。"""
+    repo = KlineRepository(session)
+    codes = await repo.list_codes_on_trade_date(as_of_date, max_codes=max_codes)
+    if not codes:
+        raise HTTPException(
+            status_code=400,
+            detail="该日无日 K 或 max_codes 截断为空",
+        )
+    try:
+        windows = await repo.get_daily_last_n_bars_per_code(
+            codes, as_of_date, max_bars=period + 1
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"批量拉取日 K 失败（需 MySQL 8+ / SQLite 3.25+ 窗口函数；可改用脚本 "
+            f"--legacy-per-code-fetch）：{e!r}",
+        ) from e
+
+    rows: list[FactorCrossSectionRow] = []
+    for code in codes:
+        hit = compute_cross_section_row(windows.get(code, []), as_of_date, period)
+        if hit is None:
+            continue
+        rows.append(
+            FactorCrossSectionRow(
+                code=hit.code,
+                close=hit.close,
+                volume=hit.volume,
+                amount=hit.amount,
+                turnover_rate=hit.turnover_rate,
+                pct_change=hit.pct_change,
+                ret_pct=hit.ret_pct,
+                meta_bars=hit.meta_bars,
+            )
+        )
+    return FactorCrossSectionResponse(
+        as_of_trade_date=as_of_date,
+        period=period,
+        max_codes_requested=max_codes,
+        row_count=len(rows),
+        rows=rows,
+    )
 
 
 @router.get("/preview")

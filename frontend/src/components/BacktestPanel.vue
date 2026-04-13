@@ -10,6 +10,8 @@ const ZIP_EXPORT_MAX = 50;
 const LS_RUNS_LIMIT_KEY = "tb_backtest_runs_limit";
 /** 策略回测「异步 job」勾选；E2E 会清掉以保证默认同步 */
 const LS_MVP_ASYNC_KEY = "tb_backtest_mvp_async";
+/** 单标的页：双均线 vs 买入持有；刷新后保留 */
+const LS_SINGLE_RUN_STRATEGY_KEY = "tb_backtest_single_strategy";
 
 /** 异步 202 后至轮询结束前的 job_id，用于「取消排队」 */
 const mvpAsyncInFlightJobId = ref("");
@@ -34,6 +36,16 @@ function readStoredMvpAsync() {
   }
 }
 
+function readStoredSingleRunStrategy() {
+  try {
+    const v = localStorage.getItem(LS_SINGLE_RUN_STRATEGY_KEY);
+    if (v === "buy_hold" || v === "ma_cross") return v;
+  } catch {
+    /* ignore */
+  }
+  return "ma_cross";
+}
+
 const props = defineProps({
   code: { type: String, default: "sh.000001" },
 });
@@ -48,6 +60,8 @@ function emitOpenPaper() {
 
 /** 单标的 | 批量扫描 */
 const innerTab = ref("single");
+/** 单标的页：POST /run 的 strategy_id（批量扫描仍为 ma_cross_scan） */
+const singleRunStrategy = ref(readStoredSingleRunStrategy());
 
 const fast = ref(5);
 const slow = ref(20);
@@ -134,6 +148,7 @@ const archiveKindFilterOptions = computed(() => {
   if (!b?.strategies?.length) {
     return [
       { value: "ma_cross_single", label: "单标的（存档 kind=ma_cross_single）" },
+      { value: "buy_hold_single", label: "买入持有（存档 kind=buy_hold_single）" },
       { value: "ma_cross_scan", label: "批量扫描（存档 kind=ma_cross_scan）" },
     ];
   }
@@ -186,7 +201,7 @@ const saveRunTip = ref("");
 const runHistory = ref([]);
 const runHistoryTotal = ref(0);
 const runHistoryLoading = ref(false);
-/** 存档列表筛选：'' 全部 | ma_cross_single | ma_cross_scan */
+/** 存档列表筛选：'' 全部 | ma_cross_single | buy_hold_single | ma_cross_scan */
 const runHistoryKindFilter = ref("");
 /** 每页条数（与 GET /api/backtest/runs limit 一致；写入 localStorage） */
 const runHistoryLimit = ref(readStoredRunHistoryLimit());
@@ -424,7 +439,8 @@ function downloadSingleJson() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `ma_cross_${(props.code || "code").replace(/[^a-z0-9.]/gi, "_")}_${Date.now()}.json`;
+  const tag = singleRunStrategy.value === "buy_hold" ? "buy_hold" : "ma_cross";
+  a.download = `${tag}_${(props.code || "code").replace(/[^a-z0-9.]/gi, "_")}_${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -450,17 +466,17 @@ function cloneJson(obj) {
 }
 
 /** 与 POST /api/backtest/run（strategy_id=ma_cross）的 params 一致 */
-function singleRunParamsObject(code) {
+function maCrossSingleRunParamsObject(code) {
   const qp = Object.fromEntries(commonParams().entries());
-  const fast = parseInt(qp.fast, 10);
-  const slow = parseInt(qp.slow, 10);
+  const fastN = parseInt(qp.fast, 10);
+  const slowN = parseInt(qp.slow, 10);
   const lim = parseInt(qp.limit, 10);
   const commission_rate = Number(qp.commission_rate);
   const slippage_rate = Number(qp.slippage_rate);
   const out = {
     code: String(code || "").trim(),
-    fast,
-    slow,
+    fast: fastN,
+    slow: slowN,
     limit: lim,
     commission_rate,
     slippage_rate,
@@ -474,11 +490,42 @@ function singleRunParamsObject(code) {
   return out;
 }
 
+/** 与 POST /api/backtest/run（strategy_id=buy_hold）的 params 一致（无 fast/slow） */
+function buyHoldSingleRunParamsObject(code) {
+  const lim = Math.max(30, Math.min(5000, Number(limit.value) || 500));
+  const commission_rate = feeRate.value;
+  const slippage_rate = slipRate.value;
+  const out = {
+    code: String(code || "").trim(),
+    limit: lim,
+    commission_rate,
+    slippage_rate,
+  };
+  const s = (tradeStartDate.value || "").trim();
+  const e = (tradeEndDate.value || "").trim();
+  if (s) out.start_date = s;
+  if (e) out.end_date = e;
+  const b = (benchmarkCode.value || "").trim().toLowerCase();
+  if (b) out.benchmark_code = b;
+  return out;
+}
+
+function singleRunArchiveKind() {
+  return singleRunStrategy.value === "buy_hold" ? "buy_hold_single" : "ma_cross_single";
+}
+
 function singleRunMvpEnvelope(code) {
+  if (singleRunStrategy.value === "buy_hold") {
+    return {
+      strategy_id: "buy_hold",
+      strategy_version: "1",
+      params: buyHoldSingleRunParamsObject(code),
+    };
+  }
   return {
     strategy_id: "ma_cross",
     strategy_version: "1",
-    params: singleRunParamsObject(code),
+    params: maCrossSingleRunParamsObject(code),
   };
 }
 
@@ -687,7 +734,7 @@ async function loadRunHistory({ resetPage = false } = {}) {
       offset: String(runHistoryOffset.value),
     });
     const k = (runHistoryKindFilter.value || "").trim();
-    if (k === "ma_cross_single" || k === "ma_cross_scan") params.set("kind", k);
+    if (k) params.set("kind", k);
     const sq = (runHistorySearchApplied.value || "").trim();
     if (sq) params.set("q", sq);
     const data = await fetchJson(`backtest/runs?${params.toString()}`);
@@ -948,7 +995,7 @@ async function runBacktest() {
       throw new Error("响应缺少 result");
     }
     result.value = r;
-    await persistRun("ma_cross_single", envelope, cloneJson(r));
+    await persistRun(singleRunArchiveKind(), envelope, cloneJson(r));
   } catch (e) {
     error.value = e?.message || "请求失败";
   } finally {
@@ -1008,6 +1055,11 @@ function signalQueryParams() {
 async function loadSignalSnapshot() {
   const c = (props.code || "").trim();
   if (!c || innerTab.value !== "single") {
+    signalSnap.value = null;
+    signalErr.value = "";
+    return;
+  }
+  if (singleRunStrategy.value === "buy_hold") {
     signalSnap.value = null;
     signalErr.value = "";
     return;
@@ -1208,6 +1260,7 @@ function pickWlForBacktest(code) {
 watch(
   () => [
     innerTab.value,
+    singleRunStrategy.value,
     props.code,
     fast.value,
     slow.value,
@@ -1220,6 +1273,18 @@ watch(
   },
   { immediate: true }
 );
+
+watch(singleRunStrategy, (v) => {
+  result.value = null;
+  error.value = "";
+  try {
+    if (v === "buy_hold" || v === "ma_cross") {
+      localStorage.setItem(LS_SINGLE_RUN_STRATEGY_KEY, v);
+    }
+  } catch {
+    /* ignore */
+  }
+});
 
 watch(runHistoryKindFilter, () => {
   runHistoryOffset.value = 0;
@@ -1375,11 +1440,37 @@ onMounted(() => {
     <p v-if="mvpAsyncCancelMsg" class="mono mvp-async-cancel-msg" role="status">{{ mvpAsyncCancelMsg }}</p>
 
     <template v-if="innerTab === 'single'">
+      <div class="single-strategy-pick mono" data-testid="single-run-strategy-row">
+        <span class="single-strategy-pick-lbl">单标的策略</span>
+        <label class="single-strategy-opt">
+          <input
+            v-model="singleRunStrategy"
+            type="radio"
+            value="ma_cross"
+            data-testid="single-run-strategy-ma-cross"
+          />
+          <span>双均线（<span class="mono">ma_cross</span>）</span>
+        </label>
+        <label class="single-strategy-opt">
+          <input
+            v-model="singleRunStrategy"
+            type="radio"
+            value="buy_hold"
+            data-testid="single-run-strategy-buy-hold"
+          />
+          <span>买入持有（<span class="mono">buy_hold</span>）</span>
+        </label>
+      </div>
       <header class="hd">
         <div>
           <p class="eyebrow">策略回测</p>
-          <h2 class="h2">双均线（日线）</h2>
-          <p class="sub mono">
+          <h2 class="h2">{{ singleRunStrategy === "buy_hold" ? "买入持有（日线）" : "双均线（日线）" }}</h2>
+          <p v-if="singleRunStrategy === 'buy_hold'" class="sub mono">
+            标的 {{ (code || "—").trim() }} · 与行情看板当前代码联动；回测与存档走
+            <span class="mono">POST /api/backtest/run</span>（<span class="mono">buy_hold</span>）；全样本做多，与
+            <span class="mono">GET …/buy-hold</span> 同核。买入持有无均线信号行。
+          </p>
+          <p v-else class="sub mono">
             标的 {{ (code || "—").trim() }} · 与行情看板当前代码联动；回测与存档前试算走
             <span class="mono">POST /api/backtest/run</span>（<span class="mono">ma_cross</span>）；均线一行仍调
             <span class="mono">GET …/ma-cross/signal</span>。
@@ -1396,15 +1487,17 @@ onMounted(() => {
               {{ w.code }}
             </button>
           </div>
-          <p v-if="signalErr" class="sig-err mono">{{ signalErr }}</p>
-          <p v-else-if="signalSnap" class="sig-line mono">
-            信号（{{ signalSnap.as_of_date }}）：
-            <strong>{{ signalSnap.position === "long" ? "多" : "空" }}</strong>
-            · 收 {{ signalSnap.close }} · MA{{ signalSnap.fast_period }} {{ signalSnap.ma_fast }} / MA{{
-              signalSnap.slow_period
-            }}
-            {{ signalSnap.ma_slow }}
-          </p>
+          <template v-if="singleRunStrategy === 'ma_cross'">
+            <p v-if="signalErr" class="sig-err mono">{{ signalErr }}</p>
+            <p v-else-if="signalSnap" class="sig-line mono">
+              信号（{{ signalSnap.as_of_date }}）：
+              <strong>{{ signalSnap.position === "long" ? "多" : "空" }}</strong>
+              · 收 {{ signalSnap.close }} · MA{{ signalSnap.fast_period }} {{ signalSnap.ma_fast }} / MA{{
+                signalSnap.slow_period
+              }}
+              {{ signalSnap.ma_slow }}
+            </p>
+          </template>
         </div>
         <div class="hd-actions">
           <button type="button" class="run" :disabled="loading" @click="runBacktest">
@@ -1425,11 +1518,27 @@ onMounted(() => {
       <div class="form">
         <label class="field">
           <span class="lbl">快线</span>
-          <input v-model.number="fast" type="number" min="1" max="120" class="inp mono" />
+          <input
+            v-model.number="fast"
+            type="number"
+            min="1"
+            max="120"
+            class="inp mono"
+            :disabled="singleRunStrategy === 'buy_hold'"
+            :title="singleRunStrategy === 'buy_hold' ? '买入持有不使用快慢线' : ''"
+          />
         </label>
         <label class="field">
           <span class="lbl">慢线</span>
-          <input v-model.number="slow" type="number" min="2" max="500" class="inp mono" />
+          <input
+            v-model.number="slow"
+            type="number"
+            min="2"
+            max="500"
+            class="inp mono"
+            :disabled="singleRunStrategy === 'buy_hold'"
+            :title="singleRunStrategy === 'buy_hold' ? '买入持有不使用快慢线' : ''"
+          />
         </label>
         <label class="field">
           <span class="lbl">K 根数</span>
@@ -2127,6 +2236,36 @@ onMounted(() => {
   font-family: var(--font-mono);
   font-size: 0.68rem;
   color: var(--mist-dim);
+}
+
+.single-strategy-pick {
+  margin: 0 0 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: 0.72rem;
+  color: var(--mist-dim);
+}
+
+.single-strategy-pick-lbl {
+  margin-right: 4px;
+  color: var(--mist);
+}
+
+.single-strategy-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.single-strategy-opt input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--meridian);
+  cursor: pointer;
 }
 
 .mvp-async-row {

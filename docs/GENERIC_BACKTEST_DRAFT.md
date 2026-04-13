@@ -5,12 +5,13 @@
 
 ## 第一步（已实现）
 
-- **内核**：`src/backtest/runner/ma_cross_executor.py` 的 **`execute_ma_cross_single`** — 校验、拉 K、基准 K、`run_ma_cross_backtest`、**`assumptions`** 文案。
-- **HTTP**：**`POST /api/backtest/run`**，请求体 `strategy_id` / `strategy_version` / `params`：`ma_cross` 时与 GET `ma-cross` 查询参数同义，响应 **`result`**（`MaCrossBacktestResponse`）；`ma_cross_scan` 时与 GET `ma-cross/scan` 同义，响应 **`scan_result`**（`MaCrossScanResponse`）。二者均含 **`engine_version`**、**`assumptions`**。  
+- **内核**：`src/backtest/runner/ma_cross_executor.py` 的 **`execute_ma_cross_single`**；**`buy_hold`** 见 **`execute_buy_hold_single`**（`src/backtest/runner/buy_hold_executor.py`）+ **`run_buy_hold_backtest`** — 校验、拉 K、基准 K、**`assumptions`** 文案。
+- **HTTP**：**`POST /api/backtest/run`**，请求体 `strategy_id` / `strategy_version` / `params`：`ma_cross` 时与 GET **`/api/backtest/ma-cross`** 查询参数同义，响应 **`result`**（`MaCrossBacktestResponse`）；**`buy_hold`** 时与 GET **`/api/backtest/buy-hold`** 同义（无 `fast`/`slow`），响应同为 **`result`**；`ma_cross_scan` 时与 GET `ma-cross/scan` 同义，响应 **`scan_result`**（`MaCrossScanResponse`）。均含 **`engine_version`**、**`assumptions`**。  
+  演练示例（买入持有）：`{"strategy_id":"buy_hold","strategy_version":"1","params":{"code":"sh.000001","limit":500}}`。
   **异步（MVP）**：查询参数 **`async=1`**（或 **`async=true`**）时返回 **202** + **`job_id`** / **`status_path`**，由 **`GET /api/backtest/jobs/{job_id}`** 轮询；合法 **`status`** 含 **`pending` → `running` → `completed`**，失败为 **`failed`**，排队取消为 **`cancelled`**。**`POST /api/backtest/jobs/{job_id}/cancel`** 仅对 **`pending`** 生效。长时间滞留 **`running`** 时，**GET** 可按环境变量触发**回收为 `failed`**（见下文 **「API 契约：异步任务（job）」**）。响应体含 **`async_job_persistence`**（与 **`GET /api/backtest/catalog`** 同源）及可选 **`queued_at` / `started_at` / `finished_at`**（UTC、ISO-8601、``Z`` 后缀）。任务表在**进程内存**或 **Redis**（见上文 Redis 段）。默认不带 **`async`** 时仍为 **200 同步**。
-- **发现**：**`GET /api/backtest/catalog`** — 返回 **`engine_version`**、已注册 **`strategies`**（`strategy_id` / `strategy_version` / **`response_shape`** / **`archive_kind`**（与 **`POST /api/backtest/runs`**、**`GET …/runs?kind=`** 一致）/ 同义 **GET** 路径等），便于客户端与脚本对齐 **`POST /run`** 与存档筛选；并含 **`async_run_query_param`**（默认 **`async`**）、**`async_job_status_path_template`**（默认 **`/api/backtest/jobs/{job_id}`**）与 **`async_job_persistence`**（**`memory`** \| **`redis`**，与当前 API 实例行为一致）、**`async_job_queue_key`** / **`async_job_queue_depth`**（**`redis`** 时为列表键 **`tb:backtest:job:queue`** 与 **`LLEN`** 快照；**`memory`** 时为 `null`），供客户端发现异步轮询与持久化契约。Vue **策略回测** 顶栏会拉取并展示一行摘要（含上述异步提示）；**结果存档** 类型下拉由 catalog 驱动选项与映射说明。E2E 固件 **`frontend/e2e/fixtures/backtest-catalog.json`** 由 **`python scripts/export_backtest_catalog_fixture.py`**（**`--dry-run`** 仅打印）生成，须 UTF-8。与因子固件一并刷新时用 **`python scripts/export_all_e2e_catalogs.py`**。**OpenAPI** 全量见 **`docs/openapi.json`**（**`python scripts/export_openapi.py`**）；组件 **`BacktestStrategyCatalogEntry`** 将 **`archive_kind`** 标为必选字段，与 **`pytest tests/test_openapi_contract.py`** 快照断言一致。**`scripts/verify_stack.py`** 另校验 catalog 中 **`strategy_id`** 集合与 **`src.backtest.runner`** 内 **`POST /run`** 支持的 **`STRATEGY_ID_MA_CROSS` / `STRATEGY_ID_MA_CROSS_SCAN`** 完全一致（无漏无多）。
-- **栈契约（补充）**：**`scripts/verify_stack.py`** 对 **`GET /api/backtest/catalog`** 还校验 **`engine_version`** 与内核 **`ENGINE_VERSION`** 一致、**`post_run_path`**（**`/api/backtest/run`**）、**`doc_ref`**（**`docs/GENERIC_BACKTEST_DRAFT.md`**）、**`strategy_id`** 无重复、各策略条目含 **`strategy_version`**（当前须为 **`1`**）/ **`title`** / **`description`** / **`response_shape`** / **`get_equivalent_paths`**（列表内每项须为以 **`/`** 开头且去首尾空白后非空的字符串）；**`title`/`description`** 去首尾空白后须非空；且 **`ma_cross`** 须为 **`result`** + **`["/api/backtest/ma-cross"]`**，**`ma_cross_scan`** 须为 **`scan_result`** + **`["/api/backtest/ma-cross/scan"]`**（顺序一致）。DB 行数统计失败且未传 **`--skip-db`** 时，脚本会打印 **`[HINT]`** 提示可重试 **`python scripts/verify_stack.py --skip-db`**。
-- **兼容**：**`GET /api/backtest/ma-cross`** 改为委托上述内核（行为与错误码不变）。**Vue 策略回测** 单标的「运行回测」与批量「开始扫描」均走 **`POST /api/backtest/run`** 预览并再 **`POST /api/backtest/runs`** 存档（`request_params` 存完整 run 信封）；CSV 导出仍 **GET scan**；均线快照仍 **GET signal**。
+- **发现**：**`GET /api/backtest/catalog`** — 返回 **`engine_version`**、已注册 **`strategies`**（`strategy_id` / `strategy_version` / **`response_shape`** / **`archive_kind`**（与 **`POST /api/backtest/runs`**、**`GET …/runs?kind=`** 一致）/ 同义 **GET** 路径等），便于客户端与脚本对齐 **`POST /run`** 与存档筛选；并含 **`async_run_query_param`**（默认 **`async`**）、**`async_job_status_path_template`**（默认 **`/api/backtest/jobs/{job_id}`**）与 **`async_job_persistence`**（**`memory`** \| **`redis`**，与当前 API 实例行为一致）、**`async_job_queue_key`** / **`async_job_queue_depth`**（**`redis`** 时为列表键 **`tb:backtest:job:queue`** 与 **`LLEN`** 快照；**`memory`** 时为 `null`），供客户端发现异步轮询与持久化契约。Vue **策略回测** 顶栏会拉取并展示一行摘要（含上述异步提示）；**结果存档** 类型下拉由 catalog 驱动选项与映射说明。E2E 固件 **`frontend/e2e/fixtures/backtest-catalog.json`** 由 **`python scripts/export_backtest_catalog_fixture.py`**（**`--dry-run`** 仅打印）生成，须 UTF-8。与因子固件一并刷新时用 **`python scripts/export_all_e2e_catalogs.py`**。**OpenAPI** 全量见 **`docs/openapi.json`**（**`python scripts/export_openapi.py`**）；组件 **`BacktestStrategyCatalogEntry`** 将 **`archive_kind`** 标为必选字段，与 **`pytest tests/test_openapi_contract.py`** 快照断言一致。**`scripts/verify_stack.py`** 另校验 catalog 中 **`strategy_id`** 集合与 **`src.backtest.runner`** 内 **`POST /run`** 支持的 **`STRATEGY_ID_MA_CROSS` / `STRATEGY_ID_BUY_HOLD` / `STRATEGY_ID_MA_CROSS_SCAN`** 完全一致（无漏无多）。
+- **栈契约（补充）**：**`scripts/verify_stack.py`** 对 **`GET /api/backtest/catalog`** 还校验 **`engine_version`** 与内核 **`ENGINE_VERSION`** 一致、**`post_run_path`**（**`/api/backtest/run`**）、**`doc_ref`**（**`docs/GENERIC_BACKTEST_DRAFT.md`**）、**`strategy_id`** 无重复、各策略条目含 **`strategy_version`**（当前须为 **`1`**）/ **`title`** / **`description`** / **`response_shape`** / **`get_equivalent_paths`**（列表内每项须为以 **`/`** 开头且去首尾空白后非空的字符串）；**`title`/`description`** 去首尾空白后须非空；且 **`ma_cross`** 须为 **`result`** + **`["/api/backtest/ma-cross"]`**，**`ma_cross_scan`** 须为 **`scan_result`** + **`["/api/backtest/ma-cross/scan"]`**，**`buy_hold`** 须为 **`result`** + **`["/api/backtest/buy-hold"]`**（顺序一致）。DB 行数统计失败且未传 **`--skip-db`** 时，脚本会打印 **`[HINT]`** 提示可重试 **`python scripts/verify_stack.py --skip-db`**。
+- **兼容**：**`GET /api/backtest/ma-cross`**、**`GET /api/backtest/buy-hold`** 与 **`POST /run`** 同核（行为与错误码不变）。**Vue 策略回测** 单标的可选 **双均线 / 买入持有** 后「运行回测」，与批量「开始扫描」均走 **`POST /api/backtest/run`** 预览并再 **`POST /api/backtest/runs`** 存档（`request_params` 存完整 run 信封）；CSV 导出仍 **GET scan**；均线快照仍 **GET signal**（仅双均线模式展示）。
 
 ## 设计目标
 
@@ -74,8 +75,8 @@
 
 ## 迁移路径（渐进）
 
-1. **不改现有路由**：继续提供 `ma-cross` / `ma-cross/scan`。
-2. **抽取内核**：单标的 **`execute_ma_cross_single`**；批量 **`execute_ma_cross_scan`** / **`ma_cross_scan_items`** / **`parse_scan_codes`**（`src/backtest/runner/ma_cross_scan_executor.py`）；`src/backtest/scan.py` 仅保留 CSV 并从 runner 再导出供 CLI。
+1. **不改现有路由**：继续提供 `ma-cross` / `ma-cross/scan` / **`buy-hold`**。
+2. **抽取内核**：单标的 **`execute_ma_cross_single`**、**`execute_buy_hold_single`**；批量 **`execute_ma_cross_scan`** / **`ma_cross_scan_items`** / **`parse_scan_codes`**（`src/backtest/runner/ma_cross_scan_executor.py`）；`src/backtest/scan.py` 仅保留 CSV 并从 runner 再导出供 CLI。**本地脚本**：**`scripts/run_backtest.py`** 默认双均线；**`--buy-hold`** 调用 **`run_buy_hold_backtest`**（与 **`POST /api/backtest/run`** 的 **`buy_hold`** 分支同源，读 **`.env`** 数据库）；**`--start-date` / `--end-date`**（**`YYYY-MM-DD`**）与 **`params`** 同义，见根目录 **`README.md`**。
 3. **统一存档**：`backtest_run.kind` 增加通用类型或 `request_params.strategy_id` 必填，便于列表筛选与复现。
 4. **纸交易对齐**：规则校验从纸交易模块 import 同一模块，避免两套逻辑漂移。
 
@@ -103,5 +104,9 @@
 - 全自动参数寻优服务化（可在脚本层先做，不进 MVP API）。
 
 ## 修订
+
+| 日期 | 说明 |
+|------|------|
+| 2026-04-10 | 「迁移路径」§2：**`scripts/run_backtest.py`** **`--buy-hold`**、**`--start-date` / `--end-date`**（与 **`params`** 同义）及 **`README.md`** 链。 |
 
 实施通用回测 MVP 时更新本草案并链接 OpenAPI 示例。

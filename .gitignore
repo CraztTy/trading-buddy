@@ -13,3 +13,9 @@ backup_*.sql
 .DS_Store
 .idea/
 .vscode/
+
+# 趋势 v0 束 D 本地回测导出（diff / 存档素材）
+artifacts/trend_v0/
+
+# 研究实验目录下本地导出（截面 CSV 等，见 experiments/README.md）
+experiments/**/outputs/

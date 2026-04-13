@@ -30,11 +30,14 @@ def _bt_catalog_row(
     paths: list[str] | None = None,
 ) -> dict:
     if paths is None:
-        paths = (
-            ["/api/backtest/ma-cross"]
-            if strategy_id == "ma_cross"
-            else ["/api/backtest/ma-cross/scan"]
-        )
+        if strategy_id == "ma_cross":
+            paths = ["/api/backtest/ma-cross"]
+        elif strategy_id == "ma_cross_scan":
+            paths = ["/api/backtest/ma-cross/scan"]
+        elif strategy_id == "buy_hold":
+            paths = ["/api/backtest/buy-hold"]
+        else:
+            paths = ["/api/backtest/ma-cross"]
     return {
         "strategy_id": strategy_id,
         "strategy_version": "1",
@@ -47,12 +50,22 @@ def _bt_catalog_row(
 
 
 def _bt_catalog_body(*rows: dict) -> dict:
+    rows_list = list(rows)
+    if not any(isinstance(r, dict) and r.get("strategy_id") == "buy_hold" for r in rows_list):
+        rows_list.append(
+            _bt_catalog_row(
+                "buy_hold",
+                "buy_hold_single",
+                response_shape="result",
+                paths=["/api/backtest/buy-hold"],
+            )
+        )
     return {
         "engine_version": ENGINE_VERSION,
         "post_run_path": "/api/backtest/run",
         "doc_ref": "docs/GENERIC_BACKTEST_DRAFT.md",
         **_BT_CATALOG_ASYNC_DEFAULTS,
-        "strategies": list(rows),
+        "strategies": rows_list,
     }
 
 
@@ -387,6 +400,7 @@ def test_backtest_catalog_archive_errors_engine_version_mismatch(verify_stack_mo
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -464,6 +478,7 @@ def test_backtest_catalog_archive_errors_post_run_path_mismatch(verify_stack_mod
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -479,6 +494,7 @@ def test_backtest_catalog_archive_errors_doc_ref_mismatch(verify_stack_mod) -> N
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -498,6 +514,7 @@ def test_backtest_catalog_archive_errors_async_run_query_param_mismatch(
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -517,6 +534,7 @@ def test_backtest_catalog_archive_errors_async_job_template_mismatch(
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -556,6 +574,7 @@ def test_backtest_catalog_archive_errors_async_queue_when_redis_key_wrong(
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -583,6 +602,7 @@ def test_backtest_catalog_archive_errors_async_queue_depth_bad_type_when_redis(
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -602,6 +622,7 @@ def test_backtest_catalog_archive_errors_async_job_persistence_invalid(
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -1438,6 +1459,7 @@ def test_backtest_catalog_archive_errors_missing_engine_version_key(verify_stack
         "strategies": [
             _bt_catalog_row("ma_cross", "ma_cross_single", response_shape="result"),
             _bt_catalog_row("ma_cross_scan", "ma_cross_scan", response_shape="scan_result"),
+            _bt_catalog_row("buy_hold", "buy_hold_single", response_shape="result"),
         ],
     }
     err = verify_stack_mod._backtest_catalog_archive_kind_errors(body)
@@ -1478,3 +1500,79 @@ def test_factors_catalog_op_ids_match_opname_blank_op_id(verify_stack_mod) -> No
 def test_verify_api_catalog_contracts_live_passes(verify_stack_mod) -> None:
     """``_verify_api_catalog_contracts``：双 catalog + archive 对齐 + 因子（与 ``verify_stack`` 主流程一致）。"""
     assert verify_stack_mod._verify_api_catalog_contracts() is None
+
+
+def test_factors_cross_section_body_errors_passes(verify_stack_mod) -> None:
+    body = {
+        "as_of_trade_date": "2024-06-11",
+        "period": 20,
+        "max_codes_requested": 20,
+        "row_count": 1,
+        "doc_ref": "docs/FACTORS.md",
+        "rows": [
+            {
+                "code": "sh.tz",
+                "close": 10.0,
+                "volume": 100,
+                "amount": 1000.0,
+                "turnover_rate": None,
+                "pct_change": None,
+                "ret_pct": 25.0,
+                "meta_bars": 3,
+            }
+        ],
+    }
+    assert (
+        verify_stack_mod._factors_cross_section_body_errors(
+            body,
+            expect_as_of="2024-06-11",
+            expect_period=20,
+            expect_max_codes=20,
+        )
+        is None
+    )
+
+
+def test_factors_cross_section_body_errors_doc_ref(verify_stack_mod) -> None:
+    body = {
+        "as_of_trade_date": "2024-06-11",
+        "period": 20,
+        "max_codes_requested": 20,
+        "row_count": 0,
+        "doc_ref": "wrong.md",
+        "rows": [],
+    }
+    err = verify_stack_mod._factors_cross_section_body_errors(
+        body,
+        expect_as_of="2024-06-11",
+        expect_period=20,
+        expect_max_codes=20,
+    )
+    assert err and "doc_ref" in err
+
+
+def test_factors_cross_section_body_errors_row_keys(verify_stack_mod) -> None:
+    body = {
+        "as_of_trade_date": "2024-06-11",
+        "period": 20,
+        "max_codes_requested": 20,
+        "row_count": 1,
+        "doc_ref": "docs/FACTORS.md",
+        "rows": [{"code": "sh.tz", "close": 1.0, "volume": 1, "amount": 1.0, "meta_bars": 2}],
+    }
+    err = verify_stack_mod._factors_cross_section_body_errors(
+        body,
+        expect_as_of="2024-06-11",
+        expect_period=20,
+        expect_max_codes=20,
+    )
+    assert err and "键集合" in err
+
+
+def test_verify_factors_cross_section_smoke_returns_structured(verify_stack_mod) -> None:
+    """连真实配置库：成功 ``(None, False)`` 或 overview 无指数 ``(None, True)``；失败时第一项非空。"""
+    err, skip = verify_stack_mod._verify_factors_cross_section_smoke()
+    assert isinstance(skip, bool)
+    if err is not None:
+        assert skip is False
+        assert isinstance(err, str) and err.strip()

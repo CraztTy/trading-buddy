@@ -392,6 +392,36 @@ async def test_ma_cross_scan_start_after_end_400(http_test_client: TestClient):
     assert "end_date" in detail
 
 
+async def test_backtest_run_mvp_buy_hold_matches_get_buy_hold(http_test_client, empty_sqlite_db):
+    code = "sh.bhrun"
+    base = date(2025, 8, 10)
+    rows = [_bar(code, base + timedelta(days=i), 50.0 + i * 0.2) for i in range(60)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+    g = http_test_client.get(
+        "/api/backtest/buy-hold",
+        params={"code": code, "limit": 60},
+    )
+    assert g.status_code == 200
+    p = http_test_client.post(
+        "/api/backtest/run",
+        json={
+            "strategy_id": "buy_hold",
+            "strategy_version": "1",
+            "params": {"code": code, "limit": 60},
+        },
+    )
+    assert p.status_code == 200
+    body = p.json()
+    assert body["engine_version"] == "0.1"
+    assert body["strategy_id"] == "buy_hold"
+    assert isinstance(body.get("assumptions"), list)
+    assert len(body["assumptions"]) >= 2
+    assert body["result"] == g.json()
+    assert body.get("scan_result") is None
+
+
 async def test_backtest_run_mvp_ma_cross_matches_get_ma_cross(http_test_client, empty_sqlite_db):
     code = "sh.runmvp"
     base = date(2025, 8, 10)
@@ -539,7 +569,9 @@ async def test_backtest_run_mvp_unknown_strategy_400(http_test_client: TestClien
         },
     )
     assert r.status_code == 400
-    assert "ma_cross" in r.json().get("detail", "")
+    detail = r.json().get("detail", "")
+    assert "ma_cross" in detail
+    assert "buy_hold" in detail
 
 
 async def test_backtest_run_mvp_wrong_version_400(http_test_client: TestClient):
@@ -552,6 +584,21 @@ async def test_backtest_run_mvp_wrong_version_400(http_test_client: TestClient):
         },
     )
     assert r.status_code == 400
+
+
+async def test_backtest_run_mvp_buy_hold_params_missing_code_422(http_test_client: TestClient):
+    r = http_test_client.post(
+        "/api/backtest/run",
+        json={
+            "strategy_id": "buy_hold",
+            "strategy_version": "1",
+            "params": {"limit": 100},
+        },
+    )
+    assert r.status_code == 422
+    detail = r.json().get("detail")
+    assert isinstance(detail, list)
+    assert any("code" in str(item).lower() for item in detail)
 
 
 async def test_backtest_run_mvp_ma_cross_params_missing_code_422(http_test_client: TestClient):
@@ -786,6 +833,7 @@ async def test_backtest_catalog_lists_registered_strategies(http_test_client: Te
     ids = {(s["strategy_id"], s["strategy_version"]) for s in b["strategies"]}
     assert ("ma_cross", "1") in ids
     assert ("ma_cross_scan", "1") in ids
+    assert ("buy_hold", "1") in ids
     single = next(s for s in b["strategies"] if s["strategy_id"] == "ma_cross")
     assert single["response_shape"] == "result"
     assert single.get("archive_kind") == "ma_cross_single"
@@ -802,3 +850,7 @@ async def test_backtest_catalog_lists_registered_strategies(http_test_client: Te
     assert scan["get_equivalent_paths"] == ["/api/backtest/ma-cross/scan"]
     for p in scan["get_equivalent_paths"]:
         assert isinstance(p, str) and p.startswith("/")
+    bh = next(s for s in b["strategies"] if s["strategy_id"] == "buy_hold")
+    assert bh["response_shape"] == "result"
+    assert bh.get("archive_kind") == "buy_hold_single"
+    assert bh["get_equivalent_paths"] == ["/api/backtest/buy-hold"]

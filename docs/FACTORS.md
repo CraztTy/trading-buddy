@@ -34,6 +34,8 @@
 
 ## HTTP 只读预览
 
+- **`GET /api/factors/cross-section`**：按 **`as_of_date`**（必填）从 **`daily_kline`** 枚举当日有 K 的 **`code`**（**`max_codes`** 默认 **100**、上限 **500**，升序截断，与导出脚本 **`--max-codes`** 一致），经 **`get_daily_last_n_bars_per_code`** 拉每标的最近 **`period+1`** 根（**`period`** 默认 **20**、**1～250**，与 **`pct_change_n`** 的 **N** 一致），在进程内用 **`compute_cross_section_row`** 生成行；响应 **`ret_pct`** 对应 CSV 列 **`ret_{period}d`**（脚本侧命名）。含 **`close` / `volume` / `amount` / `turnover_rate` / `pct_change` / `meta_bars`**；**`doc_ref`** 为 **`docs/FACTORS.md`**。该日无可用标的时 **400**；批量窗口查询失败时 **503**（正文提示 **`--legacy-per-code-fetch`** 等 CLI 退路）。OpenAPI 见 **`FactorCrossSectionResponse`**；刷新 **`docs/openapi.json`** 用 **`python scripts/export_openapi.py`**。
+- **Vue 与截面快捷链**：**`frontend/src/composables/crossSectionOverviewLink.js`** 请求 **`GET /api/dashboard/overview`**，取 **`indices[0].date`** 作为 **`as_of_date`**，拼 **`period=20`**、**`max_codes=100`** 的 **`/api/factors/cross-section`** 完整 URL（与主要指数卡片同一交易日）；**`RankBoard`**（行情看板侧栏底部）与 **`FactorPreviewPanel`**（因子预览页眉第二行）共用，**新标签**打开 JSON。无指数 K 时仅文案提示、无链接。
 - **`GET /api/factors/catalog`**：返回当前支持的 **`op`** 列表及 **`window` / `column` / `series_keys`** 约定，与 **`OpName`** 一一对应（供 UI 下拉、外部脚本发现；不落库）；**`window`** 取值 **`required` \| `optional` \| `unused`**，**`column`** 取值 **`ohlcv` \| `ignored`**；**`series_keys`** 为字符串列表，**每项去首尾空白后须非空**（与预览 JSON 中 **`series`** 的键名一致）。响应另含 **`preview_path`**（**`/api/factors/preview`**）、**`doc_ref`**（**`docs/FACTORS.md`**）。OpenAPI 中对应 **`FactorCatalogResponse`** / **`FactorOpCatalogEntry`**（见 **`docs/openapi.json`**，**`python scripts/export_openapi.py`** 刷新）；**`tests/test_openapi_contract.py`** 与栈探测 **`scripts/verify_stack.py`** 会断言上述顶层字段、条目字段，且 **`ops[].id`** 集合与 **`OpName`** 成员完全一致。
 - Vue 看板 **「因子预览」** 页签在挂载时请求 **`/api/factors/catalog`** 填充算子下拉（失败时回退内置列表并提示）；预览仍走 **`/api/factors/preview`**，按 **`trade_dates`** 与 **`series`** 绘图（与全局当前标的联动，加载成功后同步 `currentCode`）。E2E 使用 **`frontend/e2e/fixtures/factor-catalog.json`**。增删算子后请在仓库根执行 **`python scripts/export_factor_catalog_fixture.py`**（UTF-8 写入，与 **`OpName`** 同步）；**`--dry-run`** 仅打印路径与条数。若同时改了回测 **`POST /run`** 注册策略，可改用 **`python scripts/export_all_e2e_catalogs.py`** 一次写因子与回测两份 E2E 固件。勿用 PowerShell **`>`** 重定向手写导出，否则易成 UTF-16 导致 Playwright 侧 **`JSON.parse`** 失败。
 - **`GET /api/factors/preview`**：从库中拉日 K（`limit` 上限，**时间升序**），对 **`column`**（`open` / `high` / `low` / `close` / `volume` / `amount`）跑 **`op`**（`rolling_*`、`ema`、`pct_change_1`、`pct_change_n`、**`roc`**、**`trix`**、`diff_n`、**`rsi`**、**`atr`**、**`adx`**、**`aroon`**、**`donchian`**、**`vwap`**、**`bollinger`**、**`macd`**、**`kdj`**、**`cci`**、**`williams_r`**、**`mfi`**、**`obv`**）。
@@ -59,6 +61,16 @@
   - 可选 **`start_date` / `end_date`**（ISO 日期）；无数据时 **400**。
   - 另有 **`bars`**（序列长度）、**`limit`**、**`code` / `column` / `op` / `window`** 等元字段；后续新增多序列算子时继续往 **`series`** 填键即可，避免再引入并列顶层数组。
 
+## 截面因子数据模型（草案）
+
+> **薄文档**：约定「某日全市场因子向量」的列名与主键，便于脚本 / Notebook 与后续批处理接口对齐；**只读 HTTP** 见上 **`GET /api/factors/cross-section`**（不落库）；专用 ORM 表或批量落盘仍属路线图。
+
+- **`as_of_trade_date`**：截面所依据的**交易日**（`YYYY-MM-DD`）。使用 T 日收盘后因子还是 T+1 开盘前再算，须在 **`experiments/{id}/manifest.json`** 或流水线说明中写死，避免同一实验混用两种时点。
+- **行主键**：**`(as_of_trade_date, code)`**；**`code`** 与 **`daily_kline` / 行情侧** 证券代码一致（如 **`sh.600000`**）。
+- **因子列**：稳定英文蛇形名（示例占位 **`ret_20d`**、**`vol_ratio_20d`**）；值为 **`float | null`**（停牌、窗口不足等与预览 API 一致用 **`null`**）。
+- **非因子辅助列**（可选）：若与因子同文件输出，建议前缀 **`meta_`**（如 **`meta_is_st`**），避免与 **`primitives`** 导出名撞车。
+- **首版落地建议**：研究脚本可将截面 CSV 写入 **`experiments/{experiment_id}/outputs/`**，在 **`manifest.json`** 记录文件名、列清单与 **`as_of_trade_date`**；与 **`GET /api/factors/preview`** 的单标的时间序列互补，而非替代。仓库提供 **`scripts/export_factor_cross_section.py`**（读 **`daily_kline`**，列含 **`close`**、**`volume`**、**`amount`**、**`turnover_rate`**、**`pct_change`**（当日，可空）、**`ret_{N}d`**、**`meta_bars`**；标的枚举走 **`KlineRepository.list_codes_on_trade_date`**；各 code 最近 **N+1** 根 K 默认走 **`KlineRepository.get_daily_last_n_bars_per_code`**（**ROW_NUMBER**，**MySQL 8+** / **SQLite 3.25+**，大 **`IN`** 自动分块）；**`--legacy-per-code-fetch`** 强制逐 **`get_daily`**（**`--max-concurrent`**）；**`--auto-legacy-fallback`** 在批量窗口失败时自动切到同路径。**`--dry-run`** 仅打印条数。用法见脚本顶部 docstring。
+
 ## 后续（仍属路线图）
 
-- 横截面因子、与 `daily_kline` 拉取层在回测/批处理中的深度衔接。
+- 横截面因子、与 `daily_kline` 拉取层在回测/批处理中的深度衔接；上节 **「截面因子数据模型（草案）」** 为后续表结构或批处理 API 的命名锚点。

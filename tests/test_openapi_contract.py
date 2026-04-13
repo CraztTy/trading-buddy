@@ -19,25 +19,34 @@ def test_backtest_catalog_live_strategy_ids_match_post_run_constants() -> None:
     """``GET /api/backtest/catalog`` 的 ``strategy_id`` 与 ``POST /run`` 支持的常量一致。"""
     from fastapi.testclient import TestClient
 
-    from src.backtest.runner import STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN
+    from src.backtest.runner import (
+        STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_MA_CROSS,
+        STRATEGY_ID_MA_CROSS_SCAN,
+    )
 
     with TestClient(app) as client:
         r = client.get("/api/backtest/catalog")
     assert r.status_code == 200
     strategies = r.json().get("strategies") or []
     ids = {s["strategy_id"] for s in strategies if isinstance(s, dict) and "strategy_id" in s}
-    assert ids == {STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN}
+    assert ids == {STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN, STRATEGY_ID_BUY_HOLD}
 
 
 def test_backtest_catalog_live_strategy_shape_and_paths_match_kernel() -> None:
     """各 ``strategy_id`` 的 ``response_shape`` / ``get_equivalent_paths`` 与内核约定一致。"""
     from fastapi.testclient import TestClient
 
-    from src.backtest.runner import STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN
+    from src.backtest.runner import (
+        STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_MA_CROSS,
+        STRATEGY_ID_MA_CROSS_SCAN,
+    )
 
     want = {
         STRATEGY_ID_MA_CROSS: ("result", ["/api/backtest/ma-cross"]),
         STRATEGY_ID_MA_CROSS_SCAN: ("scan_result", ["/api/backtest/ma-cross/scan"]),
+        STRATEGY_ID_BUY_HOLD: ("result", ["/api/backtest/buy-hold"]),
     }
     with TestClient(app) as client:
         r = client.get("/api/backtest/catalog")
@@ -163,6 +172,16 @@ def test_openapi_factors_catalog_path_uses_factor_catalog_response() -> None:
     assert ref == "#/components/schemas/FactorCatalogResponse"
 
 
+def test_openapi_factors_cross_section_path_uses_factor_cross_section_response() -> None:
+    spec = app.openapi()
+    ref = (
+        spec["paths"]["/api/factors/cross-section"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+    )
+    assert ref == "#/components/schemas/FactorCrossSectionResponse"
+
+
 def test_openapi_factor_op_catalog_entry_core_required() -> None:
     spec = app.openapi()
     entry = spec["components"]["schemas"]["FactorOpCatalogEntry"]
@@ -226,6 +245,8 @@ def test_strategies_catalog_live_entry_fields_consistent_with_contract() -> None
             assert bak == ["ma_cross_single", "ma_cross_scan"]
         elif eid == "ma_cross_scan":
             assert bak == ["ma_cross_scan"]
+        elif eid == "buy_hold":
+            assert bak == ["buy_hold_single"]
         assert br.get("archive_kind") in bak
 
 

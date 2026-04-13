@@ -28,6 +28,19 @@ test.describe("Backtest panel", () => {
     await expect(page.locator(".err")).toContainText(/cancelled|任务已取消/i);
   });
 
+  test("single buy_hold shows mock metrics and persists buy_hold_single", async ({ page }) => {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "策略回测" }).click();
+    await expect(page.getByTestId("backtest-engine-catalog")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("single-run-strategy-buy-hold").check();
+    await expect(page.getByRole("heading", { name: "买入持有（日线）" })).toBeVisible();
+    await expect(page.locator(".sig-line")).toHaveCount(0);
+    await page.getByRole("button", { name: "运行回测" }).click();
+    await expect(page.getByText("e2e-mock-buy-hold")).toBeVisible();
+    await expect(page.locator(".metrics").getByText("3.21")).toBeVisible();
+    await expect(page.locator(".save-tip")).toContainText(/已存档 #\d+/);
+  });
+
   test("single MA cross shows mock metrics", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "策略回测" }).click();
@@ -35,11 +48,14 @@ test.describe("Backtest panel", () => {
     await expect(page.getByTestId("backtest-engine-catalog")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("backtest-engine-catalog")).toContainText("engine 0.1");
     await expect(page.getByTestId("backtest-engine-catalog")).toContainText("双均线 · 单标的");
+    await expect(page.getByTestId("backtest-engine-catalog")).toContainText("买入持有 · 单标的");
     await expect(page.getByTestId("backtest-engine-catalog")).toContainText("?async=1");
     await expect(page.getByTestId("backtest-engine-catalog")).toContainText("/api/backtest/jobs/{job_id}");
 
     await expect(page.getByTestId("run-kind-map-hint")).toContainText("GET /api/backtest/runs?kind=ma_cross_single");
     await expect(page.getByTestId("run-kind-map-hint")).toContainText("strategy_id=ma_cross");
+    await expect(page.getByTestId("run-kind-map-hint")).toContainText("kind=buy_hold_single");
+    await expect(page.getByTestId("run-kind-map-hint")).toContainText("strategy_id=buy_hold");
 
     await expect(page.getByRole("heading", { name: "双均线（日线）" })).toBeVisible();
     await page.getByRole("button", { name: "运行回测" }).click();
