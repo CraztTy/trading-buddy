@@ -156,7 +156,7 @@ python scripts\export_factor_cross_section.py --as-of-date 2024-06-28 --dry-run
 
 **`--dry-run`** 只统计当日有 K 的标的数；去掉后加 **`-o`** 写 CSV（列含 **`close`**、**`volume`**、**`amount`**、**`turnover_rate`**、**`pct_change`**、**`ret_{N}d`** 等）。详见脚本顶部注释与 **`experiments/README.md`**。
 
-**截面 HTTP（只读 JSON）：** **`GET /api/factors/cross-section`** 见 **`docs/FACTORS.md`**。启动 Vue 看板后，「行情看板」涨跌侧栏底部与「因子预览」页眉可新标签打开该接口（**`as_of_date`** 由 **`GET /api/dashboard/overview`** 首条指数 **`date`** 填入；默认 **period=20**、**max_codes=100**；实现 **`frontend/src/composables/crossSectionOverviewLink.js`**）。
+**截面 HTTP（只读 JSON）：** **`GET /api/factors/cross-section`** 见 **`docs/FACTORS.md`**。启动 Vue 看板后，「行情看板」涨跌侧栏底部与「因子预览」页眉可新标签打开该接口（**`as_of_date`** 由 **`GET /api/dashboard/overview`** 首条指数 **`date`** 填入；默认 **period=20**、**max_codes=100**；实现 **`frontend/src/composables/crossSectionOverviewLink.js`**）。若计划落盘或将来进库，先读 **`docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md`**（阶段 B「厚」前评审稿）。
 
 自动化测试（不跑真实拉数）：
 

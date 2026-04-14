@@ -21,6 +21,8 @@ experiments/{experiment_id}/
 
 **截面因子命名锚点**（只读 **HTTP**：**`GET /api/factors/cross-section`**，不落库；批处理写入仍自定）：**[docs/FACTORS.md](../docs/FACTORS.md)**「截面因子数据模型（草案）」与 **HTTP 只读预览** 节。Vue 看板在行情侧栏 / 因子页眉可链到该接口（**`as_of_date`** 来自 **overview** 指数日，见 **`frontend/src/composables/crossSectionOverviewLink.js`**）；栈探测 **`python scripts/verify_stack.py`** 在 **overview** 有 **`date`** 时烟囱同一路径（否则 **[SKIP]**）。**CSV 导出（需 DB）**：**`python scripts/export_factor_cross_section.py --as-of-date YYYY-MM-DD -o experiments/<id>/outputs/cross.csv`**（默认 **`get_daily_last_n_bars_per_code`**；老库 **`--legacy-per-code-fetch`** 或 **`--auto-legacy-fallback`**）；**`--dry-run`** 仅统计当日标的列表不写文件（详见脚本 docstring）。
 
+**「厚」之前的设计约定**：截面若落盘或将来进库，与 **`manifest.json`** 的衔接见 **[docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md](../docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md)**（可选 **`factor_exports`** 块、**`factor_set_id`**、分阶段 **B0→A2**）。
+
 ## `manifest.json` 示例（可复制改字段）
 
 下列值为占位；**`a3_run_ids`** 可与 **`python scripts/trend_v0_archive_baseline.py --json-out …`** 输出合并或互链。
@@ -40,6 +42,9 @@ experiments/{experiment_id}/
   },
   "cli": {
     "trend_v0_archive_baseline": "python scripts/trend_v0_archive_baseline.py --in-process --start-date 2023-01-01 --end-date 2024-06-30 --json-out artifacts/trend_v0/a3_oos_run_ids.json"
-  }
+  },
+  "factor_exports": []
 }
 ```
+
+可选 **`factor_exports`**：非空时为对象数组，字段见 **[docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md](../docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md)** §5；用于记录 **`export_factor_cross_section.py`** 等产物的路径、**`as_of_trade_date`**、**`factor_set_id`** 与列清单。

@@ -65,6 +65,8 @@
 
 > **薄文档**：约定「某日全市场因子向量」的列名与主键，便于脚本 / Notebook 与后续批处理接口对齐；**只读 HTTP** 见上 **`GET /api/factors/cross-section`**（不落库）；专用 ORM 表或批量落盘仍属路线图。
 
+- **持久化（阶段 B →「厚」）设计小步**：库表 vs Parquet/CSV、分阶段 **B0→A2**、**`manifest.factor_exports`** 与待决问题见 **[FACTOR_SNAPSHOT_AND_PERSISTENCE.md](FACTOR_SNAPSHOT_AND_PERSISTENCE.md)**（**实现前评审稿**，当前仓库无新表）。
+
 - **`as_of_trade_date`**：截面所依据的**交易日**（`YYYY-MM-DD`）。使用 T 日收盘后因子还是 T+1 开盘前再算，须在 **`experiments/{id}/manifest.json`** 或流水线说明中写死，避免同一实验混用两种时点。
 - **行主键**：**`(as_of_trade_date, code)`**；**`code`** 与 **`daily_kline` / 行情侧** 证券代码一致（如 **`sh.600000`**）。
 - **因子列**：稳定英文蛇形名（示例占位 **`ret_20d`**、**`vol_ratio_20d`**）；值为 **`float | null`**（停牌、窗口不足等与预览 API 一致用 **`null`**）。

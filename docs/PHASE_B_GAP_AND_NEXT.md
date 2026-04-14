@@ -16,7 +16,7 @@
 
 | 路线图表述 | 仓库现状 | 缺口 | 建议下一小步 |
 |------------|----------|------|----------------|
-| 统一时间索引、截面缓存；经典价量因子 + 测试 | **`src/factors/primitives.py`**、**`kline_series`**、**`cross_section.compute_cross_section_row`**；**`GET /api/factors/preview`**、**`GET /api/factors/catalog`**、**`GET /api/factors/cross-section`**；**`scripts/export_factor_cross_section.py`**；Vue **`crossSectionOverviewLink.js`**；**`verify_stack`** overview 填日烟囱；**[FACTORS.md](FACTORS.md)**（HTTP + 截面草案）；**`tests/test_factors_*.py`**、**`test_export_factor_cross_section`**、**`test_factors_api_http`**（截面 HTTP） | **缓存层**（Redis/本地）、**截面落库/批处理写入**（`factor_snapshot` 或 Parquet）、与流水线深度绑定 | **厚**：定是否新表 **`factor_snapshot`** 或离线 Parquet；**薄**增量：Notebook 只读调 **HTTP** 或 CLI 写 **`experiments/.../outputs/`** |
+| 统一时间索引、截面缓存；经典价量因子 + 测试 | **`src/factors/primitives.py`**、**`kline_series`**、**`cross_section.compute_cross_section_row`**；**`GET /api/factors/preview`**、**`GET /api/factors/catalog`**、**`GET /api/factors/cross-section`**；**`scripts/export_factor_cross_section.py`**；Vue **`crossSectionOverviewLink.js`**；**`verify_stack`** overview 填日烟囱；**[FACTORS.md](FACTORS.md)**（HTTP + 截面草案）；**`tests/test_factors_*.py`**、**`test_export_factor_cross_section`**、**`test_factors_api_http`**（截面 HTTP） | **缓存层**（Redis/本地）、**截面落库/批处理写入**（库表 vs Parquet，见下设计稿）、与流水线深度绑定 | **厚之前**：先读 **[FACTOR_SNAPSHOT_AND_PERSISTENCE.md](FACTOR_SNAPSHOT_AND_PERSISTENCE.md)**（方案对比、**B0→A2** 分阶段、表草案、**`manifest.factor_exports`**、待决问题）；**厚**：在评审稿上定 **A / B / C** 与 **`factor_set_id`** 规则后再动 **`init_db`** 与写入路径；**薄**增量照旧：Notebook / **HTTP** / CLI → **`experiments/.../outputs/`** |
 
 ---
 
@@ -49,3 +49,4 @@
 | 2026-04-10 | 新增 **`experiments/README.md`**（约定 **`experiments/{id}/`**）；**§4** 产出物「实验复现说明」改为部分落地；**`tests/test_cli_iso_date_scripts.py`**（原 **`test_run_backtest_parse.py`**）覆盖 **`cli_iso_date`** 与相关 CLI 顶层加载。 |
 | 2026-04-13 | **§2 / 实验目录**：**`FACTORS.md`** 截面草案；**`experiments/README.md`**；**`export_factor_cross_section.py`**（**`--dry-run`**、**`get_daily_last_n_bars_per_code`**、**`--legacy-per-code-fetch`** / **`--auto-legacy-fallback`**、**`--max-concurrent`**）；**`KlineRepository.list_codes_on_trade_date`**、**`get_daily_last_n_bars_per_code`**；根 **README** / **`FIRST_STEPS`**；**`tests/test_kline_repository_sqlite.py`**、**`tests/test_export_factor_cross_section.py`**。 |
 | 2026-04-14 | **§2**：**`GET /api/factors/cross-section`**、**`compute_cross_section_row`**、Vue 快捷链、**`verify_stack`** 截面烟囱、**`tests/test_factors_cross_section.py`**；**§2 表**「仓库现状 / 缺口」与上述对齐。 |
+| 2026-04-15 | **§2「厚」前设计**：新增 **[FACTOR_SNAPSHOT_AND_PERSISTENCE.md](FACTOR_SNAPSHOT_AND_PERSISTENCE.md)**；**§2 表**「建议下一小步」链至该文。 |
