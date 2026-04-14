@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 
 from src.data.models import KLine
-from src.factors.cross_section import compute_cross_section_row
+from src.factors.cross_section import compute_cross_section_row, cross_section_factor_set_id
 from src.factors.primitives import pct_change_n
 
 
@@ -36,6 +36,16 @@ def test_compute_cross_section_row_last_bar_must_match_as_of() -> None:
     as_of = date(2024, 1, 5)
     rows = [_bar("sh.x", date(2024, 1, 4), 1.0), _bar("sh.x", date(2024, 1, 5), 2.0)]
     assert compute_cross_section_row(rows, date(2024, 1, 6), 1) is None
+
+
+def test_cross_section_factor_set_id() -> None:
+    assert cross_section_factor_set_id(period=20) == "ret_close_20d_v1"
+    assert cross_section_factor_set_id(period=1, version="v2") == "ret_close_1d_v2"
+
+
+def test_cross_section_factor_set_id_period_lt_1_raises() -> None:
+    with pytest.raises(ValueError):
+        cross_section_factor_set_id(period=0)
 
 
 def test_compute_cross_section_row_matches_pct_change_n_tail() -> None:

@@ -33,7 +33,7 @@
 
 1. **B0（已具备）**：**`export_factor_cross_section.py`** → CSV；**`GET /api/factors/cross-section`** 只读不落库。  
 2. **B1（文档 + 约定）**：**`experiments/{id}/manifest.json`** 增加可选字段 **`factor_exports`**（见下 §5）；仍无新代码。  
-3. **B2（仍可无 DB 表）**：脚本 **`--format parquet`** 或独立 **`export_factor_cross_section_parquet.py`**（依赖可选 `pyarrow`），输出与 CSV 同列语义。  
+3. **B2（仍无 DB 表）**：**`scripts/export_factor_cross_section.py --output-format parquet -o …`**（依赖 **`pyarrow`**，已写入 **`requirements.txt`**）；列语义与 CSV 一致；**`--print-manifest-snippet`** 向 stderr 输出 **`manifest.factor_exports[]`** 单条 JSON 示例。  
 4. **A1（首次落库）**：单表 **`factor_cross_section_daily`**（命名可再议），列与 **FACTORS** 草案 + 当前 **`FactorCrossSectionRow`** 对齐；**`UNIQUE(as_of_trade_date, code, factor_set_id)`**；**`init_db` + repository upsert**；**无**对外写入 HTTP（仅内部 CLI/cron）。  
 5. **A2（可选）**：只读 **`GET /api/factors/cross-section/snapshot?...`** 读表（与现算路径二选一或合并策略需另文）。
 

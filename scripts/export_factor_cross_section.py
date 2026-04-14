@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-按交易日导出「价量截面」CSV（读当前 .env 数据库），与 **docs/FACTORS.md**「截面因子数据模型（草案）」对齐。
+按交易日导出「价量截面」**CSV** 或 **Parquet**（读当前 .env 数据库），与 **docs/FACTORS.md**「截面因子数据模型（草案）」及 **docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md** 中 **`factor_exports`** 约定对齐。
 
 默认从 **daily_kline** 取在 **--as-of-date** 当日有 K 的 code（**--max-codes** 截断）；也可用 **--codes-file** 指定标的列表。
 各 code 的日 K 默认经 **`KlineRepository.get_daily_last_n_bars_per_code`** 一次（或分块 **IN**）批量拉取（**ROW_NUMBER** 窗口，MySQL **8+** / SQLite **3.25+**），再在进程内算 **pct_change_n**（列名 **ret_{N}d**）。**`--legacy-per-code-fetch`** 强制逐标的 **`get_daily`** + **`--max-concurrent`** 并发；**`--auto-legacy-fallback`** 在批量失败时自动切到同一路径（stderr 打 **warn**）。当日 bar 另输出 **volume**、**amount**、**turnover_rate**、**pct_change**（**pct_change** 与 **`daily_kline.change_pct`** 一致；**turnover_rate** / **pct_change** 可空）。
@@ -12,6 +12,8 @@
   python scripts/export_factor_cross_section.py --as-of-date 2024-06-28 --dry-run
   python scripts/export_factor_cross_section.py --as-of-date 2024-06-28 --legacy-per-code-fetch --max-concurrent 8 -o out.csv
   python scripts/export_factor_cross_section.py --as-of-date 2024-06-28 --auto-legacy-fallback -o out.csv
+  python scripts/export_factor_cross_section.py --as-of-date 2024-06-28 --period 20 --output-format parquet -o out.parquet
+  python scripts/export_factor_cross_section.py --as-of-date 2024-06-28 -o cross.csv --print-manifest-snippet
 
 **--dry-run**：只解析标的列表（**--codes-file** 或 **KlineRepository.list_codes_on_trade_date**），打印条数与首尾 code，不写 CSV、不拉 **period** 窗口。
 
@@ -26,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import json
 import sys
 from collections.abc import Sequence
 from datetime import date
@@ -39,7 +42,10 @@ if _root_s not in sys.path:
 
 from src.common.cli_iso_date import parse_cli_iso_date  # noqa: E402
 from src.data.models import KLine  # noqa: E402
-from src.factors.cross_section import compute_cross_section_row  # noqa: E402
+from src.factors.cross_section import (  # noqa: E402
+    compute_cross_section_row,
+    cross_section_factor_set_id,
+)
 
 
 def _read_codes_file(path: Path) -> list[str]:
@@ -94,6 +100,44 @@ async def _legacy_row_for_code(
     return _row_from_klines(klines, as_of, period, ret_key)
 
 
+def _write_parquet(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
+    import pandas as pd
+
+    df = pd.DataFrame(rows, columns=fieldnames)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, index=False)
+
+
+def _emit_manifest_factor_snippet(
+    *,
+    output_path: str,
+    as_of: date,
+    period: int,
+    row_count: int,
+    fieldnames: list[str],
+    fmt: str,
+) -> None:
+    rel = Path(output_path).as_posix()
+    cli_fmt = "parquet" if fmt == "parquet" else "csv"
+    snippet: dict[str, Any] = {
+        "path": rel,
+        "as_of_trade_date": as_of.isoformat(),
+        "factor_set_id": cross_section_factor_set_id(period=period),
+        "columns": fieldnames,
+        "row_count": row_count,
+        "cli": (
+            "python scripts/export_factor_cross_section.py "
+            f"--as-of-date {as_of.isoformat()} --period {period} "
+            f"--output-format {cli_fmt} -o {rel}"
+        ),
+    }
+    print(
+        "\n# manifest.json 内 factor_exports[] 单条示例（粘贴前按需改 path）：\n"
+        + json.dumps(snippet, ensure_ascii=False, indent=2),
+        file=sys.stderr,
+    )
+
+
 async def _async_main(args: argparse.Namespace) -> int:
     from src.common.config import describe_database_write_target
     from src.data.storage import dispose_database, get_database
@@ -108,6 +152,15 @@ async def _async_main(args: argparse.Namespace) -> int:
     period: int = args.period
     if period < 1:
         print("错误: --period 须 >= 1", file=sys.stderr)
+        return 2
+
+    fmt = str(getattr(args, "output_format", "csv") or "csv").strip().lower()
+    if fmt not in ("csv", "parquet"):
+        print(f"错误: --output-format 须为 csv|parquet，实际 {fmt!r}", file=sys.stderr)
+        return 2
+    out_path = args.output
+    if fmt == "parquet" and (not out_path or str(out_path).strip() in ("", "-")):
+        print("错误: Parquet 须指定 -o 文件路径（不可为 -）", file=sys.stderr)
         return 2
 
     ret_key = f"ret_{period}d"
@@ -205,8 +258,11 @@ async def _async_main(args: argparse.Namespace) -> int:
             ret_key,
             "meta_bars",
         ]
-        out_path = args.output
-        if out_path in (None, "-", ""):
+        if fmt == "parquet":
+            outp = Path(str(out_path))
+            _write_parquet(outp, fieldnames, rows)
+            print(f"已写入 {len(rows)} 行 (parquet) -> {outp}", file=sys.stderr)
+        elif out_path in (None, "-", ""):
             w = csv.DictWriter(sys.stdout, fieldnames=fieldnames, lineterminator="\n")
             w.writeheader()
             w.writerows(rows)
@@ -219,6 +275,22 @@ async def _async_main(args: argparse.Namespace) -> int:
                 w.writerows(rows)
             print(f"已写入 {len(rows)} 行 -> {outp}", file=sys.stderr)
 
+        if bool(getattr(args, "print_manifest_snippet", False)):
+            if fmt == "parquet" or (out_path not in (None, "-", "")):
+                _emit_manifest_factor_snippet(
+                    output_path=str(out_path),
+                    as_of=as_of,
+                    period=period,
+                    row_count=len(rows),
+                    fieldnames=fieldnames,
+                    fmt=fmt,
+                )
+            else:
+                print(
+                    "提示: --print-manifest-snippet 在输出为 stdout 时跳过（请使用 -o 文件路径）",
+                    file=sys.stderr,
+                )
+
         return 0
     finally:
         await dispose_database()
@@ -226,7 +298,7 @@ async def _async_main(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        description="导出指定交易日的截面 ret_Nd、close、volume、amount、turnover_rate、pct_change（CSV）"
+        description="导出指定交易日的截面 ret_Nd、close、volume、amount、turnover_rate、pct_change（CSV 或 Parquet）"
     )
     p.add_argument("--as-of-date", required=True, help="截面交易日 YYYY-MM-DD")
     p.add_argument(
@@ -266,7 +338,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "-o",
         "--output",
         default="-",
-        help="输出 CSV 路径，**-** 表示 stdout",
+        help="输出路径，**-** 表示 stdout（仅 csv）；parquet 须为文件路径",
+    )
+    p.add_argument(
+        "--output-format",
+        choices=("csv", "parquet"),
+        default="csv",
+        help="输出格式（parquet 依赖 PyArrow，见 requirements.txt）",
+    )
+    p.add_argument(
+        "--print-manifest-snippet",
+        action="store_true",
+        help="成功写盘后向 stderr 打印 manifest.json 内 factor_exports[] 单条 JSON 示例",
     )
     p.add_argument(
         "--dry-run",

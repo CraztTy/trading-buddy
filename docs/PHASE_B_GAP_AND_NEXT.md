@@ -50,3 +50,4 @@
 | 2026-04-13 | **§2 / 实验目录**：**`FACTORS.md`** 截面草案；**`experiments/README.md`**；**`export_factor_cross_section.py`**（**`--dry-run`**、**`get_daily_last_n_bars_per_code`**、**`--legacy-per-code-fetch`** / **`--auto-legacy-fallback`**、**`--max-concurrent`**）；**`KlineRepository.list_codes_on_trade_date`**、**`get_daily_last_n_bars_per_code`**；根 **README** / **`FIRST_STEPS`**；**`tests/test_kline_repository_sqlite.py`**、**`tests/test_export_factor_cross_section.py`**。 |
 | 2026-04-14 | **§2**：**`GET /api/factors/cross-section`**、**`compute_cross_section_row`**、Vue 快捷链、**`verify_stack`** 截面烟囱、**`tests/test_factors_cross_section.py`**；**§2 表**「仓库现状 / 缺口」与上述对齐。 |
 | 2026-04-15 | **§2「厚」前设计**：新增 **[FACTOR_SNAPSHOT_AND_PERSISTENCE.md](FACTOR_SNAPSHOT_AND_PERSISTENCE.md)**；**§2 表**「建议下一小步」链至该文。 |
+| 2026-04-16 | **B2 薄落地**：**`export_factor_cross_section.py`** 支持 **Parquet**、**`--print-manifest-snippet`**；**`cross_section_factor_set_id`**；**`pyarrow`** 依赖。 |

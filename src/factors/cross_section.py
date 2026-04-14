@@ -23,6 +23,14 @@ class CrossSectionRowData:
     meta_bars: int
 
 
+def cross_section_factor_set_id(*, period: int, version: str = "v1") -> str:
+    """与 **docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md** 中 ``factor_set_id`` 占位一致：``ret_close_{N}d_v1``。"""
+    if period < 1:
+        raise ValueError("period 须 >= 1")
+    v = (version or "v1").strip() or "v1"
+    return f"ret_close_{period}d_{v}"
+
+
 def compute_cross_section_row(
     klines: list[KLine],
     as_of: date,

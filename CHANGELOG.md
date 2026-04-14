@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.2] — 2026-04-16
+
+### Added
+
+- **`cross_section_factor_set_id()`**：与 **`docs/FACTOR_SNAPSHOT_AND_PERSISTENCE.md`** 中 **`factor_set_id`** 占位一致（**`ret_close_{N}d_v1`**）。
+- **`export_factor_cross_section.py`**：**`--output-format parquet`**（**PyArrow**）、**`--print-manifest-snippet`**（stderr 输出 **`manifest.factor_exports[]`** JSON 单条示例）。
+- **依赖**：**`pyarrow`** 写入 **`requirements.txt`**（与 **pandas** 写 Parquet 配套）。
+
+### Changed
+
+- **文档**：**`FACTORS.md`**、**`FACTOR_SNAPSHOT_AND_PERSISTENCE.md`**（B2 落地说明）、**`experiments/README.md`**、**`.env.example`**。
+
 ## [1.2.0] — 2026-04-10
 
 ### Added

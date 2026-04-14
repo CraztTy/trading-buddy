@@ -55,6 +55,8 @@ def _args(**overrides) -> Namespace:
         legacy_per_code_fetch=False,
         auto_legacy_fallback=False,
         output="-",
+        output_format="csv",
+        print_manifest_snippet=False,
         dry_run=False,
     )
     base.update(overrides)
@@ -245,3 +247,56 @@ async def test_export_cross_section_codes_file_only_comments_exit_2(
         )
     )
     assert rc == 2
+
+
+async def test_export_cross_section_parquet_dash_output_exit_2(empty_sqlite_db):
+    mod = _load_export_module()
+    rc = await mod._async_main(
+        _args(as_of_date="2024-06-10", output="-", output_format="parquet", period=2)
+    )
+    assert rc == 2
+
+
+async def test_export_cross_section_parquet_roundtrip(empty_sqlite_db, tmp_path):
+    mod = _load_export_module()
+    db = empty_sqlite_db
+    async with db.session() as session:
+        await KlineRepository(session).bulk_insert(
+            [_k("sh.tz", date(2024, 6, d), close=float(d)) for d in range(1, 12)]
+        )
+    outp = tmp_path / "cross.parquet"
+    rc = await mod._async_main(
+        _args(output=str(outp), output_format="parquet", max_codes=10, period=2)
+    )
+    assert rc == 0
+    import pandas as pd
+
+    df = pd.read_parquet(outp)
+    assert len(df) == 1
+    assert df["code"].iloc[0] == "sh.tz"
+    assert float(df["close"].iloc[0]) == pytest.approx(10.0)
+
+
+async def test_export_cross_section_manifest_snippet_stderr(
+    empty_sqlite_db, tmp_path, capsys
+):
+    mod = _load_export_module()
+    db = empty_sqlite_db
+    async with db.session() as session:
+        await KlineRepository(session).bulk_insert(
+            [_k("sh.tz", date(2024, 6, d), close=float(d)) for d in range(1, 12)]
+        )
+    outp = tmp_path / "cross.csv"
+    rc = await mod._async_main(
+        _args(
+            output=str(outp),
+            print_manifest_snippet=True,
+            max_codes=10,
+            period=2,
+        )
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "factor_exports" in err
+    assert "ret_close_2d_v1" in err
+    assert "manifest.json" in err

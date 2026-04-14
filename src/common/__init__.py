@@ -1,6 +1,6 @@
 # Common模块
 
-__version__ = "1.2.0"
+__version__ = "1.2.2"
 
 from .config import (
     cors_allow_origins,

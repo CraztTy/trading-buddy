@@ -4,7 +4,11 @@
 与 API 解耦；后续可挂研究脚本或 HTTP 预览层。
 """
 
-from .cross_section import CrossSectionRowData, compute_cross_section_row
+from .cross_section import (
+    CrossSectionRowData,
+    compute_cross_section_row,
+    cross_section_factor_set_id,
+)
 from .kline_series import KlineFloatColumn, kline_float_series, kline_true_range
 from .primitives import (
     atr_wilder,
@@ -39,6 +43,7 @@ from .primitives import (
 __all__ = [
     "CrossSectionRowData",
     "compute_cross_section_row",
+    "cross_section_factor_set_id",
     "KlineFloatColumn",
     "kline_float_series",
     "kline_true_range",
