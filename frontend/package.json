@@ -30,7 +30,7 @@
     "e2e:preview:only": "vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },
   "dependencies": {
-    "echarts": "^5.5.0",
+    "echarts": "^6.0.0",
     "jszip": "^3.10.1",
     "vue": "^3.4.21",
     "vue-echarts": "^6.6.9"
