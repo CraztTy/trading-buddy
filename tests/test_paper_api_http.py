@@ -175,3 +175,33 @@ async def test_paper_reset(http_test_client, empty_sqlite_db):
     assert r.json()["cash"] == 1_000_000.0
     st = http_test_client.get("/api/paper/state").json()
     assert st["positions"] == []
+
+
+async def test_paper_state_and_order_respect_adjust_flag(http_test_client, empty_sqlite_db):
+    code = "sh.padj"
+    base = date(2025, 8, 1)
+    rows_unadj = [_bar(code, base + timedelta(days=i), 10.0) for i in range(3)]
+    rows_adj = [_bar(code, base + timedelta(days=i), 20.0) for i in range(3)]
+    for r in rows_adj:
+        r.adjust_flag = "2"
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows_unadj + rows_adj)
+
+    # state with adjust_flag=2 should price at 20
+    st = http_test_client.get("/api/paper/state", params={"adjust_flag": "2"}).json()
+    assert st["account"]["cash"] == 1_000_000.0
+
+    # buy with adjust_flag=2 -> fill_price=20
+    r = http_test_client.post(
+        "/api/paper/orders",
+        json={"code": code, "side": "buy", "quantity": 100, "adjust_flag": "2"},
+    )
+    assert r.status_code == 200
+    assert r.json()["fill_price"] == 20.0
+    assert r.json()["cash_after"] == 1_000_000.0 - 2000.0
+
+    # state default (adjust_flag=3) should price at 10 after buy
+    st2 = http_test_client.get("/api/paper/state").json()
+    pos = st2["positions"][0]
+    assert pos["last_close"] == 10.0
+    assert pos["market_value"] == 1000.0

@@ -1983,15 +1983,39 @@
         "summary": "Paper State",
         "description": "账户现金、持仓、按最新日 K 估算的权益（成交列表见 GET /paper/orders）。",
         "operationId": "paper_state_api_paper_state_get",
+        "parameters": [
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Paper State Api Paper State Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -4376,6 +4400,12 @@
             "minimum": 100.0,
             "title": "Quantity",
             "description": "股数：须为 100 的整数倍（A 股一手）"
+          },
+          "adjust_flag": {
+            "type": "string",
+            "title": "Adjust Flag",
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+            "default": "3"
           }
         },
         "type": "object",

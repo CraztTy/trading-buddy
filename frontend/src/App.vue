@@ -322,6 +322,7 @@ async function copyCurrentCode() {
         v-else-if="mainView === 'paper'"
         class="block enter-stagger"
         :draft="paperDraft"
+        :adjust-flag="dashboardAdjustFlag"
         @navigate-backtest="onPaperNavigateBacktest"
       />
     </main>

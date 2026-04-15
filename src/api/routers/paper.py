@@ -23,6 +23,7 @@ class PaperOrderRequest(BaseModel):
         le=1_000_000,
         description="股数：须为 100 的整数倍（A 股一手）",
     )
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
 
     @field_validator("quantity")
     @classmethod
@@ -69,7 +70,10 @@ def _norm_code(raw: str) -> str:
 
 
 @router.get("/state")
-async def paper_state(session: AsyncSession = Depends(get_session)) -> dict:
+async def paper_state(
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
     """账户现金、持仓、按最新日 K 估算的权益（成交列表见 GET /paper/orders）。"""
     repo = PaperRepository(session)
     acc = await repo.get_or_create_default_account()
@@ -79,7 +83,7 @@ async def paper_state(session: AsyncSession = Depends(get_session)) -> dict:
     mv_total = 0.0
     pos_out = []
     for p in positions:
-        kl = await kline_repo.get_daily(p.code, limit=1)
+        kl = await kline_repo.get_daily(p.code, limit=1, adjust_flag=adjust_flag)
         last = float(kl[-1].close) if kl else float(p.avg_price)
         td_k = kl[-1].trade_date if kl else None
         sellable = await repo.sellable_quantity(acc.id, p.code, td_k) if td_k is not None else 0
@@ -150,7 +154,7 @@ async def paper_place_order(
         raise HTTPException(status_code=400, detail="side 须为 buy 或 sell")
 
     kline_repo = KlineRepository(session)
-    kl = await kline_repo.get_daily(code, limit=1)
+    kl = await kline_repo.get_daily(code, limit=1, adjust_flag=body.adjust_flag)
     if not kl:
         raise HTTPException(status_code=400, detail=f"无日 K 数据，无法为 {code} 定价")
 

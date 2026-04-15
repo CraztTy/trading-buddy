@@ -7,6 +7,7 @@ import { showToast } from "../composables/useToast.js";
 const props = defineProps({
   /** 从回测「下一步」带入 { code, quantity } */
   draft: { type: Object, default: null },
+  adjustFlag: { type: String, default: "3" },
 });
 
 const emit = defineEmits(["navigate-backtest"]);
@@ -101,8 +102,9 @@ async function loadState() {
   lastPaperStateApiPath.value = "";
   lastPaperOrdersApiPath.value = "";
   try {
-    state.value = await fetchJson("paper/state", { toast: false });
-    lastPaperStateApiPath.value = "/api/paper/state";
+    const qs = new URLSearchParams({ adjust_flag: props.adjustFlag });
+    state.value = await fetchJson(`paper/state?${qs}`, { toast: false });
+    lastPaperStateApiPath.value = `/api/paper/state?${qs}`;
   } catch (e) {
     state.value = null;
     orders.value = [];
@@ -115,6 +117,8 @@ async function loadState() {
   await loadOrders(true);
   await loadWatchlist();
 }
+
+watch(() => props.adjustFlag, () => loadState());
 
 async function applyOrderFilter() {
   await loadOrders(true);
@@ -132,6 +136,7 @@ function normalizedOrderPayload() {
     code: orderCode.value.trim(),
     side: orderSide.value,
     quantity: qty,
+    adjust_flag: props.adjustFlag,
   };
 }
 
