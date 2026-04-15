@@ -222,6 +222,9 @@ const runHistorySearchInput = ref("");
 const selectedRunDetail = ref(null);
 const selectedRunDetailErr = ref("");
 const selectedRunLoading = ref(false);
+const runComparePair = ref([]);
+const runCompareLoading = ref(false);
+const runCompareErr = ref("");
 /** 列表行「导出」拉取详情时的 id，用于按钮 loading */
 const exportRunIdBusy = ref(null);
 /** 列表多选：准备批量 ZIP 的存档 id */
@@ -846,6 +849,40 @@ async function openRunDetail(id) {
   } finally {
     selectedRunLoading.value = false;
   }
+}
+
+async function compareSelectedRuns() {
+  const ids = [...runArchiveSelectedIds.value].sort((a, b) => a - b);
+  if (ids.length !== 2) return;
+  runComparePair.value = [];
+  runCompareErr.value = "";
+  runCompareLoading.value = true;
+  try {
+    const [a, b] = await Promise.all(
+      ids.map((id) => fetchJson(`backtest/runs/${id}`, { toast: false }))
+    );
+    runComparePair.value = [a, b];
+  } catch (e) {
+    runCompareErr.value = e?.message || "对比加载失败";
+  } finally {
+    runCompareLoading.value = false;
+  }
+}
+
+function closeRunCompare() {
+  runComparePair.value = [];
+  runCompareErr.value = "";
+}
+
+function compareValueLabel(v) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(3);
+  return String(v);
+}
+
+function compareDeltaClass(a, b) {
+  if (typeof a !== "number" || typeof b !== "number") return "";
+  return a > b ? "up" : a < b ? "down" : "";
 }
 
 function archiveJsonBasename(detail) {
@@ -2067,6 +2104,14 @@ onMounted(() => {
         >
           {{ runZipBusy ? "打包中…" : `导出所选 ZIP（${runArchiveSelectedIds.length}）` }}
         </button>
+        <button
+          type="button"
+          class="run-compare-btn"
+          :disabled="runCompareLoading || runArchiveSelectedIds.length !== 2"
+          @click="compareSelectedRuns"
+        >
+          {{ runCompareLoading ? "加载中…" : "对比所选（2）" }}
+        </button>
       </div>
       <ul v-if="runHistory.length" class="run-ul">
         <li v-for="r in runHistory" :key="r.id" class="run-li mono">
@@ -2113,6 +2158,91 @@ onMounted(() => {
         <pre class="run-pre mono">{{ JSON.stringify(selectedRunDetail.request_params, null, 2) }}</pre>
         <p class="dim">response_payload</p>
         <pre class="run-pre mono">{{ JSON.stringify(selectedRunDetail.response_payload, null, 2) }}</pre>
+      </div>
+
+      <p v-if="runCompareLoading" class="dim mono">加载对比详情…</p>
+      <p v-else-if="runCompareErr" class="run-history-err mono" role="alert">{{ runCompareErr }}</p>
+      <div v-if="runComparePair.length === 2" class="run-compare">
+        <div class="run-compare-hd">
+          <p class="run-compare-title">回测结果对比</p>
+          <button type="button" class="ghost run-ghost-tight" @click="closeRunCompare">关闭</button>
+        </div>
+        <div class="run-compare-table-wrap">
+          <table class="run-compare-table mono">
+            <thead>
+              <tr>
+                <th class="rc-metric">指标</th>
+                <th class="rc-run">
+                  <span class="rc-id">#{{ runComparePair[0].id }}</span>
+                  <span class="rc-kind">{{ runComparePair[0].kind }}</span>
+                </th>
+                <th class="rc-run">
+                  <span class="rc-id">#{{ runComparePair[1].id }}</span>
+                  <span class="rc-kind">{{ runComparePair[1].kind }}</span>
+                </th>
+                <th class="rc-delta">差值</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-if="runComparePair[0].response_payload?.result && runComparePair[1].response_payload?.result">
+                <tr v-for="key in [
+                  {k:'total_return_pct',label:'策略收益 %'},
+                  {k:'buy_hold_return_pct',label:'买入持有 %'},
+                  {k:'excess_return_pct',label:'超额 %'},
+                  {k:'max_drawdown_pct',label:'最大回撤 %'},
+                  {k:'sharpe_ratio',label:'夏普'},
+                  {k:'sortino_ratio',label:'索提诺'},
+                  {k:'calmar_ratio',label:'卡尔玛'},
+                  {k:'annualized_return_pct',label:'年化收益 %'},
+                  {k:'annualized_volatility_pct',label:'年化波动 %'},
+                  {k:'long_trades_count',label:'交易次数'},
+                  {k:'win_rate_pct',label:'胜率 %'},
+                  {k:'avg_holding_return_pct',label:'平均持仓收益 %'},
+                ]" :key="key.k">
+                  <td class="rc-metric">{{ key.label }}</td>
+                  <td class="rc-run">{{ compareValueLabel(runComparePair[0].response_payload.result[key.k]) }}</td>
+                  <td class="rc-run">{{ compareValueLabel(runComparePair[1].response_payload.result[key.k]) }}</td>
+                  <td class="rc-delta" :class="compareDeltaClass(runComparePair[0].response_payload.result[key.k], runComparePair[1].response_payload.result[key.k])">
+                    {{ compareValueLabel((runComparePair[0].response_payload.result[key.k] ?? 0) - (runComparePair[1].response_payload.result[key.k] ?? 0)) }}
+                  </td>
+                </tr>
+              </template>
+              <template v-else-if="runComparePair[0].response_payload?.scan_result && runComparePair[1].response_payload?.scan_result">
+                <tr>
+                  <td class="rc-metric">扫描标的数</td>
+                  <td class="rc-run">{{ compareValueLabel(runComparePair[0].response_payload.scan_result.items?.length) }}</td>
+                  <td class="rc-run">{{ compareValueLabel(runComparePair[1].response_payload.scan_result.items?.length) }}</td>
+                  <td class="rc-delta">—</td>
+                </tr>
+                <tr>
+                  <td class="rc-metric">fast / slow</td>
+                  <td class="rc-run">{{ runComparePair[0].response_payload.scan_result.fast_period }} / {{ runComparePair[0].response_payload.scan_result.slow_period }}</td>
+                  <td class="rc-run">{{ runComparePair[1].response_payload.scan_result.fast_period }} / {{ runComparePair[1].response_payload.scan_result.slow_period }}</td>
+                  <td class="rc-delta">—</td>
+                </tr>
+                <tr>
+                  <td class="rc-metric">sort_by</td>
+                  <td class="rc-run">{{ runComparePair[0].response_payload.scan_result.sort_by }}</td>
+                  <td class="rc-run">{{ runComparePair[1].response_payload.scan_result.sort_by }}</td>
+                  <td class="rc-delta">—</td>
+                </tr>
+              </template>
+              <tr v-else>
+                <td colspan="4" class="rc-muted">所选存档结果类型不一致或缺少 result/scan_result，仅展示基础信息</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="run-compare-json">
+          <div>
+            <p class="dim mono">#{{ runComparePair[0].id }} request_params</p>
+            <pre class="run-pre mono">{{ JSON.stringify(runComparePair[0].request_params, null, 2) }}</pre>
+          </div>
+          <div>
+            <p class="dim mono">#{{ runComparePair[1].id }} request_params</p>
+            <pre class="run-pre mono">{{ JSON.stringify(runComparePair[1].request_params, null, 2) }}</pre>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -3157,5 +3287,132 @@ onMounted(() => {
   line-height: 1.35;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.run-compare-btn {
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(62, 224, 255, 0.12);
+  color: var(--meridian);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.run-compare-btn:hover:not(:disabled) {
+  border-color: rgba(62, 224, 255, 0.45);
+  background: rgba(62, 224, 255, 0.22);
+}
+
+.run-compare-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.run-compare {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.55);
+}
+
+.run-compare-hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.run-compare-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--mist);
+}
+
+.run-compare-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+
+.run-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.run-compare-table th,
+.run-compare-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule-faint);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.run-compare-table th {
+  color: var(--paper-muted);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.run-compare-table .rc-metric {
+  width: 26%;
+  color: var(--brass-dim);
+}
+
+.run-compare-table .rc-run {
+  width: 28%;
+  color: var(--paper);
+}
+
+.run-compare-table .rc-delta {
+  width: 18%;
+  color: var(--paper-muted);
+}
+
+.run-compare-table .rc-delta.up {
+  color: var(--gain);
+}
+
+.run-compare-table .rc-delta.down {
+  color: var(--danger);
+}
+
+.run-compare-table .rc-id {
+  display: block;
+  font-weight: 700;
+  color: var(--meridian);
+}
+
+.run-compare-table .rc-kind {
+  display: block;
+  font-size: 0.62rem;
+  color: var(--paper-muted);
+}
+
+.run-compare-table .rc-muted {
+  color: var(--paper-muted);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.run-compare-json {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 1024px) {
+  .run-compare-json {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
