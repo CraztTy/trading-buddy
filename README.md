@@ -71,10 +71,12 @@ python scripts/feed_dashboard.py --profile quick
 
 # 6) 启动 API
 python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+# 或（与 .env 中 API_HOST / API_PORT / API_DEBUG 一致）：python scripts/run_api.py
 
 # 7) 另开终端：Vue 看板
 cd frontend && npm install && npm run dev（可选：参考 `frontend/.env.example` 配置 `VITE_PROXY_TARGET` 等）
-# 开发默认 http://localhost:5173 ，经 Vite 代理访问本机 API
+#    已在 frontend 装好依赖时，也可在仓库根执行：npm run frontend:dev（见根目录 package.json）
+# 开发默认 http://localhost:5173 ，经 Vite 代理访问本机 API（生产环境 Nginx 反代 **`/api`** 与 **`/health*`** 示例见 **`frontend/README.md`**）
 # 看板含「行情看板 / 股票列表 / 自选 / 因子预览 / 策略回测 / 纸交易」：指数卡片下方先请求 **`GET /api/data/trade-calendar/options`**（**`TRADE_CALENDAR_EXCHANGE_OPTIONS`** / **`TRADE_CALENDAR_DEFAULT_EXCHANGE`**）再拉 **`GET /api/data/trade-calendar/status`**（60s 轮询状态）；侧栏排行含涨幅 / 跌幅 / **成交额**（`dashboard/turnover`，可选日期）；股票列表页调用 stocks/list，点行可回到行情并切换标的；每行 **「复制」**、**「加自选」**；**「导出本页 CSV」** 导出当前页列表；**「导出全部」** 按当前筛选分页拉取合并（默认最多 1 万条，UTF-8 BOM）；若响应 offset 与请求不一致（服务端钳制）界面会提示。自选走 **`GET/POST/DELETE /api/watchlist/*`**（见下节 API 摘要）。同浏览器 **会话**内用 **sessionStorage** 记住主视图、当前标的、涨跌/成交额 Tab（刷新保留，关标签页后清除）。**纸交易**页走 **`GET /api/paper/state`**、**`GET /api/paper/orders`**（分页/可选 `code` 筛选）、**`POST /api/paper/orders`**、**`POST /api/paper/account/reset`**：默认百万虚拟资金，市价单按标的**最近日 K 收盘价**撮合；股数须 **100 整数倍**；**卖出 T+1**（`buy_trade_date` 早于定价日 K 线日，FIFO 批）。策略回测页可点 **「闭环 · 纸交易」** 带入当前标的
 ```
 
@@ -90,6 +92,15 @@ cd frontend && npm install && npm run dev（可选：参考 `frontend/.env.examp
 
 ```
 trading-buddy/
+├── LICENSE                # MIT（与文末「License」一致）
+├── package.json           # 可选：根目录 npm 脚本转发到 frontend/（无需在根 npm install；Node 20+）
+├── .nvmrc                 # 可选：nvm/fnm 等使用 Node 20（与 Playwright CI 一致）
+├── .python-version        # 可选：pyenv 等使用 Python 3.12（与 pytest CI job 一致）
+├── .github/               # **workflows/ci.yml**（pytest + Playwright）、**dependabot.yml**（pip/npm 周更 PR）
+├── .editorconfig          # 可选：EditorConfig（缩进、换行、尾空格等）
+├── .gitattributes         # 可选：文本换行策略（如 ***.sh** 强制 LF）
+├── scripts/stop_dev.ps1   # Windows：停 8000 / 5173–5175 / 4173 等监听进程
+├── scripts/stop_dev.sh    # macOS/Linux：同上（需 lsof 或 fuser）
 ├── docker-compose.yml    # 可选：本地 MySQL + Redis
 ├── requirements.txt
 ├── .env.example           # 环境变量模板（勿写真实密码）
@@ -140,6 +151,17 @@ trading-buddy/
 **Redis**：`REDIS_ENABLED`、`REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`（可选）。
 
 **其它**：`DATA_SOURCE`、`LOG_LEVEL`、`API_HOST`、`API_PORT`、`CORS_ORIGINS`（生产建议显式域名，逗号分隔）。
+
+### API 与脚本可观测性（阶段 A）
+
+键名与默认值以 **`.env.example`** 为准；以下为摘要。
+
+- **探针**：`GET /health`（含 `pid`、`uptime_sec` 等浅层字段）、`GET /health/ready`（`probe_ms`、数据库与 Redis 状态）。
+- **请求追踪**：所有响应带 **`X-Request-ID`**（可传请求头 **`X-Request-ID`** / **`X-Correlation-ID`**，字符集见 `.env.example`）；文本日志行尾默认有 **`rid=`**，`LOG_JSON=true` 时进入 JSON 的 `extra`。
+- **`LOG_JSON=true`**：控制台与 `logs/*.log` 使用 Loguru 行级 JSON，便于 Loki/ELK。
+- **访问日志**：`API_ACCESS_LOG=true` 写 **`http.access`**；**`API_ACCESS_LOG_IGNORE_PREFIXES`** 控制不记录的路径前缀（未配置时默认跳过 **`/health*`**；设为 **`none`** 则全部路径都记）。
+- **慢请求 WARN**：**`API_SLOW_REQUEST_WARN_MS`**（毫秒，**`0`** 关闭）写 **`http.slow`**；**`API_SLOW_REQUEST_IGNORE_PREFIXES`** 与上类似（默认 **`/health`**；**`none`** 表示不忽略）。
+- **脚本与运维**：**`scripts/stop_dev.ps1`**（Windows）、**`scripts/stop_dev.sh`**（macOS/Linux，**`lsof`** / **`fuser`**）结束 API **8000**、Vite **5173–5175**、preview **4173** 等监听；**`stop_dev.ps1`** 另清理常见 uvicorn 残留子进程；**`scripts/feed_dashboard.py`**、**`scripts/fetch_data.py`**、**`scripts/verify_stack.py`** 输出 **`[timing]`** 分段或总耗时；**`scripts/init_db.py`**、**`scripts/check_daily_kline_quality.py`**（后者耗时在 **stderr**，不破坏 **`--json`** 的 stdout）。
 
 ## 最小回测（双均线 · 批量 · 买入持有）
 
@@ -194,11 +216,17 @@ python -m pytest tests/test_trend_v0_compare_helpers.py -q   # trend_v0_backtest
 python -m pytest tests/test_cli_iso_date_scripts.py tests/test_export_factor_cross_section.py tests/test_factors_cross_section.py -q   # 前：cli_iso_date + 多脚本 importlib；export_factor_cross_section（批量失败 exit 1、codes-file、dry-run、legacy / auto-fallback）；compute_cross_section_row 原语
 ```
 
-Windows 上若未把 `pytest` 装成全局命令，请统一用 **`python -m pytest`**（与 CI 一致）。脚本 CLI 契约（不连库、不跑 Baostock）：**`tests/test_cli_fetch.py`**（含 **`feed_dashboard.py --dry-run`** 对步骤链与 **`--skip-calendar`** 的断言）。
+Windows 上若未把 `pytest` 装成全局命令，请统一用 **`python -m pytest`**（与 CI 一致）。脚本 CLI 契约（不连库、不跑 Baostock）：**`tests/test_cli_fetch.py`**（含 **`feed_dashboard.py --dry-run`** 对步骤链与 **`--skip-calendar`** 的断言）。在仓库根（已 **`pip install -r requirements.txt`** 且 **`frontend`** 已 **`npm install`**）可一次跑 **Python 全量单测 + Vue 生产构建**：**`npm run verify`**；分项：**`npm run verify:pytest`**、**`npm run verify:frontend`**（见根 **`package.json`**）。Node 版本与 CI 对齐可参考根目录 **`.nvmrc`**（**20**）。
 
-推送 / PR 至 **`main`** 或 **`master`** 时，GitHub Actions（`.github/workflows/ci.yml`）会安装 `requirements.txt` 并执行上述命令；另有一 job 在 **`frontend/`** 构建静态站、启动 **`vite preview`**（4173）后跑 **Playwright**（`e2e/*.spec.js`，`/api` 由浏览器侧 mock，不依赖后端）。仓库 **Actions** 页可手动 **`Run workflow`**（**`workflow_dispatch`**）重跑 CI。
+推送 / PR 至 **`main`** 或 **`master`** 时，GitHub Actions（`.github/workflows/ci.yml`）会安装 `requirements.txt` 并执行上述命令；**Python** 版本由 **`python-version-file: .python-version`** 读取，**Node**（Playwright job）由 **`node-version-file: .nvmrc`** 读取。另有一 job 在 **`frontend/`** 构建静态站、启动 **`vite preview`**（4173）后跑 **Playwright**（`e2e/*.spec.js`，`/api` 由浏览器侧 mock，不依赖后端）。仓库 **Actions** 页可手动 **`Run workflow`**（**`workflow_dispatch`**）重跑 CI。**Dependabot**（**`.github/dependabot.yml`**）按周检查 **`requirements.txt`** 与 **`frontend/package-lock.json`** 的更新并开 PR（可在仓库 **Settings → Code security** 中确认已启用）。
 
-**前端 E2E（本机）**：须**先**在终端一 `cd frontend && npm run e2e:preview`（4173，内含 **`npm run build`**）。若你单独用 **`vite preview`**，改界面后请先 **`npm run build`** 再重开 preview，否则 E2E 仍跑旧 **`dist/`**。终端二 `cd frontend` 后 **`npm install`**（已把 **`@playwright/test`** 升到 **1.59.x**，与旧版相比在 Windows 上往往更稳）、`npx playwright install chromium`（首次）再 `npm run test:e2e`。`preflight` 会打出 **`[e2e] 0` / `[e2e] 1 preview OK`**；随后 **`run-pw-heartbeat.cjs`** 约每 **20s** 打 **`[e2e] heartbeat …`**。若 **多次 heartbeat 仍没有** **`[playwright] config loaded`**，说明卡在 **Playwright CLI 启动**（常见于杀软扫 `node_modules`）；可另跑 **`npm run test:e2e:diag-import`** 看仅 `import('@playwright/test')` 要多少毫秒。用例含 **`e2e/turnover-tab.spec.js`**、**`e2e/stock-list.spec.js`**、**`e2e/backtest-panel.spec.js`**（含异步取消排队）、**`e2e/factors-preview.spec.js`**、**`e2e/paper-trading.spec.js`**、**`e2e/main-nav-smoke.spec.js`**（主导航与行情地标；其余 spec 同套 **`installApiMocks`**）。**Windows 本机**默认用已安装的 **Google Chrome**（`channel=chrome`）。若环境里误设了 **`CI=true`**，会改走**内置 Chromium**（很慢）；本机可先执行 **`Remove-Item Env:CI -ErrorAction SilentlyContinue`**。若必须用内置包，设 **`PLAYWRIGHT_CHANNEL=chromium`**。默认 **`http://127.0.0.1:4173`**，可用 **`PLAYWRIGHT_BASE_URL`** 覆盖。**未设 `PLAYWRIGHT_BASE_URL`** 而直接 **`npx playwright test`** 时，会先 **`npm run build`**（`e2e/global-setup.cjs`）再由内置 **webServer** 起 **4173**；本机若已有 **`vite preview`** 占 **4173**，需先停掉或改用 **`PLAYWRIGHT_BASE_URL`** 指向自建 preview。
+**前端 E2E（本机）**：**方式 A** 可单终端不设 **`PLAYWRIGHT_BASE_URL`**（见下）；**方式 B** 常在终端一 `cd frontend && npm run e2e:preview`（4173，内含 **`npm run build`**），终端二设 **`PLAYWRIGHT_BASE_URL`** 后跑用例。若你单独用 **`vite preview`**，改界面后请先 **`npm run build`** 再重开 preview，否则 E2E 仍跑旧 **`dist/`**（方式 A 下若 **4173** 已被占用，Playwright 会**复用**已有 preview，**更**要注意 **`dist/`** 是否已重建）。`cd frontend` 后 **`npm install`**；**macOS / Linux** 或 Windows 上显式 **`PLAYWRIGHT_CHANNEL=chromium`** 时，首次需 **`npx playwright install chromium`**。**Windows**：若已 **`npx playwright install chromium`**，**`npm run test:e2e`** 默认会走**内置 Chromium**（`playwright.config.js` 探测可执行文件）；未安装时仍走本机 **Google Chrome**。然后 **`npm run test:e2e`**（或 **`npm run test:e2e:chromium`** / **`npm run test:e2e:chrome`** 固定浏览器通道）。若已手动下载 **Chrome for Testing** 的 **`chrome-win64.zip`**：先解压到任意目录，在跑 E2E 的终端里将 **`PLAYWRIGHT_EXECUTABLE_PATH`** 设为 **`chrome.exe`** 的绝对路径（**优先于** channel 与内置 Chromium；`playwright.config.js` 会打 **`[playwright] using PLAYWRIGHT_EXECUTABLE_PATH=...`**）。部分压缩包解压后为 **`…\chrome-win64\chrome-win64\chrome.exe`**（多一层同名目录）。**`preflight`**：仅当 **`PLAYWRIGHT_BASE_URL`** 非空时探测该地址并打出 **`[e2e] 1 preview OK`**；未设时跳过探测（避免先于 **webServer** 连 **4173**）。随后 **`run-pw-heartbeat.cjs`** 约每 **20s** 打 **`[e2e] heartbeat …`**。若 **多次 heartbeat 仍没有** **`[playwright] config loaded`**，说明卡在 **Playwright CLI 启动**（常见于杀软扫 `node_modules`）；可另跑 **`npm run test:e2e:diag-import`** 看仅 `import('@playwright/test')` 要多少毫秒。用例含 **`e2e/turnover-tab.spec.js`**、**`e2e/stock-list.spec.js`**、**`e2e/watchlist-panel.spec.js`**、**`e2e/backtest-panel.spec.js`**（含异步取消排队）、**`e2e/factors-preview.spec.js`**、**`e2e/paper-trading.spec.js`**、**`e2e/main-nav-smoke.spec.js`**（主导航与行情地标；其余 spec 同套 **`installApiMocks`**）。**macOS / Linux 本机**或 **CI** 默认用 Playwright **自带 Chromium**；在任意系统要用系统 Chrome 时设 **`PLAYWRIGHT_CHANNEL=chrome`**（Windows 上也会覆盖上述「有内置则优先」）。要强制内置 Chromium：**`PLAYWRIGHT_CHANNEL=chromium`**（并 **`npx playwright install chromium`**）。误设 **`CI=true`** 时，可 **`Remove-Item Env:CI -ErrorAction SilentlyContinue`**。默认 **`http://127.0.0.1:4173`**，可用 **`PLAYWRIGHT_BASE_URL`** 覆盖。**未设 `PLAYWRIGHT_BASE_URL`** 而 **`npm run test:e2e`** / **`npx playwright test`** 时，会先 **`npm run build`**（`e2e/global-setup.cjs`）再由内置 **webServer** 起 **4173**（**CI** 外 **`reuseExistingServer: true`**：本机 **4173** 已有 **`vite preview`** 时会复用，不必先停端口）。
+
+**方式 A（单终端）**：当前 shell **未**设置 **`PLAYWRIGHT_BASE_URL`**（或为空）时，**`preflight`** 不探测端口，**`npm run test:e2e`** 由 **webServer** 起 **4173** 或（非 **CI**）复用已监听的 **4173**；图形调试用 **`npm run test:e2e:ui`**；UI + 固定通道：**`npm run test:e2e:ui:chromium`** / **`:ui:chrome`**（均可加 **`-- e2e/某.spec.js`**）。若环境里**非空** **`PLAYWRIGHT_BASE_URL`** 而对应地址未起服务，**`preflight`** 会失败：可 **`Remove-Item Env:PLAYWRIGHT_BASE_URL -ErrorAction SilentlyContinue`** 后重试，或先起 preview 再跑（方式 B）。
+
+**方式 B（双终端，推荐日常）**：终端一 **`cd frontend && npm run e2e:preview`**（或 **`npm run e2e:preview:only`**，在 **`dist/`** 已新时省一次 **`build`**）。终端二 **`cd frontend && npm run test:e2e:connected`**（脚本已设 **`PLAYWRIGHT_BASE_URL`**；**`preflight`** 探测、不启 webServer）。子集：**`npm run test:e2e:connected -- e2e/main-nav-smoke.spec.js`**。Playwright UI：**`npm run test:e2e:ui:connected`**；UI + 固定通道：**`npm run test:e2e:ui:connected:chromium`** / **`:ui:connected:chrome`**。方式 B 无头固定通道：**`npm run test:e2e:connected:chromium`** / **`:connected:chrome`**。方式 A 固定通道子集：**`npm run test:e2e:chromium -- e2e/main-nav-smoke.spec.js`**。可选：终端二先设 **`PLAYWRIGHT_EXECUTABLE_PATH`** 指向 **Chrome for Testing** 的 **`chrome.exe`**（与 **`frontend/.env.example`** 一致）。亦可手写 **`PLAYWRIGHT_BASE_URL`** 后 **`npm run test:e2e`**。命令一览表见 **`frontend/README.md`**「E2E」。在仓库根也可 **`npm run frontend:e2e:smoke`**、**`npm run frontend:e2e:connected`**、**`npm run frontend:e2e:chromium`** 等（须已 **`cd frontend && npm install`**）；完整别名见根目录 **`package.json`**。要把 **`--list`** 等参数交给 **Playwright**，在根目录用 **`npm run …`** 时需**多一层 `--`**（外层把参数交给内层 **`npm --prefix`**），例如 **`npm run frontend:e2e:smoke -- -- --list`**；更直观可写 **`npm --prefix frontend run test:e2e:smoke -- --list`**。
+
+**E2E 顶栏主视图**：切换「行情看板 / 股票列表 / …」请用 **`App.vue`** 的 **`data-testid="main-nav-*"`** 与 **`frontend/e2e/fixtures/mainNavTestIds.js`** 的 **`MAIN_NAV`**（`page.getByTestId(MAIN_NAV.stocks)` 等），避免 `getByRole({ name })` 与页内其它按钮子串冲突；说明见 **`frontend/README.md`**「E2E」。
 
 `pytest.ini` 已设置 **`testpaths = tests`**，只收集 `tests/` 下用例；含 `empty_sqlite_db` fixture 下的 **K 线 / 股票仓储** SQLite 集成测（`tests/test_*_repository_sqlite.py`），以及 **`http_test_client`**（`tests/conftest.py`）上的 **`tests/test_*_api_http.py`**（股票 / K 线 / 看板 / 回测 / **`/`**、**`/health`**、**`/health/ready`**，`TestClient` + `get_session` 依赖覆盖）。  
 **手工 DB 冒烟**（需已配置 `.env` 并建表）：`python scripts/smoke_raw_sql.py`、`python scripts/smoke_kline_persist.py`；**栈探测**（DB 计数含 **`trade_calendar`** 总行数及 **按 exchange 分行数** + Redis + 核心 API `TestClient`，含 **`GET /openapi.json`**、**`/api/data/trade-calendar/options`**、**`status`**、**`GET /api/strategies/catalog`**；契约阶段校验因子 **`ops[].id`** 与 **`OpName`** 一致；**overview 首条指数有 `date` 时**烟囱 **`GET /api/factors/cross-section`**（否则 **[SKIP]**）；另含回测异步 **`GET /api/backtest/jobs/{未知 job_id}` → 404**、**`POST /api/backtest/jobs/{未知 job_id}/cancel` → 404**、**`POST /api/backtest/run?async=true` + 非法 `strategy_id` → 400**）：`python scripts/verify_stack.py`（catalog 形态断言实现于该脚本、**不迁入** **`src/`**，详见脚本顶部说明）；若 DB 尚未建全表（例如缺 **`trade_calendar`**），可用 **`python scripts/verify_stack.py --skip-db`** 跳过行数统计，仍跑 Redis、API 冒烟、catalog 与上述异步检查。支持 **`DATABASE_MODE=sqlite`** 与 **`mysql`**；在全部 GET 200 后会校验 **`/api/backtest/catalog`** 的 **`engine_version`**、**`post_run_path`**、**`doc_ref`**、**`async_run_query_param`**、**`async_job_status_path_template`**、**`strategy_id`** 去重与集合（相对 **`POST /api/backtest/run`** 的 **`STRATEGY_ID_*`**）、**`strategy_version='1'`**、**`response_shape`** / **`get_equivalent_paths`** 与内核同义 GET 约定、与 **`/api/strategies/catalog`** 的 **`archive_kind`**、**`strategy_contract_version` / `backtest_run.strategy_version`**（均为 **`1`**）、**`id`↔`backtest_run.strategy_id`**、**`signal_params`** / **`backtest_archive_kinds`**（**`ma_cross`** 与 **`ma_cross_scan`** 列表与契约一致）、**`backtest_run.archive_kind`** 属于该条 **`backtest_archive_kinds`**、**`params_schema`** 对齐；**`GET /api/strategies/catalog`** 与 **`GET /api/backtest/catalog`** 各条 **`title`/`description`** 去首尾空白后须非空，回测条目的 **`get_equivalent_paths`** 每项须为以 **`/`** 开头的非空白字符串；并校验 **`/api/factors/catalog`** 的 **`preview_path` / `doc_ref`**、**`ops`** 的 **`window`/`column`** 枚举、**`series_keys`** 每项非空白及 **`OpName`**。直连 MySQL 调试见 `scripts/smoke_mysql_direct.py`（内含硬编码 URL，勿提交敏感信息）。**OpenAPI**：改路由或 Pydantic 响应模型后执行 **`python scripts/export_openapi.py`** 刷新 **`docs/openapi.json`**；**`python -m pytest tests/test_openapi_contract.py`** 会对比该文件与运行时 schema（规范化 JSON），避免契约漂移。  
@@ -208,4 +236,4 @@ Windows 上若未把 `pytest` 装成全局命令，请统一用 **`python -m pyt
 
 ## License
 
-MIT
+[MIT](LICENSE)（全文见仓库根目录 **`LICENSE`**）。

@@ -2,8 +2,8 @@
 
 ## 环境要求
 
-- Python 3.10+
-- Node.js 18+（用于 Vue 看板）
+- Python **3.10+** 可运行本仓库（**`requirements.txt`**）；**CI** 与根 **`.python-version`** 当前固定 **3.12**（**`python-version-file`**）。**pyenv** 可 **`pyenv local`** 读 **`.python-version`** 与 CI 对齐。**Playwright** job 的 Node 由 **`.nvmrc`**（**`node-version-file`**）指定。
+- Node.js **20+**（Vue / Vite；**E2E** 与 **`.nvmrc`**、根 **`package.json` `engines`** 一致）
 - 数据库：**本地 SQLite 即可**；若用云 **MySQL / Redis**，复制 `.env.example` 为项目根目录 `.env` 并按说明填写（Docker 非必须）
 - 8GB+ RAM 推荐
 
@@ -112,6 +112,8 @@ python scripts\run_api.py
 
 生产前端若与 API 不同域，可在 `.env` 中配置 `CORS_ORIGINS`（逗号分隔源，或 `*`，见 `.env.example`）。
 
+可选：`LOG_JSON`、`API_ACCESS_LOG`、`API_SLOW_REQUEST_WARN_MS`、路径忽略前缀与 **`X-Request-ID`** 等见 **README**「API 与脚本可观测性」与 **`.env.example`**。本机停 API/Vite/preview 常用端口：**Windows** **`pwsh -File scripts\stop_dev.ps1`**；**macOS/Linux** **`bash scripts/stop_dev.sh`**（依赖 **`lsof`**，或 Linux 上可选 **`fuser`**）。Vue 依赖也可在仓库根执行 **`npm run frontend:install`**；起生产构建预览（**`vite.config` 默认 4173**）：**`npm run frontend:preview`**（与 **`e2e:preview`** 不同：后者含 **`npm run build`** 且 **`--strictPort`**）。
+
 ## 第五步：安装并启动 Vue 看板
 
 **新开一个终端**（API 仍在运行）：
@@ -120,11 +122,12 @@ python scripts\run_api.py
 cd C:\Users\Administrator\Desktop\trading-buddy\frontend
 npm install
 npm run dev
+# 或已在仓库根：npm run frontend:install 后 npm run frontend:dev
 ```
 
-终端会打印本地地址，一般为 **http://localhost:5173**。开发模式下请求会通过 Vite **代理**到 `http://127.0.0.1:8000`（可在 `frontend/.env.development` 里改 `VITE_PROXY_TARGET`）。
+终端会打印本地地址，一般为 **http://localhost:5173**。开发模式下 **`/api`** 与 **`/health*`** 会通过 Vite **代理**到 `http://127.0.0.1:8000`（可在 `frontend/.env.development` 里改 `VITE_PROXY_TARGET`）；顶栏 API 状态依赖后者。
 
-更多说明见 `frontend/README.md`（含生产构建 `npm run build` 与 `VITE_API_BASE`）。
+更多说明见 `frontend/README.md`（含生产构建 `npm run build`、`VITE_API_BASE`，以及 Nginx 反代 **`/api`** 与 **`/health*`** 示例）。**`frontend` 已 `npm install` 后**，也可在**仓库根**执行 **`npm run frontend:dev`**（见根目录 **`package.json`**；无需在根目录 **`npm install`**）。
 
 ## 验证是否正常运行
 
@@ -160,6 +163,8 @@ python scripts\export_factor_cross_section.py --as-of-date 2024-06-28 --dry-run
 
 自动化测试（不跑真实拉数）：
 
+提交前快速自检（仓库根，需已 **`pip install -r requirements.txt`** 且 **`frontend`** 已 **`npm install`**）：**`npm run verify`**（**`pytest -q`** + **`frontend` `vite build`**）。**Dependabot** 按周扫 **`requirements.txt`** 与 **`frontend/package-lock.json`**（**`.github/dependabot.yml`**；需在 GitHub 仓库启用 **Dependabot version updates**）。
+
 ```powershell
 python -m pytest -q
 python -m pytest tests/test_trend_v0_compare_helpers.py tests/test_cli_iso_date_scripts.py tests/test_export_factor_cross_section.py tests/test_factors_cross_section.py -q
@@ -167,7 +172,14 @@ python -m pytest tests/test_trend_v0_compare_helpers.py tests/test_cli_iso_date_
 
 （`pytest.ini` 限定只跑 `tests/`；**`tests/test_cli_fetch.py`** 含 **`feed_dashboard.py --dry-run`** 等对一键喂数步骤的契约断言，不连库；**`test_trend_v0_compare_helpers`**、**`test_cli_iso_date_scripts`** 无 DB——后者覆盖 **`src/common/cli_iso_date`** 及 **`run_backtest` / `scan_backtest` / 两条 `trend_v0_*`**、**`export_factor_cross_section`** 脚本的顶层加载；**`tests/test_export_factor_cross_section.py`** 在临时 SQLite 上验 **`export_factor_cross_section`** 批量 CSV、**`--codes-file`**（含 **`#`** 注释）、**`--dry-run`**、**legacy**、**`--auto-legacy-fallback`**，以及批量失败且未 fallback 时 **退出码 1**。**`tests/test_factors_cross_section.py`** 验 **`compute_cross_section_row`** 与 **`pct_change_n`** 末点一致。手工 DB 冒烟见 `scripts/smoke_*.py` 与根 `README.md`「测试」。**研究实验目录约定**见 **`experiments/README.md`**；CLI 日期与区间校验见 **`README.md`**「个股趋势 v0 脚本」段。）
 
-**前端 Playwright（主视图导航、涨跌/成交额、股票列表、回测等；请求由 E2E mock，不依赖后端 API）：** 另需 Node 20+。`cd frontend` 后 `npm ci`；终端一 `npm run e2e:preview`；终端二（首次）`npx playwright install chromium`，再 `npm run test:e2e`。详见根目录 `README.md`「测试」。
+**前端 Playwright（主视图导航、涨跌/成交额、股票列表、回测等；请求由 E2E mock，不依赖后端 API）：** 另需 Node 20+。`cd frontend` 后 `npm ci`。常用命令也可在**仓库根**执行 **`npm run frontend:e2e:smoke`**、**`npm run frontend:e2e:connected`**、**`npm run frontend:e2e:chromium`** 等（见根 **`package.json`**）。要向 Playwright 传 **`--list`** 等参数：用 **`npm --prefix frontend run test:e2e:smoke -- --list`**，或在根 **`npm run frontend:e2e:smoke -- -- --list`**（多一层 **`--`**）。
+
+- **推荐（日常，方式 B）**：终端一 **`npm run e2e:preview`**（4173，每次含 **`npm run build`**，避免跑旧 **`dist/`**）；若刚跑过 **`npm run build`** 只想起预览，可用 **`npm run e2e:preview:only`**（不重跑 **`build`**）；终端二 **`cd`** 到 **`frontend`** 后执行 **`npm run test:e2e:connected`**（脚本固定 **`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173`**，`preflight` 会探测 preview）。跑子集示例：**`npm run test:e2e:connected -- e2e/main-nav-smoke.spec.js`**。调试 UI 模式：**`npm run test:e2e:ui:connected`**（可选 **`-- e2e/某.spec.js`**）；固定通道：**`npm run test:e2e:ui:connected:chromium`** / **`:chrome`**。方式 A 下 UI + 通道：**`npm run test:e2e:ui:chromium`** / **`:chrome`**。需要 **Chrome for Testing** 时，在终端二先设 **`PLAYWRIGHT_EXECUTABLE_PATH`** 再执行同一命令即可。等价写法：手动 **`$env:PLAYWRIGHT_BASE_URL='http://127.0.0.1:4173'`** 后 **`npm run test:e2e`**。
+- **方式 A（单终端）**：不设 **`PLAYWRIGHT_BASE_URL`**（或设为空）时 **`preflight`** **不**探测端口；随后 **`npm run build`**（`global-setup`）并由 **`playwright.config.js`** 内置 **webServer** 起 **4173**；若本机 **4173 已被** **`vite preview`** 占用，**`reuseExistingServer`**（非 CI）会复用该进程（**`dist/`** 若过期请重启 preview）。跑用例：**`npm run test:e2e`**；Playwright UI：**`npm run test:e2e:ui`**（可选 **`-- e2e/某.spec.js`**）。若环境里**误**留了非空的 **`PLAYWRIGHT_BASE_URL`** 却未起对应服务，**`preflight`** 会失败：PowerShell 可 **`Remove-Item Env:PLAYWRIGHT_BASE_URL -ErrorAction SilentlyContinue`** 后重试，或改用方式 B。
+
+- **主导航（编写 E2E）**：顶栏视图按钮带 **`data-testid="main-nav-*"`**；用例中请 **`import { MAIN_NAV } from "./fixtures/mainNavTestIds.js"`** 并 **`page.getByTestId(MAIN_NAV.factors)`** 等切换视图，避免文案子串与 **strict** 歧义（见 **`frontend/README.md`**「E2E」）。
+
+另：**`npm run test:e2e:smoke`** / **`:smoke:connected`** 只跑 **`main-nav-smoke`** 与 **`turnover-tab`** 两条 spec，改顶栏或侧栏 tab 后适合快速验证。**`npm run test:e2e:chromium`** / **`npm run test:e2e:chrome`** 等价于方式 A 下临时设置 **`PLAYWRIGHT_CHANNEL`**；**`npm run test:e2e:connected:chromium`** / **`:connected:chrome`** 为方式 B 同步固定通道。子集示例 **`npm run test:e2e:chromium -- e2e/main-nav-smoke.spec.js`**（`--` 后参数会传给 Playwright）。**Windows**：若已执行 **`npx playwright install chromium`**，`playwright.config.js` **默认优先内置 Chromium**（减少系统 Chrome headless 下「browser closed」）；未安装内置浏览器时仍用本机 **Google Chrome**。若已下载 **`chrome-win64.zip`**（Chrome for Testing）：解压后把 **`PLAYWRIGHT_EXECUTABLE_PATH`** 指到 **`chrome.exe`**（常见 **`…\chrome-win64\chrome-win64\chrome.exe`**），E2E 会**最优先**使用该浏览器（见 **`frontend/playwright.config.js`** 注释）。要固定走 Chrome：**`npm run test:e2e:chrome`** 或 **`$env:PLAYWRIGHT_CHANNEL='chrome'`**；要固定走内置：**`npm run test:e2e:chromium`**。**macOS / Linux** 默认 Chromium，首次需 **`npx playwright install chromium`**；若要用系统 Chrome，设 **`PLAYWRIGHT_CHANNEL=chrome`**。详见根目录 **`README.md`**「测试」。
 
 ## 常见问题
 
