@@ -33,7 +33,7 @@
     "echarts": "^5.5.0",
     "jszip": "^3.10.1",
     "vue": "^3.4.21",
-    "vue-echarts": "^6.6.9"
+    "vue-echarts": "^8.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
