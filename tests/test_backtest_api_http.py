@@ -12,7 +12,7 @@ from src.data.models import KLine
 from src.data.storage import KlineRepository
 
 
-def _bar(code: str, d: date, close: float) -> KLine:
+def _bar(code: str, d: date, close: float, adjust_flag: str = "3") -> KLine:
     o = close - 0.1
     return KLine(
         code=code,
@@ -25,6 +25,7 @@ def _bar(code: str, d: date, close: float) -> KLine:
         amount=close * 1000,
         turnover_rate=None,
         pct_change=None,
+        adjust_flag=adjust_flag,
     )
 
 
@@ -56,6 +57,66 @@ async def test_ma_cross_fast_ge_slow_400(http_test_client: TestClient):
         params={"code": "sh.x", "fast": 20, "slow": 10, "limit": 100},
     )
     assert r.status_code == 400
+
+
+async def test_ma_cross_backtest_adjust_flag_missing_data_400(http_test_client, empty_sqlite_db):
+    """库中只有 adjust_flag='3' 的数据时，请求 adjust_flag='1' 应 400（K 线不足）。"""
+    code = "sh.adj1"
+    base = date(2025, 5, 1)
+    rows = [_bar(code, base + timedelta(days=i), 100.0 + i * 0.3) for i in range(30)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+    r = http_test_client.get(
+        "/api/backtest/ma-cross",
+        params={"code": code, "fast": 5, "slow": 20, "limit": 30, "adjust_flag": "1"},
+    )
+    assert r.status_code == 400
+    assert "K 线不足" in r.json()["detail"]
+
+
+async def test_ma_cross_backtest_adjust_flag_1_ok(http_test_client, empty_sqlite_db):
+    """库中存在 adjust_flag='1' 的数据时，请求 adjust_flag='1' 应成功。"""
+    code = "sh.adj2"
+    base = date(2025, 5, 1)
+    rows = [_bar(code, base + timedelta(days=i), 100.0 + i * 0.3, adjust_flag="1") for i in range(30)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+    r = http_test_client.get(
+        "/api/backtest/ma-cross",
+        params={"code": code, "fast": 5, "slow": 20, "limit": 30, "adjust_flag": "1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["code"] == code
+    assert body["bars_used"] == 30
+
+    # assumptions 只在 POST /run 中返回；GET 端点验证链路通即可
+    r2 = http_test_client.post(
+        "/api/backtest/run",
+        json={
+            "strategy_id": "ma_cross",
+            "strategy_version": "1",
+            "params": {
+                "code": code,
+                "fast": 5,
+                "slow": 20,
+                "limit": 30,
+                "adjust_flag": "1",
+            },
+        },
+    )
+    assert r2.status_code == 200
+    assert any("adjust_flag=1" in a for a in r2.json().get("assumptions", []))
+
+
+async def test_ma_cross_backtest_adjust_flag_invalid_422(http_test_client: TestClient):
+    r = http_test_client.get(
+        "/api/backtest/ma-cross",
+        params={"code": "sh.x", "fast": 5, "slow": 20, "limit": 100, "adjust_flag": "9"},
+    )
+    assert r.status_code == 422
 
 
 async def test_ma_cross_signal_ok(http_test_client, empty_sqlite_db):

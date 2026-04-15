@@ -2,6 +2,8 @@
 import { computed, ref, watch } from "vue";
 import VChart from "vue-echarts";
 import { fetchJson } from "../composables/api.js";
+import { writeClipboardText } from "../composables/clipboardWrite.js";
+import { showToast } from "../composables/useToast.js";
 
 /** 与后端一致；API 未返回 name 或后端未重启时仍显示中文名 */
 const MAJOR_INDEX_NAMES = {
@@ -27,6 +29,10 @@ const volumeLabel = ref("—");
 const history = ref([]);
 const chartError = ref("");
 const chartLoading = ref(false);
+/** 最近一次成功请求的 `GET …/klines/analysis/…?limit=60` 相对路径（含 `/api`） */
+const lastKlineApiPath = ref("");
+/** 复权类型: 1=后复权, 2=前复权, 3=不复权 */
+const adjustFlag = ref("3");
 
 function normalizeCode(input) {
   let code = input.trim().toLowerCase();
@@ -59,13 +65,35 @@ watch(
   { immediate: true }
 );
 
+watch(adjustFlag, () => {
+  if (props.code) loadKline(props.code);
+});
+
+async function copyAnalysisApiPath() {
+  const u = lastKlineApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制 K 线分析 API 路径（含 limit=60；curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3200,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
 async function loadKline(code) {
   chartLoading.value = true;
   chartError.value = "";
+  const enc = encodeURIComponent(code);
+  const qs = new URLSearchParams({ limit: "60", adjust_flag: adjustFlag.value });
+  const relPath = `/api/klines/analysis/${enc}?${qs}`;
   try {
-    const data = await fetchJson(
-      `klines/analysis/${encodeURIComponent(code)}?limit=60`
-    );
+    const data = await fetchJson(`klines/analysis/${enc}?${qs}`, {
+      toast: false,
+    });
+    lastKlineApiPath.value = relPath;
     if (data.error || !data.history?.length) {
       history.value = [];
       chartError.value = "未找到数据";
@@ -88,6 +116,7 @@ async function loadKline(code) {
       ? `${(latest.volume / 10000).toFixed(0)} 万`
       : "—";
   } catch (e) {
+    lastKlineApiPath.value = "";
     history.value = [];
     chartError.value = e?.message || "加载失败";
   } finally {
@@ -219,9 +248,19 @@ const chartOption = computed(() => {
 <template>
   <section class="workspace">
     <header class="head">
-      <div>
+      <div class="head-title-block">
         <h2 class="display">{{ title }}</h2>
         <p class="mono sub">{{ stockCode }}</p>
+        <button
+          type="button"
+          class="copy-api"
+          :disabled="!lastKlineApiPath"
+          title="复制当前标的最近一次成功请求的 K 线分析路径"
+          aria-label="复制 K 线分析 API 路径"
+          @click="copyAnalysisApiPath"
+        >
+          复制 API 路径
+        </button>
       </div>
       <div class="stats mono">
         <div><span class="lbl">MA5</span> {{ indicators.ma5?.toFixed(2) ?? "—" }}</div>
@@ -238,6 +277,15 @@ const chartOption = computed(() => {
         placeholder="代码，如 600519 或 sh.600519，回车"
         @keydown="onSearchKey"
       />
+      <div class="search-divider" />
+      <label class="adjust-label">
+        <span class="adjust-lbl">复权</span>
+        <select v-model="adjustFlag" class="adjust-select mono">
+          <option value="3">不复权</option>
+          <option value="2">前复权</option>
+          <option value="1">后复权</option>
+        </select>
+      </label>
     </div>
 
     <div class="chart-wrap" :class="{ 'is-loading': chartLoading && !history.length }">
@@ -281,6 +329,43 @@ const chartOption = computed(() => {
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.head-title-block {
+  min-width: 0;
+}
+
+.copy-api {
+  margin-top: 10px;
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.5);
+  color: var(--mist);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.copy-api:hover:not(:disabled) {
+  border-color: rgba(62, 224, 255, 0.28);
+  color: var(--meridian);
+}
+
+.copy-api:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.copy-api:focus-visible {
+  outline: 2px solid var(--meridian);
+  outline-offset: 2px;
 }
 .display {
   margin: 0;
@@ -342,6 +427,52 @@ const chartOption = computed(() => {
 }
 .search input::placeholder {
   color: var(--paper-muted);
+}
+
+.search-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--rule-faint);
+  margin: 0 4px;
+}
+
+.adjust-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--paper-muted);
+}
+
+.adjust-lbl {
+  color: var(--brass-dim);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.adjust-select {
+  border: 1px solid var(--rule-faint);
+  border-radius: 6px;
+  background: rgba(8, 8, 12, 0.55);
+  color: var(--paper);
+  font-size: 0.76rem;
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.adjust-select:hover {
+  border-color: rgba(62, 224, 255, 0.28);
+  background: rgba(8, 8, 12, 0.75);
+}
+
+.adjust-select:focus-visible {
+  outline: 2px solid var(--meridian);
+  outline-offset: 2px;
 }
 .chart-wrap {
   height: 440px;

@@ -1,20 +1,60 @@
 <script setup>
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { fetchJson } from "../composables/api.js";
+import { writeClipboardText } from "../composables/clipboardWrite.js";
 import { useCrossSectionOverviewLink } from "../composables/crossSectionOverviewLink.js";
+import { showToast } from "../composables/useToast.js";
 
 const props = defineProps({
   tab: { type: String, default: "gainers" },
+  adjustFlag: { type: String, default: "3" },
 });
 
-const emit = defineEmits(["select", "update:tab"]);
+const emit = defineEmits(["select", "update:tab", "update:adjustFlag"]);
 
 const rows = ref([]);
 const loading = ref(true);
 const error = ref("");
+/** 最近一次成功的榜单 GET 相对路径（含 /api 与查询串） */
+const lastRankApiPath = ref("");
 /** 仅「成交额」页：可选 YYYY-MM-DD，空则走后端默认最新交易日 */
 const turnoverDate = ref("");
 const { crossSectionAsOf, crossSectionHref, refreshCrossSectionAsOf } = useCrossSectionOverviewLink();
+
+const tabLabel = computed(() => {
+  if (props.tab === "losers") return "跌幅榜";
+  if (props.tab === "turnover") return "成交额";
+  return "涨幅榜";
+});
+
+async function copyRankApiPath() {
+  const u = lastRankApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制排行榜数据 API 路径（curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3000,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
+async function copyRankCodes() {
+  if (loading.value || error.value || !rows.value.length) return;
+  const lines = rows.value.map((s) => String(s?.code || "").trim()).filter(Boolean);
+  if (!lines.length) return;
+  try {
+    await writeClipboardText(lines.join("\n"));
+    showToast(`已复制 ${lines.length} 条代码（${tabLabel.value}，每行一条）`, {
+      type: "info",
+      duration: 2400,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
 
 function fmtAmount(v) {
   if (v == null || !Number.isFinite(Number(v))) return "—";
@@ -29,18 +69,23 @@ async function load() {
   error.value = "";
   try {
     if (props.tab === "turnover") {
-      const p = new URLSearchParams({ limit: "20" });
+      const p = new URLSearchParams({ limit: "20", adjust_flag: props.adjustFlag });
       const d = (turnoverDate.value || "").trim();
       if (d) p.set("trade_date", d);
-      const data = await fetchJson(`dashboard/turnover?${p.toString()}`);
+      const qs = p.toString();
+      lastRankApiPath.value = `/api/dashboard/turnover?${qs}`;
+      const data = await fetchJson(`dashboard/turnover?${qs}`, { toast: false });
       rows.value = Array.isArray(data?.stocks) ? data.stocks : [];
     } else {
       const ep = props.tab === "gainers" ? "gainers" : "losers";
-      rows.value = await fetchJson(`dashboard/${ep}?limit=20`);
+      const qs = new URLSearchParams({ limit: "20", adjust_flag: props.adjustFlag }).toString();
+      lastRankApiPath.value = `/api/dashboard/${ep}?${qs}`;
+      rows.value = await fetchJson(`dashboard/${ep}?${qs}`, { toast: false });
     }
   } catch (e) {
     error.value = e?.message || "加载失败";
     rows.value = [];
+    lastRankApiPath.value = "";
   } finally {
     loading.value = false;
   }
@@ -55,6 +100,8 @@ watch(
 watch(turnoverDate, () => {
   if (props.tab === "turnover") load();
 });
+
+watch(() => props.adjustFlag, () => load());
 
 onMounted(() => {
   refreshCrossSectionAsOf();
@@ -90,6 +137,41 @@ onMounted(() => {
       >
         <span class="tab-icon vol">◇</span>
         成交额
+      </button>
+    </div>
+
+    <div class="rank-tools">
+      <label class="adjust-label">
+        <span class="adjust-lbl">复权</span>
+        <select
+          :value="props.adjustFlag"
+          class="adjust-select mono"
+          @change="emit('update:adjustFlag', $event.target.value)"
+        >
+          <option value="3">不复权</option>
+          <option value="2">前复权</option>
+          <option value="1">后复权</option>
+        </select>
+      </label>
+      <button
+        type="button"
+        class="copy-rank"
+        :disabled="loading || !!error || rows.length === 0"
+        title="复制当前榜单中的全部股票代码（每行一条）"
+        aria-label="复制排行榜全部代码"
+        @click="copyRankCodes"
+      >
+        复制代码
+      </button>
+      <button
+        type="button"
+        class="copy-rank"
+        :disabled="loading || !!error || !lastRankApiPath"
+        title="复制当前榜单对应的 GET 路径"
+        aria-label="复制排行榜数据 API 路径"
+        @click="copyRankApiPath"
+      >
+        复制 API 路径
       </button>
     </div>
 
@@ -223,6 +305,87 @@ onMounted(() => {
 }
 
 .tab:focus-visible {
+  outline: 2px solid var(--meridian);
+  outline-offset: 2px;
+}
+
+.rank-tools {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.25);
+}
+
+.copy-rank {
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.5);
+  color: var(--mist);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.copy-rank:hover:not(:disabled) {
+  border-color: rgba(62, 224, 255, 0.28);
+  color: var(--meridian);
+}
+
+.copy-rank:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.copy-rank:focus-visible {
+  outline: 2px solid var(--meridian);
+  outline-offset: 2px;
+}
+
+.adjust-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--paper-muted);
+}
+
+.adjust-lbl {
+  color: var(--brass-dim);
+  font-family: var(--font-ui);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+}
+
+.adjust-select {
+  border: 1px solid var(--rule-faint);
+  border-radius: 6px;
+  background: rgba(8, 8, 12, 0.55);
+  color: var(--paper);
+  font-size: 0.7rem;
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.adjust-select:hover {
+  border-color: rgba(62, 224, 255, 0.28);
+  background: rgba(8, 8, 12, 0.75);
+}
+
+.adjust-select:focus-visible {
   outline: 2px solid var(--meridian);
   outline-offset: 2px;
 }

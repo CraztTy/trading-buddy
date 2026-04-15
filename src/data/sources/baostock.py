@@ -188,18 +188,19 @@ class BaostockSource(BaseDataSource):
         code: str,
         start_date: date | None = None,
         end_date: date | None = None,
+        adjustflag: str = "3",
     ) -> list[KLine]:
         """获取日K线数据"""
         # 每次调用都重新登录，确保连接正常
         bs.login()
-        
+
         if end_date is None:
             end_date = date.today()
         if start_date is None:
             start_date = date(end_date.year - 3, end_date.month, end_date.day)
-        
-        logger.info(f"Fetching daily kline: {code} from {start_date} to {end_date}")
-        
+
+        logger.info(f"Fetching daily kline: {code} from {start_date} to {end_date} (adjustflag={adjustflag})")
+
         # adjustflag：1=后复权 2=前复权 3=不复权（与 docs/DATA_AND_ADJUSTMENT.md 默认口径一致）
         rs = bs.query_history_k_data_plus(
             code,
@@ -207,9 +208,9 @@ class BaostockSource(BaseDataSource):
             start_date=start_date.strftime('%Y-%m-%d'),
             end_date=end_date.strftime('%Y-%m-%d'),
             frequency="d",
-            adjustflag="3",
+            adjustflag=adjustflag,
         )
-        
+
         klines = []
         if rs.error_code == '0':
             while rs.next():
@@ -228,13 +229,14 @@ class BaostockSource(BaseDataSource):
                         amount=float(row[6]) if row[6] else 0.0,
                         turnover_rate=None,
                         pct_change=pct,
+                        adjust_flag=adjustflag,
                     )
                     klines.append(kline)
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Parse error for {code} on {row[0]}: {e}")
         else:
             logger.warning(f"Query failed for {code}: {rs.error_msg}")
-        
+
         logger.info(f"Fetched {len(klines)} klines for {code}")
         return klines
     

@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { fetchJson } from "../composables/api.js";
+import { writeClipboardText } from "../composables/clipboardWrite.js";
+import { showToast } from "../composables/useToast.js";
 
 const FALLBACK_OPTIONS = [{ value: "cn", label: "cn" }];
 
@@ -12,6 +14,10 @@ const exchange = ref("cn");
 const loading = ref(true);
 const error = ref("");
 const payload = ref(null);
+/** 最近一次成功的 `GET …/trade-calendar/status?exchange=` 相对路径 */
+const lastStatusApiPath = ref("");
+/** 最近一次成功的 `GET …/trade-calendar/options` 相对路径（无 query） */
+const lastOptionsApiPath = ref("");
 
 let timer;
 
@@ -24,7 +30,7 @@ async function loadOptions() {
   optionsError.value = "";
   optionsLoading.value = true;
   try {
-    const cfg = await fetchJson("data/trade-calendar/options");
+    const cfg = await fetchJson("data/trade-calendar/options", { toast: false });
     const list = Array.isArray(cfg.exchanges) ? cfg.exchanges : [];
     const normalized = list
       .filter((x) => x && typeof x.value === "string" && x.value.trim())
@@ -36,7 +42,9 @@ async function loadOptions() {
     const def = typeof cfg.default_exchange === "string" ? cfg.default_exchange.trim().toLowerCase() : "";
     const allowed = new Set(exchangeOptions.value.map((o) => o.value));
     exchange.value = def && allowed.has(def) ? def : exchangeOptions.value[0].value;
+    lastOptionsApiPath.value = "/api/data/trade-calendar/options";
   } catch (e) {
+    lastOptionsApiPath.value = "";
     optionsError.value = e?.message || "无法加载分区配置";
     exchangeOptions.value = [...FALLBACK_OPTIONS];
     exchange.value = "cn";
@@ -45,13 +53,46 @@ async function loadOptions() {
   }
 }
 
+async function copyStatusApiPath() {
+  const u = lastStatusApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制交易日历状态 API 路径（GET …/trade-calendar/status；curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3200,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
+async function copyOptionsApiPath() {
+  const u = lastOptionsApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制交易日历分区配置 API 路径（GET …/trade-calendar/options）", {
+      type: "info",
+      duration: 3000,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
 async function load() {
   error.value = "";
   loading.value = true;
   try {
     const q = exchangeQueryParam();
-    payload.value = await fetchJson(`data/trade-calendar/status?exchange=${q}`);
+    const rel = `/api/data/trade-calendar/status?exchange=${q}`;
+    payload.value = await fetchJson(`data/trade-calendar/status?exchange=${q}`, {
+      toast: false,
+    });
+    lastStatusApiPath.value = rel;
   } catch (e) {
+    lastStatusApiPath.value = "";
     error.value = e?.message || "无法加载交易日历状态";
     payload.value = null;
   } finally {
@@ -111,6 +152,28 @@ onUnmounted(() => clearInterval(timer));
         <span v-else class="ex-loading mono">配置…</span>
       </label>
       <span class="deco-line" aria-hidden="true" />
+      <div class="cal-copy-tools">
+        <button
+          type="button"
+          class="copy-cal"
+          :disabled="loading || !!error || !lastStatusApiPath"
+          title="复制当前分区最近一次成功请求的 status 路径"
+          aria-label="复制交易日历状态 API 路径"
+          @click="copyStatusApiPath"
+        >
+          状态
+        </button>
+        <button
+          type="button"
+          class="copy-cal"
+          :disabled="optionsLoading || !!optionsError || !lastOptionsApiPath"
+          title="复制 GET …/trade-calendar/options 路径"
+          aria-label="复制交易日历分区配置 API 路径"
+          @click="copyOptionsApiPath"
+        >
+          分区
+        </button>
+      </div>
     </header>
 
     <p v-if="optionsError" class="hint hint-warn">{{ optionsError }}（已回退 cn）</p>
@@ -206,6 +269,46 @@ onUnmounted(() => clearInterval(timer));
   height: 1px;
   background: linear-gradient(90deg, rgba(62, 224, 255, 0.35), transparent 72%);
   opacity: 0.55;
+}
+
+.cal-copy-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.copy-cal {
+  flex-shrink: 0;
+  font-family: var(--font-ui);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.5);
+  color: var(--meridian);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.copy-cal:hover:not(:disabled) {
+  border-color: rgba(62, 224, 255, 0.35);
+  color: var(--mist);
+}
+
+.copy-cal:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.copy-cal:focus-visible {
+  outline: 2px solid var(--meridian);
+  outline-offset: 2px;
 }
 
 .hint {

@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import { apiUrl, fetchJson } from "../composables/api.js";
+import { fetchJson } from "../composables/api.js";
+import { writeClipboardText } from "../composables/clipboardWrite.js";
 
 /** 单次请求条数（与后端上限一致） */
 const EXPORT_ALL_PAGE = 500;
@@ -27,16 +28,21 @@ const exportingAll = ref(false);
 const exportProgress = ref("");
 /** 自选代码集合（小写） */
 const watchCodes = ref(new Set());
+const watchCodesErr = ref("");
 const watchTip = ref("");
 let watchTipTimer = 0;
+/** 最近一次成功的 GET /api/stocks/list 相对路径（含查询串） */
+const lastStockListApiPath = ref("");
 
 async function refreshWatchCodes() {
+  watchCodesErr.value = "";
   try {
-    const data = await fetchJson("watchlist/items");
+    const data = await fetchJson("watchlist/items", { toast: false });
     const items = Array.isArray(data?.items) ? data.items : [];
     watchCodes.value = new Set(items.map((x) => String(x.code || "").toLowerCase()));
-  } catch {
+  } catch (e) {
     watchCodes.value = new Set();
+    watchCodesErr.value = e?.message || "自选代码列表加载失败";
   }
 }
 
@@ -61,25 +67,18 @@ async function toggleWatchlist(row) {
   const inList = isWatched(code);
   try {
     if (inList) {
-      const res = await fetch(apiUrl(`watchlist/items/${encodeURIComponent(code)}`), { method: "DELETE" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const d = body?.detail;
-        throw new Error(typeof d === "string" ? d : res.statusText || "移除失败");
-      }
+      await fetchJson(`watchlist/items/${encodeURIComponent(code)}`, {
+        method: "DELETE",
+        toast: false,
+      });
       flashWatchTip(`已从自选移除 ${code}`);
     } else {
-      const res = await fetch(apiUrl("watchlist/items"), {
+      await fetchJson("watchlist/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
+        toast: false,
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const d = body?.detail;
-        if (res.status === 409) throw new Error(typeof d === "string" ? d : "已在自选中");
-        throw new Error(typeof d === "string" ? d : res.statusText || "添加失败");
-      }
       flashWatchTip(`已加入自选 ${code}`);
     }
     await refreshWatchCodes();
@@ -119,7 +118,8 @@ async function load() {
   p.set("offset", String(Math.max(0, Number(offset.value) || 0)));
   const q = p.toString();
   try {
-    const data = await fetchJson(`stocks/list${q ? `?${q}` : ""}`);
+    const data = await fetchJson(`stocks/list${q ? `?${q}` : ""}`, { toast: false });
+    lastStockListApiPath.value = q ? `/api/stocks/list?${q}` : "/api/stocks/list";
     rows.value = Array.isArray(data?.items) ? data.items : [];
     total.value = Number.isFinite(data?.total) ? data.total : 0;
     if (Number.isFinite(data?.offset)) {
@@ -133,6 +133,7 @@ async function load() {
     error.value = e?.message || "加载失败";
     total.value = 0;
     clampHint.value = "";
+    lastStockListApiPath.value = "";
   } finally {
     loading.value = false;
   }
@@ -228,7 +229,7 @@ async function exportAllMatchingCsv() {
       applyStockListFilters(p);
       p.set("limit", String(EXPORT_ALL_PAGE));
       p.set("offset", String(reqOff));
-      const data = await fetchJson(`stocks/list?${p.toString()}`);
+      const data = await fetchJson(`stocks/list?${p.toString()}`, { toast: false });
       const items = Array.isArray(data?.items) ? data.items : [];
       const dataTotal = Number.isFinite(data?.total) ? data.total : rawTotal;
       const effOff = Number.isFinite(data?.offset) ? data.offset : reqOff;
@@ -273,6 +274,15 @@ async function exportAllMatchingCsv() {
   }
 }
 
+function flashCopyTip(msg) {
+  copyTip.value = msg;
+  if (copyTipTimer) clearTimeout(copyTipTimer);
+  copyTipTimer = window.setTimeout(() => {
+    copyTip.value = "";
+    copyTipTimer = 0;
+  }, 2500);
+}
+
 async function copyStockCode(code) {
   const c = (code || "").trim();
   if (!c) return;
@@ -283,31 +293,46 @@ async function copyStockCode(code) {
     exportTipTimer = 0;
   }
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(c);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = c;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-    copyTip.value = `已复制 ${c}`;
-    if (copyTipTimer) clearTimeout(copyTipTimer);
-    copyTipTimer = window.setTimeout(() => {
-      copyTip.value = "";
-      copyTipTimer = 0;
-    }, 2500);
+    await writeClipboardText(c);
+    flashCopyTip(`已复制 ${c}`);
   } catch {
-    copyTip.value = "复制失败（请检查浏览器权限）";
-    if (copyTipTimer) clearTimeout(copyTipTimer);
-    copyTipTimer = window.setTimeout(() => {
-      copyTip.value = "";
-      copyTipTimer = 0;
-    }, 2500);
+    flashCopyTip("复制失败（请检查浏览器权限）");
+  }
+}
+
+async function copyStockListApiPath() {
+  const u = lastStockListApiPath.value.trim();
+  if (!u) return;
+  exportProgress.value = "";
+  exportTip.value = "";
+  if (exportTipTimer) {
+    clearTimeout(exportTipTimer);
+    exportTipTimer = 0;
+  }
+  try {
+    await writeClipboardText(u);
+    flashCopyTip("已复制股票列表 API 路径（含当前筛选与分页参数）");
+  } catch {
+    flashCopyTip("复制失败（请检查浏览器权限）");
+  }
+}
+
+async function copyCurrentPageCodes() {
+  if (loading.value || exportingAll.value) return;
+  const lines = rows.value.map((row) => String(row?.code || "").trim()).filter(Boolean);
+  if (!lines.length) return;
+  exportProgress.value = "";
+  exportTip.value = "";
+  if (exportTipTimer) {
+    clearTimeout(exportTipTimer);
+    exportTipTimer = 0;
+  }
+  const text = lines.join("\n");
+  try {
+    await writeClipboardText(text);
+    flashCopyTip(`已复制本页 ${lines.length} 条代码（每行一条）`);
+  } catch {
+    flashCopyTip("复制失败（请检查浏览器权限）");
   }
 }
 
@@ -346,8 +371,8 @@ function nextPage() {
         <h2 class="h2">股票列表</h2>
         <p class="sub">
           调用 <span class="mono">GET /api/stocks/list</span>（响应含
-          <span class="mono">total</span> / <span class="mono">items</span>），点击行切换行情标的；行内「复制」仅复制代码；「导出本页
-          CSV」仅导出当前页；「导出全部」按当前筛选分页拉取后合并（最多
+          <span class="mono">total</span> / <span class="mono">items</span>），点击行切换行情标的；行内「复制」仅复制单行代码；「复制本页代码」复制当前页全部
+          <span class="mono">code</span>（每行一条）；「导出本页 CSV」仅导出当前页；「导出全部」按当前筛选分页拉取后合并（最多
           {{ EXPORT_ALL_MAX.toLocaleString() }} 条，UTF-8 BOM）
         </p>
       </div>
@@ -371,6 +396,26 @@ function nextPage() {
           >
             导出本页 CSV
           </button>
+          <button
+            type="button"
+            class="export-csv"
+            :disabled="loading || exportingAll || rows.length === 0"
+            title="每行一个标的代码"
+            aria-label="复制本页全部代码"
+            @click="copyCurrentPageCodes"
+          >
+            复制本页代码
+          </button>
+          <button
+            type="button"
+            class="export-csv"
+            :disabled="loading || exportingAll || !lastStockListApiPath"
+            title="复制当前查询对应的 GET 路径"
+            aria-label="复制股票列表查询 API 路径"
+            @click="copyStockListApiPath"
+          >
+            复制 API 路径
+          </button>
         </div>
         <button type="button" class="run" :disabled="loading || exportingAll" @click="load">
           {{ loading ? "加载中…" : "查询" }}
@@ -382,6 +427,7 @@ function nextPage() {
     <p v-if="exportProgress" class="export-progress mono" aria-live="polite">{{ exportProgress }}</p>
     <p v-if="copyTip" class="copy-tip mono" role="status">{{ copyTip }}</p>
     <p v-if="watchTip" class="copy-tip mono" role="status">{{ watchTip }}</p>
+    <p v-if="watchCodesErr" class="err mono" role="alert" data-testid="stock-watch-codes-err">{{ watchCodesErr }}</p>
     <p v-if="exportTip" class="export-tip mono" role="status">{{ exportTip }}</p>
 
     <p v-if="total > 0 && !error" class="total-line mono">

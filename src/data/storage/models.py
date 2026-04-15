@@ -63,7 +63,7 @@ class DailyKlineModel(Base):
     """日线K线表"""
     __tablename__ = "daily_kline"
     __table_args__ = (
-        UniqueConstraint("code", "trade_date", name="uq_daily_kline_code_date"),
+        UniqueConstraint("code", "trade_date", "adjust_flag", name="uq_daily_kline_code_date_flag"),
         # 涨跌榜：WHERE trade_date=? ORDER BY change_pct LIMIT N（避免全分区排序）
         Index("ix_daily_kline_trade_date_pct", "trade_date", "change_pct"),
         # 成交额榜：WHERE trade_date=? ORDER BY amount DESC LIMIT N
@@ -82,6 +82,7 @@ class DailyKlineModel(Base):
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     turnover_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    adjust_flag: Mapped[str] = mapped_column(String(2), nullable=False, default="3", server_default="3")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 

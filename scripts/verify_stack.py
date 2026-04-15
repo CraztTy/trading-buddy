@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -704,10 +705,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run_stack_verify(args: argparse.Namespace) -> int:
     from src.common import get_settings
 
-    args = _parse_args(argv)
     s = get_settings()
     mode = (s.database.mode or "sqlite").strip().lower()
     print("=== 配置 ===")
@@ -823,6 +823,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("  Redis: 未启用")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    t0 = time.perf_counter()
+    try:
+        return _run_stack_verify(_parse_args(argv))
+    finally:
+        print(f"[timing] verify_stack {time.perf_counter() - t0:.1f}s")
 
 
 if __name__ == "__main__":

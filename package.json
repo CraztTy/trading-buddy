@@ -1,0 +1,36 @@
+{
+  "name": "trading-buddy",
+  "private": true,
+  "license": "MIT",
+  "version": "0.0.0",
+  "description": "Python/FastAPI 为主；本文件仅提供从仓库根转发到 frontend/ 的 npm 脚本，无需在根目录 npm install。自检：npm run verify（pytest + frontend build）。向 Playwright 传 CLI 参数：在根用 npm run 时需多一层分隔，例如 npm run frontend:e2e:smoke -- -- --list；或直接 npm --prefix frontend run test:e2e:smoke -- --list。",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "verify:pytest": "python -m pytest -q",
+    "verify:frontend": "npm --prefix frontend run build",
+    "verify": "python -m pytest -q && npm --prefix frontend run build",
+    "frontend:install": "npm --prefix frontend install",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:preview": "npm --prefix frontend run preview",
+    "frontend:e2e": "npm --prefix frontend run test:e2e",
+    "frontend:e2e:chromium": "npm --prefix frontend run test:e2e:chromium",
+    "frontend:e2e:chrome": "npm --prefix frontend run test:e2e:chrome",
+    "frontend:e2e:smoke": "npm --prefix frontend run test:e2e:smoke",
+    "frontend:e2e:smoke:connected": "npm --prefix frontend run test:e2e:smoke:connected",
+    "frontend:e2e:connected": "npm --prefix frontend run test:e2e:connected",
+    "frontend:e2e:connected:chromium": "npm --prefix frontend run test:e2e:connected:chromium",
+    "frontend:e2e:connected:chrome": "npm --prefix frontend run test:e2e:connected:chrome",
+    "frontend:e2e:ui": "npm --prefix frontend run test:e2e:ui",
+    "frontend:e2e:ui:chromium": "npm --prefix frontend run test:e2e:ui:chromium",
+    "frontend:e2e:ui:chrome": "npm --prefix frontend run test:e2e:ui:chrome",
+    "frontend:e2e:ui:connected": "npm --prefix frontend run test:e2e:ui:connected",
+    "frontend:e2e:ui:connected:chromium": "npm --prefix frontend run test:e2e:ui:connected:chromium",
+    "frontend:e2e:ui:connected:chrome": "npm --prefix frontend run test:e2e:ui:connected:chrome",
+    "frontend:e2e:preview": "npm --prefix frontend run e2e:preview",
+    "frontend:e2e:preview:only": "npm --prefix frontend run e2e:preview:only",
+    "frontend:e2e:diag-import": "npm --prefix frontend run test:e2e:diag-import"
+  }
+}

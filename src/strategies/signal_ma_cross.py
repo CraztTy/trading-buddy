@@ -22,6 +22,7 @@ async def compute_ma_cross_signal(
     start_date: date | None,
     end_date: date | None,
     limit: int,
+    adjust_flag: str = "3",
 ) -> dict:
     """
     返回可映射到 MaCrossSignalResponse 的 dict。
@@ -40,6 +41,7 @@ async def compute_ma_cross_signal(
         start_date=start_date,
         end_date=end_date,
         limit=limit,
+        adjust_flag=adjust_flag,
     )
     if len(klines) < slow:
         raise ValueError(

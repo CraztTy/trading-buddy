@@ -23,9 +23,16 @@ def test_health_json_shape():
     assert data.get("status") == "healthy"
     assert "database_mode" in data
     assert "redis_enabled" in data
+    assert isinstance(data["pid"], int)
+    assert data.get("uptime_sec") is not None
+    assert isinstance(data["uptime_sec"], int | float)
+    assert data["uptime_sec"] >= 0
 
     rr = client.get("/health/ready")
     assert rr.status_code == 200, rr.text
     ready = rr.json()
     assert ready.get("status") == "ready"
     assert ready.get("database") == "ok"
+    assert "probe_ms" in ready
+    assert isinstance(ready["probe_ms"], int | float)
+    assert ready["probe_ms"] >= 0

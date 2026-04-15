@@ -47,6 +47,11 @@ def test_fetch_data_help_lists_daily_and_incremental():
     assert "incremental" in out.lower() or "--incremental" in out
 
 
+def test_fetch_data_help_lists_adjust_flags():
+    out = _run_script_help("scripts/fetch_data.py")
+    assert "--adjust-flags" in out
+
+
 def test_feed_dashboard_help_lists_daily_profile():
     out = _run_script_help("scripts/feed_dashboard.py")
     assert "daily" in out

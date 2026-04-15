@@ -250,6 +250,18 @@
               "title": "Limit"
             },
             "description": "用于计算均线的数据量"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -295,6 +307,18 @@
               "type": "string",
               "title": "Code"
             }
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -410,6 +434,18 @@
               "title": "Limit"
             },
             "description": "返回数量"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -558,15 +594,39 @@
         "summary": "Get Market Overview",
         "description": "获取市场概览（从数据库获取）",
         "operationId": "get_market_overview_api_dashboard_overview_get",
+        "parameters": [
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Market Overview Api Dashboard Overview Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -614,6 +674,18 @@
               "title": "Limit"
             },
             "description": "返回数量"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -685,6 +757,18 @@
               "title": "Limit"
             },
             "description": "返回数量"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -754,6 +838,18 @@
               "default": 10,
               "title": "Limit"
             }
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -895,6 +991,23 @@
               "title": "Limit"
             },
             "description": "与单标的回测一致；须 ≥ slow"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1",
+                "2",
+                "3"
+              ],
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -1101,6 +1214,23 @@
               "title": "Benchmark Code"
             },
             "description": "可选，如 sh.000300；各标的 β/α 相对同一基准（按各标的交易日对齐）。不传则对标的自身日收益。无该基准日 K 时 400。"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1",
+                "2",
+                "3"
+              ],
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -1269,6 +1399,23 @@
               "title": "Benchmark Code"
             },
             "description": "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS（标的交易日对齐、仅前向填充）。不传则对标的自身日收益。无该基准日 K 时 400。"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1",
+                "2",
+                "3"
+              ],
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {
@@ -1411,6 +1558,23 @@
               "title": "Benchmark Code"
             },
             "description": "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS（标的交易日对齐、仅前向填充）。不传则对标的自身日收益。无该基准日 K 时 400。"
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1",
+                "2",
+                "3"
+              ],
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
           }
         ],
         "responses": {

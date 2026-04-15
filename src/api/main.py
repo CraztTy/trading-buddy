@@ -2,6 +2,8 @@
 Trading Buddy - FastAPI 主入口
 """
 
+import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -19,6 +21,7 @@ from src.common.redis_client import (
     get_redis_client,
     init_redis_client,
 )
+from src.api.request_id_middleware import RequestIdMiddleware
 from src.data.storage import dispose_database, get_database
 from .routers import (
     stocks,
@@ -33,6 +36,9 @@ from .routers import (
     trade_calendar,
 )
 
+# 进程启动时刻（lifespan 进入时设置，供浅层 /health 展示 uptime，无 DB 开销）
+_PROCESS_STARTED_MONO: float | None = None
+
 
 # 初始化日志
 setup_logger()
@@ -41,6 +47,9 @@ setup_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    global _PROCESS_STARTED_MONO
+    _PROCESS_STARTED_MONO = time.perf_counter()
+
     settings = get_settings()
     print(f"Starting Trading Buddy API on {settings.api.host}:{settings.api.port}")
     print(f"Database mode: {settings.database.mode}, Redis enabled: {settings.redis.enabled}")
@@ -81,6 +90,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_api = get_settings().api
+if _api.slow_request_warn_ms > 0:
+    from src.api.slow_request_middleware import SlowRequestWarningMiddleware
+
+    app.add_middleware(
+        SlowRequestWarningMiddleware,
+        threshold_ms=_api.slow_request_warn_ms,
+        ignore_prefixes=_api.slow_request_ignore_prefixes,
+    )
+
+if _api.access_log:
+    from src.api.access_log_middleware import AccessLogMiddleware
+
+    app.add_middleware(
+        AccessLogMiddleware, ignore_prefixes=_api.access_log_ignore_prefixes
+    )
+
+# 最外层：为下游（含访问日志 / 慢请求 WARN）提供 request.state.request_id 与响应头 X-Request-ID
+app.add_middleware(RequestIdMiddleware)
+
 # 注册路由
 app.include_router(stocks.router, prefix="/api/stocks", tags=["股票"])
 app.include_router(klines.router, prefix="/api/klines", tags=["K线"])
@@ -108,17 +137,23 @@ async def root():
 async def health_check():
     """健康检查（仅反映配置，不探测连接；深度探活见 /health/ready）。"""
     settings = get_settings()
+    uptime_sec = None
+    if _PROCESS_STARTED_MONO is not None:
+        uptime_sec = round(time.perf_counter() - _PROCESS_STARTED_MONO, 3)
     return {
         "status": "healthy",
         "app_version": __version__,
         "database_mode": settings.database.mode,
         "redis_enabled": settings.redis.enabled,
+        "pid": os.getpid(),
+        "uptime_sec": uptime_sec,
     }
 
 
 @app.get("/health/ready")
 async def health_ready(request: Request):
     """就绪探针：执行 DB `SELECT 1`；若启用 Redis 则 PING。失败返回 503。"""
+    probe_t0 = time.perf_counter()
     settings = get_settings()
     db_state = "error"
     db_detail: str | None = None
@@ -148,10 +183,12 @@ async def health_ready(request: Request):
     ok = db_state == "ok" and (
         not settings.redis.enabled or redis_state == "ok"
     )
+    probe_ms = round((time.perf_counter() - probe_t0) * 1000.0, 2)
     body: dict = {
         "status": "ready" if ok else "not_ready",
         "database": db_state,
         "redis": redis_state,
+        "probe_ms": probe_ms,
     }
     if db_detail:
         body["database_error"] = db_detail

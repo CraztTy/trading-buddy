@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS daily_kline (
     ma60 DECIMAL(10, 2) COMMENT '60日均线',
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_code_date (code, trade_date),
+    UNIQUE KEY uk_code_date_flag (code, trade_date, adjust_flag),
     INDEX idx_trade_date (trade_date),
     INDEX idx_code (code),
     INDEX ix_daily_kline_trade_date_pct (trade_date, change_pct),

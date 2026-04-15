@@ -9,15 +9,24 @@ import StockListPanel from "./components/StockListPanel.vue";
 import PaperTradingPanel from "./components/PaperTradingPanel.vue";
 import WatchlistPanel from "./components/WatchlistPanel.vue";
 import FactorPreviewPanel from "./components/FactorPreviewPanel.vue";
+import ApiHealthPill from "./components/ApiHealthPill.vue";
+import ToastStack from "./components/ToastStack.vue";
+import { writeClipboardText } from "./composables/clipboardWrite.js";
+import { showToast } from "./composables/useToast.js";
 
 const SS_MAIN = "tb_mainView";
 const SS_CODE = "tb_currentCode";
 const SS_RANK = "tb_rankTab";
+const SS_DASHBOARD_ADJUST = "tb_dashboardAdjust";
 const CODE_RE = /^(sh|sz|bj)\.[\w.-]+$/i;
+
+const VIEW_KEY_CODES = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6"];
+const VIEW_IDS = ["market", "stocks", "watchlist", "factors", "backtest", "paper"];
 
 const mainView = ref("market");
 const currentCode = ref("sh.000001");
 const rankTab = ref("gainers");
+const dashboardAdjustFlag = ref("3");
 const clock = ref("");
 /** 从回测带入纸单的代码与股数 */
 const paperDraft = ref(null);
@@ -43,6 +52,8 @@ function restoreSessionPrefs() {
     if (cc && CODE_RE.test(cc) && cc.length <= 48) currentCode.value = cc;
     const rt = sessionStorage.getItem(SS_RANK);
     if (rt === "gainers" || rt === "losers" || rt === "turnover") rankTab.value = rt;
+    const da = sessionStorage.getItem(SS_DASHBOARD_ADJUST);
+    if (da === "1" || da === "2" || da === "3") dashboardAdjustFlag.value = da;
   } catch {
     /* private mode / disabled storage */
   }
@@ -53,6 +64,7 @@ function persistSessionPrefs() {
     sessionStorage.setItem(SS_MAIN, mainView.value);
     sessionStorage.setItem(SS_CODE, currentCode.value);
     sessionStorage.setItem(SS_RANK, rankTab.value);
+    sessionStorage.setItem(SS_DASHBOARD_ADJUST, dashboardAdjustFlag.value);
   } catch {
     /* ignore */
   }
@@ -63,10 +75,21 @@ onMounted(() => {
   tick();
   clockId = setInterval(tick, 1000);
   persistSessionPrefs();
+  window.addEventListener("keydown", onGlobalKeydown);
 });
-onUnmounted(() => clearInterval(clockId));
+onUnmounted(() => {
+  clearInterval(clockId);
+  window.removeEventListener("keydown", onGlobalKeydown);
+});
 
-watch([mainView, currentCode, rankTab], persistSessionPrefs);
+watch([mainView, currentCode, rankTab, dashboardAdjustFlag], persistSessionPrefs);
+
+/** 离开纸交易后丢弃回测带入草稿，避免再次进入时误覆盖表单 */
+watch(mainView, (view, prev) => {
+  if (prev === "paper" && view !== "paper") {
+    paperDraft.value = null;
+  }
+});
 
 function onSelectCode(code) {
   currentCode.value = code;
@@ -93,6 +116,43 @@ function onFactorOpenMarket(code) {
   const c = (code || "").trim();
   if (c) currentCode.value = c;
   mainView.value = "market";
+}
+
+function isTypingTarget(el) {
+  if (!el || el === document.body) return false;
+  const tag = el.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+function onGlobalKeydown(e) {
+  if (e.repeat || e.metaKey || e.ctrlKey) return;
+
+  if (e.altKey && e.shiftKey && e.code === "KeyC") {
+    if (isTypingTarget(document.activeElement)) return;
+    e.preventDefault();
+    void copyCurrentCode();
+    return;
+  }
+
+  if (!e.altKey || e.shiftKey) return;
+  const i = VIEW_KEY_CODES.indexOf(e.code);
+  if (i < 0) return;
+  if (isTypingTarget(document.activeElement)) return;
+  e.preventDefault();
+  mainView.value = VIEW_IDS[i];
+}
+
+async function copyCurrentCode() {
+  const c = (currentCode.value || "").trim();
+  if (!c) return;
+  try {
+    await writeClipboardText(c);
+    showToast(`已复制 ${c}`, { type: "info", duration: 2200 });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
 }
 </script>
 
@@ -121,9 +181,19 @@ function onFactorOpenMarket(code) {
         <div class="rule-anim" aria-hidden="true">
           <span class="rule-line" />
         </div>
+        <ApiHealthPill />
       </div>
 
       <div class="status mono">
+        <button
+          type="button"
+          class="code-chip"
+          :title="`当前标的 ${currentCode}，点击复制；快捷键 Alt+Shift+C`"
+          aria-label="复制当前标的代码"
+          @click="copyCurrentCode"
+        >
+          {{ currentCode }}
+        </button>
         <span class="time">{{ clock }}</span>
         <span class="tz">CST</span>
       </div>
@@ -132,7 +202,12 @@ function onFactorOpenMarket(code) {
     <main class="main">
       <div class="slant" aria-hidden="true" />
 
-      <MarketIndices class="block" @select="onSelectCode" />
+      <MarketIndices
+        class="block"
+        :adjust-flag="dashboardAdjustFlag"
+        @update:adjust-flag="dashboardAdjustFlag = $event"
+        @select="onSelectCode"
+      />
 
       <TradeCalendarStatus class="block enter-stagger" />
 
@@ -140,7 +215,9 @@ function onFactorOpenMarket(code) {
         <button
           type="button"
           class="view-tab"
+          data-testid="main-nav-market"
           :class="{ active: mainView === 'market' }"
+          title="Alt+1"
           @click="mainView = 'market'"
         >
           行情看板
@@ -148,7 +225,9 @@ function onFactorOpenMarket(code) {
         <button
           type="button"
           class="view-tab"
+          data-testid="main-nav-stocks"
           :class="{ active: mainView === 'stocks' }"
+          title="Alt+2"
           @click="mainView = 'stocks'"
         >
           股票列表
@@ -156,7 +235,9 @@ function onFactorOpenMarket(code) {
         <button
           type="button"
           class="view-tab"
+          data-testid="main-nav-watchlist"
           :class="{ active: mainView === 'watchlist' }"
+          title="Alt+3"
           @click="mainView = 'watchlist'"
         >
           自选
@@ -164,7 +245,9 @@ function onFactorOpenMarket(code) {
         <button
           type="button"
           class="view-tab"
+          data-testid="main-nav-factors"
           :class="{ active: mainView === 'factors' }"
+          title="Alt+4"
           @click="mainView = 'factors'"
         >
           因子预览
@@ -172,7 +255,9 @@ function onFactorOpenMarket(code) {
         <button
           type="button"
           class="view-tab"
+          data-testid="main-nav-backtest"
           :class="{ active: mainView === 'backtest' }"
+          title="Alt+5"
           @click="mainView = 'backtest'"
         >
           策略回测
@@ -180,7 +265,9 @@ function onFactorOpenMarket(code) {
         <button
           type="button"
           class="view-tab"
+          data-testid="main-nav-paper"
           :class="{ active: mainView === 'paper' }"
+          title="Alt+6"
           @click="mainView = 'paper'"
         >
           纸交易
@@ -195,7 +282,12 @@ function onFactorOpenMarket(code) {
         />
         <aside class="col side-col">
           <p class="eyebrow">涨跌 / 成交额</p>
-          <RankBoard v-model:tab="rankTab" @select="onSelectCode" />
+          <RankBoard
+            v-model:tab="rankTab"
+            :adjust-flag="dashboardAdjustFlag"
+            @update:adjust-flag="dashboardAdjustFlag = $event"
+            @select="onSelectCode"
+          />
         </aside>
       </div>
       <StockListPanel
@@ -229,6 +321,7 @@ function onFactorOpenMarket(code) {
         @navigate-backtest="onPaperNavigateBacktest"
       />
     </main>
+    <ToastStack />
   </div>
 </template>
 
@@ -398,6 +491,38 @@ function onFactorOpenMarket(code) {
   gap: 8px;
   font-size: 0.92rem;
   color: var(--mist-dim);
+}
+
+.code-chip {
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--rule-faint);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--meridian);
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.code-chip:hover {
+  border-color: rgba(62, 224, 255, 0.35);
+  background: rgba(62, 224, 255, 0.08);
+  box-shadow: 0 0 16px rgba(62, 224, 255, 0.12);
+}
+
+.code-chip:focus-visible {
+  outline: 2px solid var(--meridian);
+  outline-offset: 2px;
 }
 
 .time {

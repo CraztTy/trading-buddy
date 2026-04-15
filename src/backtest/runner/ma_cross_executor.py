@@ -23,11 +23,13 @@ def _build_assumptions(
     bench: str | None,
     start_date: date | None,
     end_date: date | None,
+    adjust_flag: str,
 ) -> list[str]:
+    adj_label = {"1": "后复权", "2": "前复权", "3": "不复权"}.get(adjust_flag, adjust_flag)
     out = [
         "双均线（日线收盘）；多空信号滞后一日计入收益，与 GET /api/backtest/ma-cross 口径一致。",
         f"样本内共 {n_bars} 根日 K（含区间与 limit 约束后）。",
-        "价格口径以入库 daily_kline 为准（参见 docs/DATA_AND_ADJUSTMENT.md）。",
+        f"价格口径：adjust_flag={adjust_flag}（{adj_label}）（参见 docs/DATA_AND_ADJUSTMENT.md）。",
     ]
     if bench:
         out.append(f"β/α 相对基准 {bench} 的日收益序列（标的交易日对齐、仅前向填充）。")
@@ -52,6 +54,7 @@ async def execute_ma_cross_single(
     commission_rate: float,
     slippage_rate: float,
     benchmark_code: str | None,
+    adjust_flag: str = "3",
 ) -> tuple[dict[str, Any], list[str]]:
     """
     校验与数据拉取均在此完成；失败抛出 ValueError（消息供 HTTP 400）。
@@ -73,6 +76,7 @@ async def execute_ma_cross_single(
         start_date=start_date,
         end_date=end_date,
         limit=limit,
+        adjust_flag=adjust_flag,
     )
     if len(klines) < slow + 1:
         raise ValueError(
@@ -87,6 +91,7 @@ async def execute_ma_cross_single(
             start_date=start_date,
             end_date=end_date,
             limit=limit,
+            adjust_flag=adjust_flag,
         )
         if not bench_klines:
             raise ValueError(f"基准 {bench_norm} 无可用日 K")
@@ -107,5 +112,6 @@ async def execute_ma_cross_single(
         bench=bench_norm,
         start_date=start_date,
         end_date=end_date,
+        adjust_flag=adjust_flag,
     )
     return body, assumptions

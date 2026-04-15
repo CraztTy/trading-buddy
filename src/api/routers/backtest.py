@@ -150,6 +150,7 @@ class MaCrossScanRunParamsBody(BaseModel):
     sort_by: str = Field("total_return", min_length=1, max_length=64)
     max_concurrent: int = Field(8, ge=1, le=20)
     benchmark_code: str | None = None
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
 
 
 class MaCrossRunParamsBody(BaseModel):
@@ -164,6 +165,7 @@ class MaCrossRunParamsBody(BaseModel):
     commission_rate: float = Field(0.0, ge=0.0, le=0.05)
     slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
     benchmark_code: str | None = None
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
 
 
 class BuyHoldRunParamsBody(BaseModel):
@@ -176,6 +178,7 @@ class BuyHoldRunParamsBody(BaseModel):
     commission_rate: float = Field(0.0, ge=0.0, le=0.05)
     slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
     benchmark_code: str | None = None
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
 
 
 class BacktestRunMvpRequest(BaseModel):
@@ -421,6 +424,7 @@ async def _execute_run_mvp(
                 commission_rate=p.commission_rate,
                 slippage_rate=p.slippage_rate,
                 benchmark_code=p.benchmark_code,
+                adjust_flag=p.adjust_flag,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -446,6 +450,7 @@ async def _execute_run_mvp(
                 commission_rate=p.commission_rate,
                 slippage_rate=p.slippage_rate,
                 benchmark_code=p.benchmark_code,
+                adjust_flag=p.adjust_flag,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -474,6 +479,7 @@ async def _execute_run_mvp(
             sort_by=p.sort_by,
             max_concurrent=p.max_concurrent,
             benchmark_code=p.benchmark_code,
+            adjust_flag=p.adjust_flag,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -500,6 +506,7 @@ async def _execute_run_mvp(
         bench=bench_norm,
         start_date=p.start_date,
         end_date=p.end_date,
+        adjust_flag=p.adjust_flag,
     )
     return BacktestRunMvpResponse(
         engine_version=ENGINE_VERSION,
@@ -639,6 +646,7 @@ async def ma_cross_signal(
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
     limit: int = Query(500, ge=30, le=5000, description="与单标的回测一致；须 ≥ slow"),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ):
     """最近一根有效 K 上的双均线多空状态（无权益曲线、无费率）。"""
@@ -651,6 +659,7 @@ async def ma_cross_signal(
             start_date=start_date,
             end_date=end_date,
             limit=limit,
+            adjust_flag=adjust_flag,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -696,6 +705,7 @@ async def ma_cross_scan(
             "不传则对标的自身日收益。无该基准日 K 时 400。"
         ),
     ),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ):
     if export not in ("json", "csv"):
@@ -728,6 +738,7 @@ async def ma_cross_scan(
             sort_by=sort_by,
             max_concurrent=max_concurrent,
             benchmark_code=benchmark_code,
+            adjust_flag=adjust_flag,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -798,6 +809,7 @@ async def ma_cross_backtest(
             "不传则对标的自身日收益。无该基准日 K 时 400。"
         ),
     ),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ):
     if fast >= slow:
@@ -822,6 +834,7 @@ async def ma_cross_backtest(
             commission_rate=commission_rate,
             slippage_rate=slippage_rate,
             benchmark_code=benchmark_code,
+            adjust_flag=adjust_flag,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -854,6 +867,7 @@ async def buy_hold_backtest(
             "不传则对标的自身日收益。无该基准日 K 时 400。"
         ),
     ),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ):
     if commission_rate + slippage_rate > 0.08:
@@ -874,6 +888,7 @@ async def buy_hold_backtest(
             commission_rate=commission_rate,
             slippage_rate=slippage_rate,
             benchmark_code=benchmark_code,
+            adjust_flag=adjust_flag,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

@@ -20,7 +20,8 @@ export function useCrossSectionOverviewLink() {
 
   async function refreshCrossSectionAsOf() {
     try {
-      const data = await fetchJson("dashboard/overview");
+      // 与 MarketIndices 同源：失败时由指数区展示即可，避免重复 Toast
+      const data = await fetchJson("dashboard/overview", { toast: false });
       const first = Array.isArray(data?.indices) ? data.indices[0] : null;
       crossSectionAsOf.value = typeof first?.date === "string" ? first.date.trim() : "";
     } catch {

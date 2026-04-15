@@ -265,6 +265,43 @@ export async function installApiMocks(page) {
       /* ignore */
     }
   });
+  await page.route(
+    (url) => {
+      const u = typeof url === "string" ? new URL(url) : url;
+      const p = u.pathname;
+      return p === "/health" || p === "/health/ready";
+    },
+    async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/health") {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            status: "healthy",
+            app_version: "e2e",
+            database_mode: "sqlite",
+            redis_enabled: false,
+            pid: 1,
+            uptime_sec: 1.5,
+          }),
+        });
+      }
+      if (path === "/health/ready") {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            status: "ready",
+            database: "ok",
+            redis: "skipped",
+            probe_ms: 0.12,
+          }),
+        });
+      }
+      return route.continue();
+    }
+  );
   await page.route("**/api/**", async (route) => {
     const req = route.request();
     const url = new URL(req.url());

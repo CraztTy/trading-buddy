@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { test, expect } from "@playwright/test";
 import { installApiMocks } from "./fixtures/installApiMocks.js";
+import { MAIN_NAV } from "./fixtures/mainNavTestIds.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** 与 `fixtures/factor-catalog.json` 同步，避免算子增减时手改 magic number */
@@ -18,8 +19,8 @@ test.describe("Factor preview panel", () => {
 
   test("load preview shows bar count from mock API", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
-    await expect(page.getByRole("heading", { name: "因子预览" })).toBeVisible();
+    await page.getByTestId(MAIN_NAV.factors).click();
+    await expect(page.getByRole("heading", { name: "因子预览", exact: true })).toBeVisible();
     await expect(page.getByTestId("factor-catalog-sync")).toContainText(
       `已同步算子目录 ${FACTOR_CATALOG_OP_COUNT} 项`,
     );
@@ -28,11 +29,14 @@ test.describe("Factor preview panel", () => {
     await expect(opSelect.locator("option")).toHaveCount(FACTOR_CATALOG_OP_COUNT);
     await page.getByRole("button", { name: "加载预览" }).click();
     await expect(page.locator(".factor-meta")).toContainText("共 20 根");
+
+    await page.getByRole("button", { name: "复制预览 API 路径" }).click();
+    await expect(page.getByTestId("toast-stack")).toContainText(/已复制预览 API 路径/);
   });
 
   test("export CSV downloads file with BOM header", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByRole("button", { name: "导出 CSV" }).click(),
@@ -49,8 +53,8 @@ test.describe("Factor preview panel", () => {
 
   test("ATR op sends window and shows meta from mock", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
-    await expect(page.getByRole("heading", { name: "因子预览" })).toBeVisible();
+    await page.getByTestId(MAIN_NAV.factors).click();
+    await expect(page.getByRole("heading", { name: "因子预览", exact: true })).toBeVisible();
     await page.getByLabel("因子算子").selectOption("atr");
     await page.getByLabel("窗口或周期 n").fill("14");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -60,7 +64,7 @@ test.describe("Factor preview panel", () => {
 
   test("MACD loads dif/dea/hist and shows params in meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("macd");
     await page.getByLabel("MACD 快线 span").fill("5");
     await page.getByLabel("MACD 慢线 span").fill("13");
@@ -72,7 +76,7 @@ test.describe("Factor preview panel", () => {
 
   test("ADX loads plus_di/minus_di/adx and shows period in meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("adx");
     await page.getByLabel("窗口或周期 n").fill("6");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -83,7 +87,7 @@ test.describe("Factor preview panel", () => {
 
   test("Aroon loads up/down/osc and shows period in meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("aroon");
     await page.getByLabel("窗口或周期 n").fill("7");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -94,7 +98,7 @@ test.describe("Factor preview panel", () => {
 
   test("Donchian loads dc_upper/mid/lower and shows period in meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("donchian");
     await page.getByLabel("窗口或周期 n").fill("8");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -105,7 +109,7 @@ test.describe("Factor preview panel", () => {
 
   test("OBV loads without window and shows meta line", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("obv");
     await page.getByRole("button", { name: "加载预览" }).click();
     await expect(page.locator(".factor-meta")).toContainText("obv");
@@ -114,7 +118,7 @@ test.describe("Factor preview panel", () => {
 
   test("CCI loads value series and shows window from mock", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("cci");
     await page.getByLabel("窗口或周期 n").fill("14");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -124,7 +128,7 @@ test.describe("Factor preview panel", () => {
 
   test("MFI loads value series and shows window from mock", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("mfi");
     await page.getByLabel("窗口或周期 n").fill("12");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -134,7 +138,7 @@ test.describe("Factor preview panel", () => {
 
   test("ROC loads value series and shows window from mock", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("roc");
     await page.getByLabel("窗口或周期 n").fill("8");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -144,7 +148,7 @@ test.describe("Factor preview panel", () => {
 
   test("TRIX loads value series and shows window from mock", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("trix");
     await page.getByLabel("窗口或周期 n").fill("9");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -154,7 +158,7 @@ test.describe("Factor preview panel", () => {
 
   test("Williams %R loads value series and shows window from mock", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("williams_r");
     await page.getByLabel("窗口或周期 n").fill("10");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -164,7 +168,7 @@ test.describe("Factor preview panel", () => {
 
   test("KDJ loads k/d/j and shows n m1 m2 in meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("kdj");
     await page.getByLabel("窗口或周期 n").fill("9");
     await page.getByLabel("KDJ 平滑参数 m1").fill("3");
@@ -177,7 +181,7 @@ test.describe("Factor preview panel", () => {
 
   test("Bollinger loads series and shows k from meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("bollinger");
     await page.getByLabel("窗口或周期 n").fill("5");
     await page.getByLabel("布林带带宽倍数 bb_k").fill("2.5");
@@ -188,7 +192,7 @@ test.describe("Factor preview panel", () => {
 
   test("ATR CSV export uses op in filename", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("atr");
     await page.getByLabel("窗口或周期 n").fill("14");
     const [download] = await Promise.all([
@@ -206,7 +210,7 @@ test.describe("Factor preview panel", () => {
 
   test("Aroon CSV export uses op in filename and three value columns", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("aroon");
     await page.getByLabel("窗口或周期 n").fill("5");
     const [download] = await Promise.all([
@@ -226,7 +230,7 @@ test.describe("Factor preview panel", () => {
 
   test("Donchian CSV export uses op in filename and dc_* columns", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("donchian");
     await page.getByLabel("窗口或周期 n").fill("5");
     const [download] = await Promise.all([
@@ -246,7 +250,7 @@ test.describe("Factor preview panel", () => {
 
   test("VWAP cumulative omits window and shows meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("vwap");
     await page.getByLabel("窗口或周期 n").fill("");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -257,7 +261,7 @@ test.describe("Factor preview panel", () => {
 
   test("VWAP rolling sends window and shows period in meta", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("vwap");
     await page.getByLabel("窗口或周期 n").fill("6");
     await page.getByRole("button", { name: "加载预览" }).click();
@@ -268,7 +272,7 @@ test.describe("Factor preview panel", () => {
 
   test("VWAP CSV cumulative uses op in filename and first row value", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("vwap");
     await page.getByLabel("窗口或周期 n").fill("");
     const [download] = await Promise.all([
@@ -287,7 +291,7 @@ test.describe("Factor preview panel", () => {
 
   test("VWAP CSV rolling first numeric row matches mock window=6", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "因子预览" }).click();
+    await page.getByTestId(MAIN_NAV.factors).click();
     await page.getByLabel("因子算子").selectOption("vwap");
     await page.getByLabel("窗口或周期 n").fill("6");
     const [download] = await Promise.all([

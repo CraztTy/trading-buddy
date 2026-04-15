@@ -31,6 +31,7 @@ def _change_from_pct(close: float, pct: float | None) -> float | None:
 
 @router.get("/overview")
 async def get_market_overview(
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """获取市场概览（从数据库获取）"""
@@ -48,12 +49,12 @@ async def get_market_overview(
         "sz.399006": "创业板指",
         "sh.000300": "沪深300",
     }
-    
+
     repo = KlineRepository(session)
     result = []
-    
+
     for code in indices_codes:
-        klines = await repo.get_daily(code=code, limit=2)
+        klines = await repo.get_daily(code=code, limit=2, adjust_flag=adjust_flag)
         if len(klines) >= 2:
             latest = klines[-1]
             prev = klines[-2]
@@ -86,11 +87,12 @@ async def get_top_gainers(
     request: Request,
     trade_date: date | None = Query(None, description="交易日期；省略则用库中最新交易日"),
     limit: int = Query(10, le=50, description="返回数量"),
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """获取涨幅榜"""
     repo = KlineRepository(session)
-    klines = await repo.get_top_gainers(trade_date, limit)
+    klines = await repo.get_top_gainers(trade_date, limit, adjust_flag=adjust_flag)
 
     stock_repo = StockRepository(session)
     redis = getattr(request.app.state, "redis", None)
@@ -116,11 +118,12 @@ async def get_top_losers(
     request: Request,
     trade_date: date | None = Query(None, description="交易日期；省略则用库中最新交易日"),
     limit: int = Query(10, le=50, description="返回数量"),
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """获取跌幅榜"""
     repo = KlineRepository(session)
-    klines = await repo.get_top_losers(trade_date, limit)
+    klines = await repo.get_top_losers(trade_date, limit, adjust_flag=adjust_flag)
 
     stock_repo = StockRepository(session)
     redis = getattr(request.app.state, "redis", None)
@@ -148,11 +151,12 @@ async def get_high_turnover(
         None, description="交易日期；省略则用库中最新交易日（与涨跌榜口径一致）"
     ),
     limit: int = Query(10, le=50),
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """获取成交额排行榜：全市场（有 ``stock_info`` 且交易中）在指定日按 ``amount`` 降序 Top ``limit``。"""
     repo = KlineRepository(session)
-    klines = await repo.get_top_by_amount(trade_date, limit, trading_stocks_only=True)
+    klines = await repo.get_top_by_amount(trade_date, limit, trading_stocks_only=True, adjust_flag=adjust_flag)
 
     stock_repo = StockRepository(session)
     redis = getattr(request.app.state, "redis", None)

@@ -93,7 +93,7 @@ class TushareSource(BaseDataSource):
                 start_date=start,
                 end_date=end
             )
-            
+
             klines = []
             for _, row in df.iterrows():
                 klines.append(KLine(
@@ -104,6 +104,7 @@ class TushareSource(BaseDataSource):
                     low=float(row['low']),
                     close=float(row['close']),
                     volume=float(row['vol']),
+                    adjust_flag="3",
                 ))
             return klines
         except Exception as e:
@@ -153,7 +154,7 @@ class TushareSource(BaseDataSource):
                 start_date=start,
                 end_date=end
             )
-            
+
             klines = []
             for _, row in df.iterrows():
                 klines.append(KLine(
@@ -164,6 +165,7 @@ class TushareSource(BaseDataSource):
                     low=float(row['low']),
                     close=float(row['close']),
                     volume=float(row['vol']),
+                    adjust_flag="3",
                 ))
             return klines
         except Exception as e:

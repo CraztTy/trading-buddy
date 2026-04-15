@@ -259,6 +259,7 @@ class KlineRepository:
             "amount": kline.amount,
             "turnover_rate": kline.turnover_rate,
             "change_pct": kline.pct_change,
+            "adjust_flag": kline.adjust_flag,
         }
 
     async def bulk_insert(self, klines: list[KLine]) -> int:
@@ -273,7 +274,7 @@ class KlineRepository:
 
             ins = dialect_insert(DailyKlineModel).values(rows)
             stmt = ins.on_conflict_do_update(
-                index_elements=["code", "trade_date"],
+                index_elements=["code", "trade_date", "adjust_flag"],
                 set_={
                     "open": ins.excluded.open,
                     "high": ins.excluded.high,
@@ -283,6 +284,7 @@ class KlineRepository:
                     "amount": ins.excluded.amount,
                     "turnover_rate": ins.excluded.turnover_rate,
                     "change_pct": ins.excluded.change_pct,
+                    "adjust_flag": ins.excluded.adjust_flag,
                 },
             )
             await self._session.execute(stmt)
@@ -299,6 +301,7 @@ class KlineRepository:
                 amount=ins.inserted.amount,
                 turnover_rate=ins.inserted.turnover_rate,
                 change_pct=ins.inserted.change_pct,
+                adjust_flag=ins.inserted.adjust_flag,
             )
             await self._session.execute(stmt)
         else:
@@ -316,6 +319,7 @@ class KlineRepository:
                         amount=kline.amount,
                         turnover_rate=kline.turnover_rate,
                         change_pct=kline.pct_change,
+                        adjust_flag=kline.adjust_flag,
                     )
                 )
                 count += 1
@@ -333,20 +337,24 @@ class KlineRepository:
         start_date: date | None = None,
         end_date: date | None = None,
         limit: int = 100,
+        adjust_flag: str = "3",
     ) -> list[KLine]:
         """查询日K线数据"""
-        stmt = select(DailyKlineModel).where(DailyKlineModel.code == code)
-        
+        stmt = select(DailyKlineModel).where(
+            DailyKlineModel.code == code,
+            DailyKlineModel.adjust_flag == adjust_flag,
+        )
+
         if start_date:
             stmt = stmt.where(DailyKlineModel.trade_date >= start_date)
         if end_date:
             stmt = stmt.where(DailyKlineModel.trade_date <= end_date)
-        
+
         stmt = stmt.order_by(DailyKlineModel.trade_date.desc()).limit(limit)
-        
+
         result = await self._session.execute(stmt)
         models = result.scalars().all()
-        
+
         return [
             KLine(
                 code=m.code,
@@ -359,20 +367,22 @@ class KlineRepository:
                 amount=float(m.amount) if m.amount else 0.0,
                 turnover_rate=float(m.turnover_rate) if m.turnover_rate else None,
                 pct_change=float(m.change_pct) if m.change_pct else None,
+                adjust_flag=m.adjust_flag,
             )
             for m in reversed(models)  # 正序返回
         ]
     
-    async def get_latest_date(self, code: str) -> date | None:
+    async def get_latest_date(self, code: str, adjust_flag: str = "3") -> date | None:
         """获取最新K线日期"""
         stmt = select(func.max(DailyKlineModel.trade_date)).where(
-            DailyKlineModel.code == code
+            DailyKlineModel.code == code,
+            DailyKlineModel.adjust_flag == adjust_flag,
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_latest_trade_dates_for_codes(
-        self, codes: Sequence[str]
+        self, codes: Sequence[str], adjust_flag: str = "3"
     ) -> dict[str, date]:
         """批量查询各 code 在 daily_kline 中的最新 trade_date（一次 GROUP BY）。"""
         uniq = list(dict.fromkeys(c for c in codes if c))
@@ -380,20 +390,25 @@ class KlineRepository:
             return {}
         stmt = (
             select(DailyKlineModel.code, func.max(DailyKlineModel.trade_date))
-            .where(DailyKlineModel.code.in_(uniq))
+            .where(
+                DailyKlineModel.code.in_(uniq),
+                DailyKlineModel.adjust_flag == adjust_flag,
+            )
             .group_by(DailyKlineModel.code)
         )
         result = await self._session.execute(stmt)
         return {row[0]: row[1] for row in result.all()}
 
-    async def get_latest_global_trade_date(self) -> date | None:
+    async def get_latest_global_trade_date(self, adjust_flag: str = "3") -> date | None:
         """全表最新交易日（用于涨跌榜默认日期，避免非交易日无数据）"""
-        stmt = select(func.max(DailyKlineModel.trade_date))
+        stmt = select(func.max(DailyKlineModel.trade_date)).where(
+            DailyKlineModel.adjust_flag == adjust_flag,
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def list_codes_on_trade_date(
-        self, trade_date: date, *, max_codes: int | None = None
+        self, trade_date: date, *, max_codes: int | None = None, adjust_flag: str = "3"
     ) -> list[str]:
         """在指定 ``trade_date`` 有日 K 的 ``code`` 列表（按 ``code`` 升序）。
 
@@ -401,7 +416,10 @@ class KlineRepository:
         """
         stmt = (
             select(DailyKlineModel.code)
-            .where(DailyKlineModel.trade_date == trade_date)
+            .where(
+                DailyKlineModel.trade_date == trade_date,
+                DailyKlineModel.adjust_flag == adjust_flag,
+            )
             .order_by(DailyKlineModel.code)
         )
         if max_codes is not None and max_codes > 0:
@@ -415,6 +433,7 @@ class KlineRepository:
         end_date: date,
         *,
         max_bars: int,
+        adjust_flag: str = "3",
     ) -> dict[str, list[KLine]]:
         """一次（或多次分块 **IN**）查询：各 ``code`` 在 ``trade_date <= end_date`` 下最近 ``max_bars`` 根日 K（**时间升序**）。
 
@@ -428,7 +447,7 @@ class KlineRepository:
         for i in range(0, len(uniq), _KLINE_IN_CHUNK):
             chunk = uniq[i : i + _KLINE_IN_CHUNK]
             part = await self._get_daily_last_n_bars_per_code_chunk(
-                chunk, end_date, max_bars=max_bars
+                chunk, end_date, max_bars=max_bars, adjust_flag=adjust_flag
             )
             out.update(part)
         return out
@@ -439,6 +458,7 @@ class KlineRepository:
         end_date: date,
         *,
         max_bars: int,
+        adjust_flag: str = "3",
     ) -> dict[str, list[KLine]]:
         _rn = (
             func.row_number()
@@ -460,11 +480,13 @@ class KlineRepository:
                 DailyKlineModel.amount,
                 DailyKlineModel.turnover_rate,
                 DailyKlineModel.change_pct,
+                DailyKlineModel.adjust_flag,
                 _rn,
             )
             .where(
                 DailyKlineModel.code.in_(codes),
                 DailyKlineModel.trade_date <= end_date,
+                DailyKlineModel.adjust_flag == adjust_flag,
             )
         ).subquery()
         stmt = (
@@ -490,29 +512,35 @@ class KlineRepository:
                 pct_change=float(row["change_pct"])
                 if row["change_pct"] is not None
                 else None,
+                adjust_flag=row["adjust_flag"],
             )
             out.setdefault(kline.code, []).append(kline)
         return out
 
     async def get_top_gainers(
-        self, trade_date: date | None, limit: int = 10
+        self, trade_date: date | None, limit: int = 10, adjust_flag: str = "3"
     ) -> list[KLine]:
         """获取涨幅最大的股票。trade_date 为 None 时用单次查询绑定全表最新交易日（少一次往返）。"""
         if trade_date is None:
-            latest = select(func.max(DailyKlineModel.trade_date)).scalar_subquery()
+            latest = (
+                select(func.max(DailyKlineModel.trade_date))
+                .where(DailyKlineModel.adjust_flag == adjust_flag)
+                .scalar_subquery()
+            )
             date_clause = DailyKlineModel.trade_date == latest
         else:
             date_clause = DailyKlineModel.trade_date == trade_date
         stmt = (
             select(DailyKlineModel)
             .where(date_clause)
+            .where(DailyKlineModel.adjust_flag == adjust_flag)
             .where(DailyKlineModel.change_pct.isnot(None))
             .order_by(DailyKlineModel.change_pct.desc())
             .limit(limit)
         )
         result = await self._session.execute(stmt)
         models = result.scalars().all()
-        
+
         return [
             KLine(
                 code=m.code,
@@ -524,22 +552,28 @@ class KlineRepository:
                 volume=m.volume or 0,
                 amount=float(m.amount) if m.amount else 0.0,
                 pct_change=float(m.change_pct) if m.change_pct else None,
+                adjust_flag=m.adjust_flag,
             )
             for m in models
         ]
 
     async def get_top_losers(
-        self, trade_date: date | None, limit: int = 10
+        self, trade_date: date | None, limit: int = 10, adjust_flag: str = "3"
     ) -> list[KLine]:
         """获取跌幅最大的股票。trade_date 为 None 时同上，单次查询。"""
         if trade_date is None:
-            latest = select(func.max(DailyKlineModel.trade_date)).scalar_subquery()
+            latest = (
+                select(func.max(DailyKlineModel.trade_date))
+                .where(DailyKlineModel.adjust_flag == adjust_flag)
+                .scalar_subquery()
+            )
             date_clause = DailyKlineModel.trade_date == latest
         else:
             date_clause = DailyKlineModel.trade_date == trade_date
         stmt = (
             select(DailyKlineModel)
             .where(date_clause)
+            .where(DailyKlineModel.adjust_flag == adjust_flag)
             .where(DailyKlineModel.change_pct.isnot(None))
             .order_by(DailyKlineModel.change_pct.asc())
             .limit(limit)
@@ -558,6 +592,7 @@ class KlineRepository:
                 volume=m.volume or 0,
                 amount=float(m.amount) if m.amount else 0.0,
                 pct_change=float(m.change_pct) if m.change_pct else None,
+                adjust_flag=m.adjust_flag,
             )
             for m in models
         ]
@@ -568,17 +603,25 @@ class KlineRepository:
         limit: int = 10,
         *,
         trading_stocks_only: bool = True,
+        adjust_flag: str = "3",
     ) -> list[KLine]:
         """指定交易日成交额 Top；`trade_date` 为 None 时用全表最新交易日。
 
         默认 **INNER JOIN** ``stock_info`` 且 ``is_trading``，排除无基础信息的代码（如仅存在于 K 表的指数）。
         """
         if trade_date is None:
-            latest = select(func.max(DailyKlineModel.trade_date)).scalar_subquery()
+            latest = (
+                select(func.max(DailyKlineModel.trade_date))
+                .where(DailyKlineModel.adjust_flag == adjust_flag)
+                .scalar_subquery()
+            )
             date_clause = DailyKlineModel.trade_date == latest
         else:
             date_clause = DailyKlineModel.trade_date == trade_date
-        stmt = select(DailyKlineModel).where(date_clause)
+        stmt = select(DailyKlineModel).where(
+            date_clause,
+            DailyKlineModel.adjust_flag == adjust_flag,
+        )
         if trading_stocks_only:
             stmt = stmt.join(
                 StockInfoModel, StockInfoModel.code == DailyKlineModel.code
@@ -602,6 +645,7 @@ class KlineRepository:
                 amount=float(m.amount) if m.amount else 0.0,
                 turnover_rate=float(m.turnover_rate) if m.turnover_rate else None,
                 pct_change=float(m.change_pct) if m.change_pct else None,
+                adjust_flag=m.adjust_flag,
             )
             for m in models
         ]

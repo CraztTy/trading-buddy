@@ -2,7 +2,9 @@
 import { computed, onMounted, ref, watch } from "vue";
 import JSZip from "jszip";
 import VChart from "vue-echarts";
-import { apiUrl, fetchJson } from "../composables/api.js";
+import { fetchJson, fetchOkResponse } from "../composables/api.js";
+import { writeClipboardText } from "../composables/clipboardWrite.js";
+import { showToast } from "../composables/useToast.js";
 
 /** 单次 ZIP 内最多包含的存档条数（避免浏览器内存压力过大） */
 const ZIP_EXPORT_MAX = 50;
@@ -74,6 +76,8 @@ const tradeStartDate = ref("");
 const tradeEndDate = ref("");
 /** 可选：β/α 对基准日收益回归（如 sh.000300），留空则为对标的自身日收益 */
 const benchmarkCode = ref("");
+/** 复权类型: 1=后复权, 2=前复权, 3=不复权 */
+const adjustFlag = ref("3");
 
 const loading = ref(false);
 const error = ref("");
@@ -88,6 +92,7 @@ const scanCsvLoading = ref(false);
 const scanError = ref("");
 const scanResult = ref(null);
 const wlItems = ref([]);
+const wlLoadErr = ref("");
 
 /** POST /run?async=1 并轮询 GET …/jobs/{id}；结果 JSON 与同步 200 同形；轮询体含 async_job_persistence（与 catalog 同源） */
 const mvpAsyncRun = ref(readStoredMvpAsync());
@@ -98,6 +103,8 @@ const SCAN_CODES_FROM_WL_MAX = 40;
 
 const signalSnap = ref(null);
 const signalErr = ref("");
+/** 最近一次成功的 `GET …/ma-cross/signal?…` 相对路径（含 `/api`） */
+const lastSignalApiPath = ref("");
 
 /** 策略目录 / 试算信号（POST /api/strategies/signal，与 GET ma-cross/signal 等价） */
 /** 策略目录 JSON（HTML，含 <mark> 高亮；仅展示） */
@@ -173,18 +180,7 @@ async function loadBacktestEngineCatalog() {
   backtestCatalogErr.value = "";
   backtestCatalogLoading.value = true;
   try {
-    const res = await fetch(apiUrl("backtest/catalog"));
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const d = body?.detail;
-      backtestCatalogErr.value =
-        typeof d === "string"
-          ? d
-          : Array.isArray(d)
-            ? d.map((x) => x?.msg || JSON.stringify(x)).join("; ")
-            : `HTTP ${res.status}`;
-      return;
-    }
+    const body = await fetchJson("backtest/catalog", { toast: false });
     if (!body?.engine_version || !Array.isArray(body.strategies)) {
       backtestCatalogErr.value = "策略目录格式异常";
       return;
@@ -201,6 +197,8 @@ const saveRunTip = ref("");
 const runHistory = ref([]);
 const runHistoryTotal = ref(0);
 const runHistoryLoading = ref(false);
+/** 列表 GET 失败时的可读说明（成功或重试开始时清空） */
+const runHistoryErr = ref("");
 /** 存档列表筛选：'' 全部 | ma_cross_single | buy_hold_single | ma_cross_scan */
 const runHistoryKindFilter = ref("");
 /** 每页条数（与 GET /api/backtest/runs limit 一致；写入 localStorage） */
@@ -213,6 +211,7 @@ const runHistorySearchApplied = ref("");
 /** 搜索框草稿 */
 const runHistorySearchInput = ref("");
 const selectedRunDetail = ref(null);
+const selectedRunDetailErr = ref("");
 const selectedRunLoading = ref(false);
 /** 列表行「导出」拉取详情时的 id，用于按钮 loading */
 const exportRunIdBusy = ref(null);
@@ -342,6 +341,7 @@ function commonParams() {
   if (e) p.set("end_date", e);
   const b = (benchmarkCode.value || "").trim().toLowerCase();
   if (b) p.set("benchmark_code", b);
+  p.set("adjust_flag", adjustFlag.value);
   return p;
 }
 
@@ -386,6 +386,7 @@ function scanRunParamsObject(codesRaw) {
   if (e) out.end_date = e;
   const b = (qp.benchmark_code || "").trim().toLowerCase();
   if (b) out.benchmark_code = b;
+  out.adjust_flag = adjustFlag.value;
   return out;
 }
 
@@ -487,6 +488,7 @@ function maCrossSingleRunParamsObject(code) {
   if (e) out.end_date = e;
   const b = (qp.benchmark_code || "").trim().toLowerCase();
   if (b) out.benchmark_code = b;
+  out.adjust_flag = adjustFlag.value;
   return out;
 }
 
@@ -507,6 +509,7 @@ function buyHoldSingleRunParamsObject(code) {
   if (e) out.end_date = e;
   const b = (benchmarkCode.value || "").trim().toLowerCase();
   if (b) out.benchmark_code = b;
+  out.adjust_flag = adjustFlag.value;
   return out;
 }
 
@@ -527,14 +530,6 @@ function singleRunMvpEnvelope(code) {
     strategy_version: "1",
     params: maCrossSingleRunParamsObject(code),
   };
-}
-
-function mvpHttpErrorMessage(status, statusText, jsonBody) {
-  const d = jsonBody?.detail;
-  if (typeof d === "string") return d;
-  if (Array.isArray(d)) return d.map((x) => x?.msg || JSON.stringify(x)).join("; ");
-  if (status === 503) return "服务暂不可用";
-  return `${status} ${statusText || ""}`.trim();
 }
 
 function sleepMvp(ms) {
@@ -592,24 +587,17 @@ async function postMvpRunResolve(envelope) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(envelope),
+      toast: false,
     });
   }
   const aq = mvpCatalogAsyncQueryParam();
-  const res = await fetch(apiUrl(`backtest/run?${mvpAsyncPostRunSearch()}`), {
+  const res = await fetchOkResponse(`backtest/run?${mvpAsyncPostRunSearch()}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(envelope),
+    toast: false,
   });
   const body = await res.json().catch(() => ({}));
-  if (res.status === 429) {
-    throw new Error("请求过于频繁，请稍后再试");
-  }
-  if (res.status === 400 || res.status === 422) {
-    throw new Error(mvpHttpErrorMessage(res.status, res.statusText, body));
-  }
-  if (!res.ok) {
-    throw new Error(mvpHttpErrorMessage(res.status, res.statusText, body));
-  }
   if (res.status !== 202) {
     throw new Error(
       res.status === 200
@@ -625,7 +613,7 @@ async function postMvpRunResolve(envelope) {
   try {
     let last = "";
     for (let i = 0; i < 200; i++) {
-      const st = await fetchJson(mvpJobStatusFetchPath(jobId));
+      const st = await fetchJson(mvpJobStatusFetchPath(jobId), { toast: false });
       last = String(st?.status || "");
       if (last === "completed") {
         const inner = st?.result;
@@ -652,17 +640,7 @@ async function cancelMvpAsyncQueuedJob() {
   const id = mvpAsyncInFlightJobId.value?.trim();
   if (!id) return;
   const path = `backtest/jobs/${encodeURIComponent(id)}/cancel`;
-  const res = await fetch(apiUrl(path), { method: "POST" });
-  const body = await res.json().catch(() => ({}));
-  if (res.status === 404) {
-    throw new Error(typeof body?.detail === "string" ? body.detail : "任务不存在");
-  }
-  if (res.status === 409) {
-    throw new Error(typeof body?.detail === "string" ? body.detail : "当前状态不可取消");
-  }
-  if (!res.ok) {
-    throw new Error(mvpHttpErrorMessage(res.status, res.statusText, body));
-  }
+  await fetchJson(path, { method: "POST", toast: false });
 }
 
 async function onCancelMvpAsyncQueued() {
@@ -678,7 +656,7 @@ async function onCancelMvpAsyncQueued() {
 async function persistRun(kind, requestParams, responsePayload) {
   saveRunTip.value = "";
   try {
-    const res = await fetch(apiUrl("backtest/runs"), {
+    const body = await fetchJson("backtest/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -686,12 +664,8 @@ async function persistRun(kind, requestParams, responsePayload) {
         request_params: requestParams,
         response_payload: responsePayload,
       }),
+      toast: false,
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const d = body?.detail;
-      throw new Error(typeof d === "string" ? d : res.statusText || "保存失败");
-    }
     saveRunTip.value = `已存档 #${body.id}` + (body.summary ? ` · ${body.summary}` : "");
     await loadRunHistory({ resetPage: true });
   } catch (e) {
@@ -727,6 +701,7 @@ function clearRunHistorySearch() {
 async function loadRunHistory({ resetPage = false } = {}) {
   if (resetPage) runHistoryOffset.value = 0;
   runHistoryLoading.value = true;
+  runHistoryErr.value = "";
   try {
     const lim = runHistoryLimit.value;
     const params = new URLSearchParams({
@@ -737,7 +712,7 @@ async function loadRunHistory({ resetPage = false } = {}) {
     if (k) params.set("kind", k);
     const sq = (runHistorySearchApplied.value || "").trim();
     if (sq) params.set("q", sq);
-    const data = await fetchJson(`backtest/runs?${params.toString()}`);
+    const data = await fetchJson(`backtest/runs?${params.toString()}`, { toast: false });
     runHistory.value = Array.isArray(data?.items) ? data.items : [];
     runHistoryTotal.value = data?.total ?? 0;
     const total = runHistoryTotal.value;
@@ -748,10 +723,11 @@ async function loadRunHistory({ resetPage = false } = {}) {
       return await loadRunHistory({ resetPage: false });
     }
     syncRunHistoryJumpField();
-  } catch {
+  } catch (e) {
     runHistory.value = [];
     runHistoryTotal.value = 0;
     runHistoryJumpPage.value = "1";
+    runHistoryErr.value = e?.message || "存档列表加载失败";
   } finally {
     runHistoryLoading.value = false;
   }
@@ -790,13 +766,11 @@ async function deleteRunArchive(id, ev) {
   if (!id || !window.confirm(`删除存档 #${id}？不可恢复。`)) return;
   saveRunTip.value = "";
   try {
-    const res = await fetch(apiUrl(`backtest/runs/${id}`), { method: "DELETE" });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const d = body?.detail;
-      throw new Error(typeof d === "string" ? d : "删除失败");
+    await fetchJson(`backtest/runs/${id}`, { method: "DELETE", toast: false });
+    if (selectedRunDetail.value?.id === id) {
+      selectedRunDetail.value = null;
+      selectedRunDetailErr.value = "";
     }
-    if (selectedRunDetail.value?.id === id) selectedRunDetail.value = null;
     runArchiveSelectedIds.value = runArchiveSelectedIds.value.filter((x) => x !== id);
     saveRunTip.value = `已删除 #${id}`;
     await loadRunHistory({ resetPage: false });
@@ -821,12 +795,7 @@ async function deleteSelectedRunArchives() {
       const results = await Promise.all(
         slice.map(async (rid) => {
           try {
-            const res = await fetch(apiUrl(`backtest/runs/${rid}`), { method: "DELETE" });
-            if (!res.ok) {
-              const body = await res.json().catch(() => ({}));
-              const d = body?.detail;
-              return { id: rid, ok: false, err: typeof d === "string" ? d : res.statusText };
-            }
+            await fetchJson(`backtest/runs/${rid}`, { method: "DELETE", toast: false });
             return { id: rid, ok: true, err: null };
           } catch (e) {
             return { id: rid, ok: false, err: e?.message || "网络错误" };
@@ -836,7 +805,10 @@ async function deleteSelectedRunArchives() {
       for (const r of results) {
         if (r.ok) {
           ok++;
-          if (selectedRunDetail.value?.id === r.id) selectedRunDetail.value = null;
+          if (selectedRunDetail.value?.id === r.id) {
+            selectedRunDetail.value = null;
+            selectedRunDetailErr.value = "";
+          }
           runArchiveSelectedIds.value = runArchiveSelectedIds.value.filter((x) => x !== r.id);
         } else {
           fail++;
@@ -855,11 +827,13 @@ async function deleteSelectedRunArchives() {
 
 async function openRunDetail(id) {
   selectedRunDetail.value = null;
+  selectedRunDetailErr.value = "";
   selectedRunLoading.value = true;
   try {
-    selectedRunDetail.value = await fetchJson(`backtest/runs/${id}`);
-  } catch {
+    selectedRunDetail.value = await fetchJson(`backtest/runs/${id}`, { toast: false });
+  } catch (e) {
     selectedRunDetail.value = null;
+    selectedRunDetailErr.value = e?.message || "详情加载失败";
   } finally {
     selectedRunLoading.value = false;
   }
@@ -910,7 +884,7 @@ async function exportSelectedRunsZip() {
       const slice = ids.slice(i, i + batch);
       const rows = await Promise.all(
         slice.map(async (rid) => {
-          const d = await fetchJson(`backtest/runs/${rid}`);
+          const d = await fetchJson(`backtest/runs/${rid}`, { toast: false });
           return d;
         })
       );
@@ -962,7 +936,7 @@ async function exportRunArchiveById(id, ev) {
   exportRunIdBusy.value = id;
   saveRunTip.value = "";
   try {
-    const d = await fetchJson(`backtest/runs/${id}`);
+    const d = await fetchJson(`backtest/runs/${id}`, { toast: false });
     downloadRunJsonFile(d);
   } catch (e) {
     saveRunTip.value = e?.message || "导出失败";
@@ -1049,24 +1023,42 @@ function signalQueryParams() {
   const e = (tradeEndDate.value || "").trim();
   if (s) p.set("start_date", s);
   if (e) p.set("end_date", e);
+  p.set("adjust_flag", adjustFlag.value);
   return p;
+}
+
+async function copySignalApiPath() {
+  const u = lastSignalApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制双均线信号 API 路径（GET …/ma-cross/signal；curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3200,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
 }
 
 async function loadSignalSnapshot() {
   const c = (props.code || "").trim();
   if (!c || innerTab.value !== "single") {
     signalSnap.value = null;
+    lastSignalApiPath.value = "";
     signalErr.value = "";
     return;
   }
   if (singleRunStrategy.value === "buy_hold") {
     signalSnap.value = null;
+    lastSignalApiPath.value = "";
     signalErr.value = "";
     return;
   }
   const rangeErr = tradeRangeInvalidMsg();
   if (rangeErr) {
     signalSnap.value = null;
+    lastSignalApiPath.value = "";
     signalErr.value = rangeErr;
     return;
   }
@@ -1074,9 +1066,13 @@ async function loadSignalSnapshot() {
   const p = signalQueryParams();
   p.set("code", c);
   try {
-    signalSnap.value = await fetchJson(`backtest/ma-cross/signal?${p.toString()}`);
+    signalSnap.value = await fetchJson(`backtest/ma-cross/signal?${p.toString()}`, {
+      toast: false,
+    });
+    lastSignalApiPath.value = `/api/backtest/ma-cross/signal?${p.toString()}`;
   } catch (e) {
     signalSnap.value = null;
+    lastSignalApiPath.value = "";
     signalErr.value = e?.message || "信号加载失败";
   }
 }
@@ -1135,7 +1131,7 @@ async function loadStrategyCatalog() {
   strategyContractMsg.value = "";
   strategyContractBusy.value = true;
   try {
-    const data = await fetchJson("strategies/catalog");
+    const data = await fetchJson("strategies/catalog", { toast: false });
     const body = {
       strategies: enrichCatalogStrategiesForDisplay(data.strategies || []),
     };
@@ -1170,6 +1166,7 @@ async function postStrategySignalTrial() {
         kind: "ma_cross",
         params: strategyPostParams(),
       }),
+      toast: false,
     });
     strategySignalTrialText.value = JSON.stringify(data, null, 2);
   } catch (e) {
@@ -1183,7 +1180,7 @@ async function postStrategySignalTrial() {
 async function fillScanFromWatchlist() {
   scanError.value = "";
   try {
-    const data = await fetchJson("watchlist/items");
+    const data = await fetchJson("watchlist/items", { toast: false });
     const items = Array.isArray(data?.items) ? data.items : [];
     const codes = items
       .map((x) => String(x.code || "").trim().toLowerCase())
@@ -1216,11 +1213,9 @@ async function downloadScanCsv() {
   params.set("codes", raw);
   params.set("export", "csv");
   try {
-    const res = await fetch(apiUrl(`backtest/ma-cross/scan?${params.toString()}`));
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(t.slice(0, 200) || `${res.status}`);
-    }
+    const res = await fetchOkResponse(`backtest/ma-cross/scan?${params.toString()}`, {
+      toast: false,
+    });
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1244,11 +1239,13 @@ watch(
 );
 
 async function loadWatchlist() {
+  wlLoadErr.value = "";
   try {
-    const data = await fetchJson("watchlist/items");
+    const data = await fetchJson("watchlist/items", { toast: false });
     wlItems.value = Array.isArray(data?.items) ? data.items : [];
-  } catch {
+  } catch (e) {
     wlItems.value = [];
+    wlLoadErr.value = e?.message || "自选列表加载失败";
   }
 }
 
@@ -1412,6 +1409,14 @@ onMounted(() => {
           spellcheck="false"
         />
       </label>
+      <label class="field">
+        <span class="lbl">复权类型</span>
+        <select v-model="adjustFlag" class="inp mono">
+          <option value="3">不复权</option>
+          <option value="2">前复权</option>
+          <option value="1">后复权</option>
+        </select>
+      </label>
     </div>
     <p class="trade-range-note">
       填写后日收益回归用基准收盘价序列（与标的交易日对齐，仅前向填充、无前视）。
@@ -1475,6 +1480,7 @@ onMounted(() => {
             <span class="mono">POST /api/backtest/run</span>（<span class="mono">ma_cross</span>）；均线一行仍调
             <span class="mono">GET …/ma-cross/signal</span>。
           </p>
+          <p v-if="wlLoadErr" class="sig-err mono" role="alert" data-testid="backtest-wl-err">{{ wlLoadErr }}</p>
           <div v-if="wlItems.length" class="wl-chips">
             <span class="wl-chips-lbl">自选</span>
             <button
@@ -1489,21 +1495,46 @@ onMounted(() => {
           </div>
           <template v-if="singleRunStrategy === 'ma_cross'">
             <p v-if="signalErr" class="sig-err mono">{{ signalErr }}</p>
-            <p v-else-if="signalSnap" class="sig-line mono">
-              信号（{{ signalSnap.as_of_date }}）：
-              <strong>{{ signalSnap.position === "long" ? "多" : "空" }}</strong>
-              · 收 {{ signalSnap.close }} · MA{{ signalSnap.fast_period }} {{ signalSnap.ma_fast }} / MA{{
-                signalSnap.slow_period
-              }}
-              {{ signalSnap.ma_slow }}
+            <p v-else-if="signalSnap" class="sig-line mono sig-line-with-copy">
+              <span>
+                信号（{{ signalSnap.as_of_date }}）：
+                <strong>{{ signalSnap.position === "long" ? "多" : "空" }}</strong>
+                · 收 {{ signalSnap.close }} · MA{{ signalSnap.fast_period }} {{ signalSnap.ma_fast }} / MA{{
+                  signalSnap.slow_period
+                }}
+                {{ signalSnap.ma_slow }}
+              </span>
+              <button
+                type="button"
+                class="sig-copy-api"
+                :disabled="!lastSignalApiPath"
+                title="复制当前参数下最近一次成功请求的 GET …/ma-cross/signal 路径"
+                aria-label="复制双均线信号 API 路径"
+                @click="copySignalApiPath"
+              >
+                复制 API 路径
+              </button>
             </p>
           </template>
         </div>
         <div class="hd-actions">
-          <button type="button" class="run" :disabled="loading" @click="runBacktest">
+          <button
+            type="button"
+            class="run"
+            data-testid="backtest-run-submit"
+            :disabled="loading"
+            @click="runBacktest"
+          >
             {{ loading ? "计算中…" : "运行回测" }}
           </button>
-          <button type="button" class="run secondary" @click="emitOpenPaper">闭环 · 纸交易</button>
+          <button
+            type="button"
+            class="run secondary"
+            data-testid="backtest-open-paper"
+            @click="emitOpenPaper"
+          >
+            闭环 · 纸交易
+          </button>
           <button
             type="button"
             class="run secondary"
@@ -1940,6 +1971,9 @@ onMounted(() => {
         <span class="mono">导出 JSON</span>。支持每页 10 / 30 / 50 条（记住本机）、跳转页码与摘要搜索。
       </p>
       <p v-if="saveRunTip" class="save-tip mono" role="status">{{ saveRunTip }}</p>
+      <p v-if="runHistoryErr" class="run-history-err mono" role="alert" data-testid="run-history-err">
+        {{ runHistoryErr }}
+      </p>
       <div v-if="runHistoryTotal > 0" class="run-history-pagination">
         <div class="run-pg-row">
           <span class="meta mono meta-range">{{ runHistoryRangeLabel }}</span>
@@ -2053,6 +2087,14 @@ onMounted(() => {
       </ul>
       <p v-else-if="!runHistoryLoading" class="dim">暂无存档</p>
       <p v-if="selectedRunLoading" class="dim mono">加载详情…</p>
+      <p
+        v-else-if="selectedRunDetailErr"
+        class="run-history-err mono"
+        role="alert"
+        data-testid="run-detail-err"
+      >
+        {{ selectedRunDetailErr }}
+      </p>
       <div v-if="selectedRunDetail" class="run-detail">
         <div class="run-detail-hd">
           <p class="dim mono run-detail-id">#{{ selectedRunDetail.id }} · {{ selectedRunDetail.kind }}</p>
@@ -2649,6 +2691,42 @@ onMounted(() => {
   line-height: 1.45;
 }
 
+.sig-line-with-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.sig-copy-api {
+  flex-shrink: 0;
+  font-family: var(--font-ui);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.5);
+  color: var(--meridian);
+  cursor: pointer;
+}
+
+.sig-copy-api:hover:not(:disabled) {
+  border-color: rgba(62, 224, 255, 0.35);
+  color: var(--mist);
+}
+
+.sig-copy-api:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sig-copy-api:focus-visible {
+  outline: 2px solid var(--meridian);
+  outline-offset: 2px;
+}
+
 .sig-err {
   margin: 10px 0 0;
   font-size: 0.72rem;
@@ -2767,6 +2845,13 @@ onMounted(() => {
   margin: 0 0 8px;
   font-size: 0.72rem;
   color: var(--gain);
+}
+
+.run-history-err {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--danger);
 }
 
 .meta {

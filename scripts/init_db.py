@@ -12,8 +12,9 @@ Trading Buddy - 数据库初始化脚本
 日常拉数可在 ``--mode daily`` / ``all`` 时加 ``--with-calendar`` 顺带刷新尾部区间。
 """
 
-import sys
 import asyncio
+import sys
+import time
 from pathlib import Path
 
 # 添加项目根目录到路径
@@ -46,7 +47,8 @@ async def init_database():
     
     # 创建数据库连接
     db = get_database()
-    
+
+    t0 = time.perf_counter()
     try:
         # 创建所有表
         await db.create_tables()
@@ -56,11 +58,12 @@ async def init_database():
             "python scripts/fetch_trade_calendar.py --start 2020-01-01 --end 2025-12-31 "
             "或 fetch_data.py --mode calendar；详见 init_db 模块说明。"
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         raise
     finally:
+        logger.info(f"[timing] init_db {time.perf_counter() - t0:.1f}s")
         await dispose_database()
 
 

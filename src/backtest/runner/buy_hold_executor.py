@@ -21,12 +21,14 @@ def _build_assumptions(
     bench: str | None,
     start_date: date | None,
     end_date: date | None,
+    adjust_flag: str,
 ) -> list[str]:
+    adj_label = {"1": "后复权", "2": "前复权", "3": "不复权"}.get(adjust_flag, adjust_flag)
     out = [
         "买入持有：自第二根 K 起按收盘到收盘计入策略日收益；首根无收益。",
         "双边一次费率近似：净值序列末尾乘以 (1 − 2×(commission_rate+slippage_rate))。",
         f"样本内共 {n_bars} 根日 K（含区间与 limit 约束后）。",
-        "价格口径以入库 daily_kline 为准（参见 docs/DATA_AND_ADJUSTMENT.md）。",
+        f"价格口径：adjust_flag={adjust_flag}（{adj_label}）（参见 docs/DATA_AND_ADJUSTMENT.md）。",
         "fast_period=1、slow_period=2 为占位字段，与双均线无关；详见响应 note。",
     ]
     if bench:
@@ -50,6 +52,7 @@ async def execute_buy_hold_single(
     commission_rate: float,
     slippage_rate: float,
     benchmark_code: str | None,
+    adjust_flag: str = "3",
 ) -> tuple[dict[str, Any], list[str]]:
     if commission_rate + slippage_rate > 0.08:
         raise ValueError("commission_rate 与 slippage_rate 之和勿超过 0.08")
@@ -63,6 +66,7 @@ async def execute_buy_hold_single(
         start_date=start_date,
         end_date=end_date,
         limit=limit,
+        adjust_flag=adjust_flag,
     )
     if len(klines) < 2:
         raise ValueError(f"K 线不足：买入持有至少需要 2 根，当前 {len(klines)}")
@@ -75,6 +79,7 @@ async def execute_buy_hold_single(
             start_date=start_date,
             end_date=end_date,
             limit=limit,
+            adjust_flag=adjust_flag,
         )
         if not bench_klines:
             raise ValueError(f"基准 {bench_norm} 无可用日 K")
@@ -97,6 +102,7 @@ async def execute_buy_hold_single(
         bench=bench_norm,
         start_date=start_date,
         end_date=end_date,
+        adjust_flag=adjust_flag,
     )
     return body, assumptions
 

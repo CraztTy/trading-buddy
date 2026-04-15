@@ -136,6 +136,7 @@ class MockDataSource(BaseDataSource):
                 volume=int(volume),
                 amount=round(amount, 2),
                 pct_change=pct,
+                adjust_flag="3",
             ))
             prev_close = close_px
 
@@ -221,6 +222,7 @@ class MockDataSource(BaseDataSource):
                 close=round(current_price, 2),
                 volume=int(vol),
                 amount=round(amount, 2),
+                adjust_flag="3",
             ))
             
             current_date += timedelta(days=1)

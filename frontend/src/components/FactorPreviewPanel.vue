@@ -1,7 +1,9 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
 import VChart from "vue-echarts";
-import { apiUrl } from "../composables/api.js";
+import { fetchJson, fetchOkResponse } from "../composables/api.js";
+import { writeClipboardText } from "../composables/clipboardWrite.js";
+import { showToast } from "../composables/useToast.js";
 import { useCrossSectionOverviewLink } from "../composables/crossSectionOverviewLink.js";
 
 const props = defineProps({
@@ -31,6 +33,8 @@ const csvBusy = ref(false);
 const errMsg = ref("");
 /** @type {import('vue').Ref<null | Record<string, unknown>>} */
 const preview = ref(null);
+/** 最近一次成功 JSON 预览的请求路径（含 `/api` 前缀与 query），供复制 */
+const lastPreviewApiPath = ref("");
 
 /** 自 GET /api/factors/catalog；空数组表示尚未加载成功（用本地回退规则与静态下拉里项） */
 /** @type {import('vue').Ref<FactorCatalogOp[]>} */
@@ -215,18 +219,7 @@ onMounted(async () => {
   catalogLoadErr.value = "";
   catalogLoading.value = true;
   try {
-    const res = await fetch(apiUrl("factors/catalog"));
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const d = body?.detail;
-      catalogLoadErr.value =
-        typeof d === "string"
-          ? d
-          : Array.isArray(d)
-            ? d.map((x) => x?.msg || JSON.stringify(x)).join("; ")
-            : `HTTP ${res.status}`;
-      return;
-    }
+    const body = await fetchJson("factors/catalog");
     if (!Array.isArray(body?.ops) || body.ops.length === 0) {
       catalogLoadErr.value = "算子目录为空";
       return;
@@ -397,24 +390,28 @@ async function loadPreview() {
   loading.value = true;
   try {
     params.set("response_format", "json");
-    const res = await fetch(`${apiUrl(`factors/preview?${params.toString()}`)}`);
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const d = body?.detail;
-      errMsg.value =
-        typeof d === "string"
-          ? d
-          : Array.isArray(d)
-            ? d.map((x) => x?.msg || JSON.stringify(x)).join("; ")
-            : `${res.status} ${res.statusText}`;
-      return;
-    }
+    const body = await fetchJson(`factors/preview?${params.toString()}`);
     preview.value = body;
+    lastPreviewApiPath.value = `/api/factors/preview?${params.toString()}`;
     emit("select-code", normalizeCode(localCode.value));
   } catch (e) {
     errMsg.value = e?.message || "请求失败";
   } finally {
     loading.value = false;
+  }
+}
+
+async function copyPreviewApiPath() {
+  const u = lastPreviewApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制预览 API 路径（含 response_format=json；curl 请自行拼接主机与鉴权）", {
+      type: "info",
+      duration: 3400,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
   }
 }
 
@@ -426,18 +423,7 @@ async function downloadCsv() {
 
   csvBusy.value = true;
   try {
-    const res = await fetch(`${apiUrl(`factors/preview?${params.toString()}`)}`);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const d = body?.detail;
-      errMsg.value =
-        typeof d === "string"
-          ? d
-          : Array.isArray(d)
-            ? d.map((x) => x?.msg || JSON.stringify(x)).join("; ")
-            : `${res.status} ${res.statusText}`;
-      return;
-    }
+    const res = await fetchOkResponse(`factors/preview?${params.toString()}`);
     const blob = await res.blob();
     const cd = res.headers.get("content-disposition") || "";
     const m = cd.match(/filename="([^"]+)"/i);
@@ -1031,6 +1017,16 @@ const chartOption = computed(() => {
         </button>
         <button type="button" class="btn-csv" :disabled="loading || csvBusy" @click="downloadCsv">
           {{ csvBusy ? "导出中…" : "导出 CSV" }}
+        </button>
+        <button
+          type="button"
+          class="btn-csv"
+          :disabled="loading || csvBusy || !lastPreviewApiPath"
+          title="复制上次成功「加载预览」时的相对路径"
+          aria-label="复制预览 API 路径"
+          @click="copyPreviewApiPath"
+        >
+          复制 API 路径
         </button>
       </div>
     </div>

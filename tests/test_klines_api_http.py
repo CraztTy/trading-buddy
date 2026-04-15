@@ -75,6 +75,24 @@ async def test_klines_analysis_has_indicators_and_history(http_test_client, empt
     assert len(body["history"]) == 8
 
 
+async def test_klines_series_adjust_flag_filter(http_test_client, empty_sqlite_db):
+    code = "sh.kadj"
+    base = date(2024, 11, 1)
+    rows3 = [_daily_row(code, base + timedelta(days=i), 5.0) for i in range(3)]
+    rows1 = [_daily_row(code, base + timedelta(days=i), 10.0) for i in range(3)]
+    for r in rows1:
+        r.adjust_flag = "1"
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows3 + rows1)
+
+    r = http_test_client.get(f"/api/klines/{code}", params={"limit": 10, "adjust_flag": "1"})
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 3
+    assert all(x["close"] == 10.0 for x in data)
+    assert all(x["adjust_flag"] == "1" for x in data)
+
+
 async def test_klines_latest_missing_returns_error(http_test_client: TestClient):
     r = http_test_client.get("/api/klines/latest/sh.no_k")
     assert r.status_code == 200

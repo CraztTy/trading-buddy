@@ -47,11 +47,12 @@ async def get_kline_analysis(
     request: Request,
     code: str,
     limit: int = Query(60, le=250, description="用于计算均线的数据量"),
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """获取K线分析（包含技术指标与展示名称）"""
     repo = KlineRepository(session)
-    klines = await repo.get_daily(code=code, limit=limit)
+    klines = await repo.get_daily(code=code, limit=limit, adjust_flag=adjust_flag)
     name = await _chart_display_name(request, session, code)
 
     if not klines:
@@ -78,11 +79,12 @@ async def get_kline_analysis(
 @router.get("/latest/{code}")
 async def get_latest_kline(
     code: str,
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ) -> KLine | dict:
     """获取最新一根K线"""
     repo = KlineRepository(session)
-    klines = await repo.get_daily(code=code, limit=1)
+    klines = await repo.get_daily(code=code, limit=1, adjust_flag=adjust_flag)
 
     if not klines:
         return {"error": "No kline data", "code": code}
@@ -97,6 +99,7 @@ async def get_kline(
     end_date: date | None = Query(None, description="结束日期"),
     period: str = Query("daily", description="周期: daily/weekly/monthly"),
     limit: int = Query(100, le=500, description="返回数量"),
+    adjust_flag: str = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
     session: AsyncSession = Depends(get_session),
 ) -> list[KLine]:
     """获取K线数据"""
@@ -106,4 +109,5 @@ async def get_kline(
         start_date=start_date,
         end_date=end_date,
         limit=limit,
+        adjust_flag=adjust_flag,
     )

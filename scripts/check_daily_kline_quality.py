@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
@@ -125,79 +126,87 @@ async def _main(
     from src.data.quality.trade_calendar_table import trade_calendar_table_summary
     from src.data.storage import dispose_database, get_database
 
-    db = get_database()
+    t0 = time.perf_counter()
     try:
-        async with db.session() as session:
-            report_k = await daily_kline_quality_report(session)
-            report_s = None if kline_only else await stock_info_quality_report(session)
-            report_g = await calendar_gap_sample_report(
-                session,
-                sample_size=gap_sample,
-                seed_offset=gap_seed_offset,
-                top_k=gap_top_k,
-                gap_exchange=gap_exchange,
-            )
-            report_tc = await trade_calendar_table_summary(session)
+        db = get_database()
+        try:
+            async with db.session() as session:
+                report_k = await daily_kline_quality_report(session)
+                report_s = None if kline_only else await stock_info_quality_report(session)
+                report_g = await calendar_gap_sample_report(
+                    session,
+                    sample_size=gap_sample,
+                    seed_offset=gap_seed_offset,
+                    top_k=gap_top_k,
+                    gap_exchange=gap_exchange,
+                )
+                report_tc = await trade_calendar_table_summary(session)
+        finally:
+            await dispose_database()
+
+        gate_ok, gate_messages = evaluate_trade_calendar_gate(
+            report_k,
+            report_g,
+            grace_days=gap_calendar_grace_days,
+        )
+
+        if as_json:
+            out: dict = {
+                "daily_kline": report_k,
+                "calendar_gap_sample": report_g,
+                "trade_calendar": report_tc,
+                "trade_calendar_gate": {
+                    "ok": gate_ok,
+                    "messages": gate_messages,
+                    "grace_days": gap_calendar_grace_days,
+                },
+            }
+            if report_s is not None:
+                out["stock_info"] = report_s
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+        else:
+            rk = report_k
+            print(f"表 {rk['table']}: 行数 {rk['row_count']}")
+            print(f"distinct code 数: {rk.get('distinct_codes', 0)}")
+            print(f"trade_date 范围: {rk['trade_date_min']} ~ {rk['trade_date_max']}")
+            rmax = rk.get("rows_on_max_trade_date")
+            if rmax is not None:
+                print(f"最新交易日行数: {rmax}")
+            print(f"仅 1 根日 K 的标的数: {rk.get('codes_with_single_bar', 0)}")
+            print(f"无 stock_info 匹配的日 K 行数: {rk.get('orphan_kline_rows', 0)}")
+            print(f"非法 OHLC 行数: {rk.get('invalid_ohlc_rows', 0)}")
+            print(f"负成交量行数: {rk.get('negative_volume_rows', 0)}")
+            print(f"stock_info 行数: {rk.get('stock_info_row_count', 0)}")
+            print(f"stock_info 中尚无日 K 的标的数: {rk.get('stock_info_codes_without_kline', 0)}")
+            print(f"重复 (code, trade_date) 组数: {rk['duplicate_code_date_groups']}")
+            if rk["duplicate_examples"]:
+                print("示例（最多 20 条）:")
+                for ex in rk["duplicate_examples"]:
+                    print(f"  {ex}")
+            print(rk["note"])
+            if report_s is not None:
+                rs = report_s
+                print()
+                print(f"表 {rs['table']}: 行数 {rs['row_count']}")
+                print(f"name 为空的行数: {rs.get('empty_name_rows', 0)}")
+                print(f"交易中但缺 list_date 行数: {rs.get('is_trading_rows_missing_list_date', 0)}")
+                print(rs["note"])
+            _print_gap_section(report_g)
+            _print_trade_calendar_table_section(report_tc)
+            if not gate_ok:
+                print()
+                print("--- trade_calendar 门控（B+D）失败 ---")
+                for m in gate_messages:
+                    print(f"  {m}")
+
+        stock = None if kline_only else report_s
+        return _exit_code(report_k, stock, strict=strict, calendar_gate_ok=gate_ok)
     finally:
-        await dispose_database()
-
-    gate_ok, gate_messages = evaluate_trade_calendar_gate(
-        report_k,
-        report_g,
-        grace_days=gap_calendar_grace_days,
-    )
-
-    if as_json:
-        out: dict = {
-            "daily_kline": report_k,
-            "calendar_gap_sample": report_g,
-            "trade_calendar": report_tc,
-            "trade_calendar_gate": {
-                "ok": gate_ok,
-                "messages": gate_messages,
-                "grace_days": gap_calendar_grace_days,
-            },
-        }
-        if report_s is not None:
-            out["stock_info"] = report_s
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-    else:
-        rk = report_k
-        print(f"表 {rk['table']}: 行数 {rk['row_count']}")
-        print(f"distinct code 数: {rk.get('distinct_codes', 0)}")
-        print(f"trade_date 范围: {rk['trade_date_min']} ~ {rk['trade_date_max']}")
-        rmax = rk.get("rows_on_max_trade_date")
-        if rmax is not None:
-            print(f"最新交易日行数: {rmax}")
-        print(f"仅 1 根日 K 的标的数: {rk.get('codes_with_single_bar', 0)}")
-        print(f"无 stock_info 匹配的日 K 行数: {rk.get('orphan_kline_rows', 0)}")
-        print(f"非法 OHLC 行数: {rk.get('invalid_ohlc_rows', 0)}")
-        print(f"负成交量行数: {rk.get('negative_volume_rows', 0)}")
-        print(f"stock_info 行数: {rk.get('stock_info_row_count', 0)}")
-        print(f"stock_info 中尚无日 K 的标的数: {rk.get('stock_info_codes_without_kline', 0)}")
-        print(f"重复 (code, trade_date) 组数: {rk['duplicate_code_date_groups']}")
-        if rk["duplicate_examples"]:
-            print("示例（最多 20 条）:")
-            for ex in rk["duplicate_examples"]:
-                print(f"  {ex}")
-        print(rk["note"])
-        if report_s is not None:
-            rs = report_s
-            print()
-            print(f"表 {rs['table']}: 行数 {rs['row_count']}")
-            print(f"name 为空的行数: {rs.get('empty_name_rows', 0)}")
-            print(f"交易中但缺 list_date 行数: {rs.get('is_trading_rows_missing_list_date', 0)}")
-            print(rs["note"])
-        _print_gap_section(report_g)
-        _print_trade_calendar_table_section(report_tc)
-        if not gate_ok:
-            print()
-            print("--- trade_calendar 门控（B+D）失败 ---")
-            for m in gate_messages:
-                print(f"  {m}")
-
-    stock = None if kline_only else report_s
-    return _exit_code(report_k, stock, strict=strict, calendar_gate_ok=gate_ok)
+        # stderr：避免破坏 --json 时 stdout 的纯 JSON 管道
+        print(
+            f"[timing] check_daily_kline_quality {time.perf_counter() - t0:.1f}s",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

@@ -41,13 +41,15 @@ def build_ma_cross_scan_assumptions(
     bench: str | None,
     start_date: date | None,
     end_date: date | None,
+    adjust_flag: str,
 ) -> list[str]:
+    adj_label = {"1": "后复权", "2": "前复权", "3": "不复权"}.get(adjust_flag, adjust_flag)
     out = [
         "双均线（日线收盘）批量扫描；与 GET /api/backtest/ma-cross/scan 口径一致。",
         f"共 {n_codes} 只标的（按 max_codes 截断后）。",
         f"结果按 {sort_by} 降序；失败行沉底。",
         f"拉取日 K 最大并发 max_concurrent={max_concurrent}。",
-        "价格口径以入库 daily_kline 为准（参见 docs/DATA_AND_ADJUSTMENT.md）。",
+        f"价格口径：adjust_flag={adjust_flag}（{adj_label}）（参见 docs/DATA_AND_ADJUSTMENT.md）。",
     ]
     if bench:
         out.append(f"各标的 β/α 相对基准 {bench}（交易日对齐、仅前向填充）。")
@@ -122,6 +124,7 @@ async def _fetch_klines_one(
     end_date: date | None,
     limit: int,
     semaphore: asyncio.Semaphore,
+    adjust_flag: str = "3",
 ) -> tuple[str, list[KLine]]:
     async with semaphore:
         db = get_database()
@@ -132,6 +135,7 @@ async def _fetch_klines_one(
                 start_date=start_date,
                 end_date=end_date,
                 limit=limit,
+                adjust_flag=adjust_flag,
             )
             return code, klines
 
@@ -149,6 +153,7 @@ async def ma_cross_scan_items(
     sort_by: str = "total_return",
     max_concurrent: int = 8,
     benchmark_klines: list[KLine] | None = None,
+    adjust_flag: str = "3",
 ) -> list[dict[str, Any]]:
     """
     并行拉取各标的日 K（每标的独立会话，受 max_concurrent 限制），再逐只回测并排序。
@@ -166,6 +171,7 @@ async def ma_cross_scan_items(
                     start_date=start_date,
                     end_date=end_date,
                     limit=limit,
+                    adjust_flag=adjust_flag,
                 )
                 pairs.append((c, klines))
     else:
@@ -179,6 +185,7 @@ async def ma_cross_scan_items(
                         end_date=end_date,
                         limit=limit,
                         semaphore=sem,
+                        adjust_flag=adjust_flag,
                     )
                     for c in codes
                 ]
@@ -292,6 +299,7 @@ async def execute_ma_cross_scan(
     sort_by: str,
     max_concurrent: int,
     benchmark_code: str | None,
+    adjust_flag: str = "3",
 ) -> tuple[list[dict[str, Any]], str, str]:
     """
     含基准 K 拉取与 sort_by 校验；失败抛出 ValueError（供 HTTP 400）。
@@ -316,6 +324,7 @@ async def execute_ma_cross_scan(
             start_date=start_date,
             end_date=end_date,
             limit=limit,
+            adjust_flag=adjust_flag,
         )
         if not bench_klines:
             raise ValueError(f"基准 {bench_norm} 无可用日 K")
@@ -332,5 +341,6 @@ async def execute_ma_cross_scan(
         sort_by=sort_norm,
         max_concurrent=max_concurrent,
         benchmark_klines=bench_klines,
+        adjust_flag=adjust_flag,
     )
     return items, sort_norm, bench_norm

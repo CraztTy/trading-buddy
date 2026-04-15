@@ -1,6 +1,8 @@
 <script setup>
 import { onMounted, ref, watch } from "vue";
-import { apiUrl, fetchJson } from "../composables/api.js";
+import { fetchJson } from "../composables/api.js";
+import { writeClipboardText } from "../composables/clipboardWrite.js";
+import { showToast } from "../composables/useToast.js";
 
 const props = defineProps({
   /** 从回测「下一步」带入 { code, quantity } */
@@ -21,6 +23,7 @@ const orderSide = ref("buy");
 const orderQty = ref(100);
 /** 自选（下单代码联想 + 快捷 chip） */
 const wlItems = ref([]);
+const wlLoadErr = ref("");
 
 watch(
   () => props.draft,
@@ -40,6 +43,10 @@ const ordersTotal = ref(0);
 const ordersLoading = ref(false);
 const ordersFilterCode = ref("");
 const ordersError = ref("");
+/** 最近一次成功的 GET /api/paper/state */
+const lastPaperStateApiPath = ref("");
+/** 最近一次成功的 GET /api/paper/orders?… */
+const lastPaperOrdersApiPath = ref("");
 
 function ordersQuery(reset) {
   const off = reset ? 0 : orders.value.length;
@@ -55,8 +62,10 @@ function ordersQuery(reset) {
 async function loadOrders(reset) {
   ordersLoading.value = true;
   ordersError.value = "";
+  const qs = ordersQuery(reset);
   try {
-    const data = await fetchJson(`paper/orders?${ordersQuery(reset)}`);
+    const data = await fetchJson(`paper/orders?${qs}`, { toast: false });
+    lastPaperOrdersApiPath.value = `/api/paper/orders?${qs}`;
     if (reset) orders.value = data.items || [];
     else orders.value = (orders.value || []).concat(data.items || []);
     ordersTotal.value = data.total ?? 0;
@@ -64,17 +73,20 @@ async function loadOrders(reset) {
     if (reset) orders.value = [];
     ordersTotal.value = 0;
     ordersError.value = e?.message || "成交记录加载失败";
+    lastPaperOrdersApiPath.value = "";
   } finally {
     ordersLoading.value = false;
   }
 }
 
 async function loadWatchlist() {
+  wlLoadErr.value = "";
   try {
-    const data = await fetchJson("watchlist/items");
+    const data = await fetchJson("watchlist/items", { toast: false });
     wlItems.value = Array.isArray(data?.items) ? data.items : [];
-  } catch {
+  } catch (e) {
     wlItems.value = [];
+    wlLoadErr.value = e?.message || "自选列表加载失败";
   }
 }
 
@@ -86,8 +98,11 @@ function pickWlCode(code) {
 async function loadState() {
   loading.value = true;
   error.value = "";
+  lastPaperStateApiPath.value = "";
+  lastPaperOrdersApiPath.value = "";
   try {
-    state.value = await fetchJson("paper/state");
+    state.value = await fetchJson("paper/state", { toast: false });
+    lastPaperStateApiPath.value = "/api/paper/state";
   } catch (e) {
     state.value = null;
     orders.value = [];
@@ -107,6 +122,17 @@ async function applyOrderFilter() {
 
 async function loadMoreOrders() {
   await loadOrders(false);
+}
+
+/** 与「市价提交」一致：股数取整到 100 的整数倍且不少于 100 */
+function normalizedOrderPayload() {
+  const raw = Math.floor(Number(orderQty.value) || 0);
+  const qty = Math.max(100, Math.floor(raw / 100) * 100);
+  return {
+    code: orderCode.value.trim(),
+    side: orderSide.value,
+    quantity: qty,
+  };
 }
 
 /** 列表时间列：本地短格式 */
@@ -131,30 +157,16 @@ async function submitOrder() {
   error.value = "";
   tip.value = "";
   try {
-    const raw = Math.floor(Number(orderQty.value) || 0);
-    const qty = Math.max(100, Math.floor(raw / 100) * 100);
-    const res = await fetch(apiUrl("paper/orders"), {
+    const payload = normalizedOrderPayload();
+    const body = await fetchJson("paper/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code: orderCode.value.trim(),
-        side: orderSide.value,
-        quantity: qty,
-      }),
+      body: JSON.stringify(payload),
+      toast: false,
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const d = body?.detail;
-      if (typeof d === "string") throw new Error(d);
-      if (Array.isArray(d)) {
-        const m = d.map((x) => x.msg || x.message).filter(Boolean).join("；");
-        throw new Error(m || res.statusText || "下单失败");
-      }
-      throw new Error(res.statusText || "下单失败");
-    }
     tip.value = `已成交 ${body.side} ${body.quantity} @ ${body.fill_price}，现金 ${body.cash_after}`;
     try {
-      state.value = await fetchJson("paper/state");
+      state.value = await fetchJson("paper/state", { toast: false });
     } catch (e) {
       error.value = e?.message || "刷新资金失败";
     }
@@ -167,12 +179,96 @@ async function submitOrder() {
   }
 }
 
+async function copyPaperStateApiPath() {
+  const u = lastPaperStateApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制纸交易账户状态 API 路径（curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3000,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
+async function copyPaperOrdersApiPath() {
+  const u = lastPaperOrdersApiPath.value.trim();
+  if (!u) return;
+  try {
+    await writeClipboardText(u);
+    showToast("已复制纸交易成交记录 API 路径（含 limit/offset/筛选；curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3200,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
+async function copyPaperOrderPostHint() {
+  if (loading.value || submitting.value) return;
+  const payload = normalizedOrderPayload();
+  if (!payload.code) {
+    showToast("请先填写标的代码", { type: "error", duration: 2400 });
+    return;
+  }
+  const json = JSON.stringify(payload);
+  const text = `POST /api/paper/orders\nContent-Type: application/json\n\n${json}`;
+  try {
+    await writeClipboardText(text);
+    showToast("已复制市价下单 POST 说明（含当前表单 JSON；curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3400,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
+async function copyPaperResetPostHint() {
+  if (resetting.value) return;
+  const text = "POST /api/paper/account/reset";
+  try {
+    await writeClipboardText(text);
+    showToast("已复制账户重置 POST 路径（无请求体；curl 请自行拼接主机）", {
+      type: "info",
+      duration: 3000,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
+async function copyOrdersCodes() {
+  if (ordersLoading.value || !orders.value.length) return;
+  const seen = new Set();
+  const lines = [];
+  for (const o of orders.value) {
+    const c = String(o?.code || "").trim().toLowerCase();
+    if (!c || seen.has(c)) continue;
+    seen.add(c);
+    lines.push(c);
+  }
+  if (!lines.length) return;
+  try {
+    await writeClipboardText(lines.join("\n"));
+    showToast(`已复制 ${lines.length} 条不重复代码（当前成交列表，每行一条）`, {
+      type: "info",
+      duration: 2600,
+    });
+  } catch {
+    showToast("无法写入剪贴板，请检查浏览器权限", { type: "error" });
+  }
+}
+
 async function resetAccount() {
   if (!window.confirm("清空纸单与持仓，现金恢复为初始 100 万？")) return;
   resetting.value = true;
   error.value = "";
   try {
-    await fetchJson("paper/account/reset", { method: "POST" });
+    await fetchJson("paper/account/reset", { method: "POST", toast: false });
     tip.value = "已重置纸账户";
     await loadState();
   } catch (e) {
@@ -197,6 +293,46 @@ onMounted(loadState);
         </p>
       </div>
       <div class="hd-actions">
+        <button
+          type="button"
+          class="ghost"
+          :disabled="loading || !lastPaperStateApiPath"
+          title="复制 GET /api/paper/state"
+          aria-label="复制纸交易账户状态 API 路径"
+          @click="copyPaperStateApiPath"
+        >
+          状态
+        </button>
+        <button
+          type="button"
+          class="ghost"
+          :disabled="ordersLoading || !!ordersError || !lastPaperOrdersApiPath"
+          title="复制当前成交列表 GET 路径"
+          aria-label="复制纸交易成交记录 API 路径"
+          @click="copyPaperOrdersApiPath"
+        >
+          成交
+        </button>
+        <button
+          type="button"
+          class="ghost"
+          :disabled="loading || submitting"
+          title="复制 POST /api/paper/orders 与当前代码/方向/股数 JSON（非提交）"
+          aria-label="复制纸交易市价下单 POST 说明"
+          @click="copyPaperOrderPostHint"
+        >
+          POST 下单
+        </button>
+        <button
+          type="button"
+          class="ghost"
+          :disabled="resetting"
+          title="复制 POST /api/paper/account/reset（无请求体）。执行清账请点「重置账户」"
+          aria-label="复制纸交易账户重置 POST 说明"
+          @click="copyPaperResetPostHint"
+        >
+          清账 POST
+        </button>
         <button type="button" class="ghost" :disabled="loading" @click="loadState">刷新</button>
         <button type="button" class="ghost danger" :disabled="resetting || loading" @click="resetAccount">
           重置账户
@@ -232,6 +368,7 @@ onMounted(loadState);
             <option v-for="w in wlItems" :key="w.code" :value="w.code">{{ w.name || w.code }}</option>
           </datalist>
         </label>
+        <p v-if="wlLoadErr" class="err err--sub mono" role="alert" data-testid="paper-wl-err">{{ wlLoadErr }}</p>
         <div v-if="wlItems.length" class="wl-chips">
           <span class="wl-chips-lbl">自选</span>
           <button
@@ -298,6 +435,16 @@ onMounted(loadState);
           />
         </label>
         <button type="button" class="ghost" :disabled="ordersLoading" @click="applyOrderFilter">筛选</button>
+        <button
+          type="button"
+          class="ghost"
+          :disabled="ordersLoading || !orders.length"
+          title="按当前列表顺序，每行一个代码（同代码多笔只出现一次）"
+          aria-label="复制成交列表中的代码"
+          @click="copyOrdersCodes"
+        >
+          复制代码
+        </button>
         <span v-if="ordersTotal > 0" class="mono meta">共 {{ ordersTotal }} 条</span>
       </div>
       <ul v-if="orders.length" class="rows mono small">
@@ -366,8 +513,10 @@ onMounted(loadState);
 
 .hd-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
+  justify-content: flex-end;
 }
 
 .ghost {

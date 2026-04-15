@@ -19,20 +19,39 @@ class _BadDb:
 async def test_health_shallow_200(http_test_client):
     r = http_test_client.get("/health")
     assert r.status_code == 200
+    assert r.headers.get("x-request-id")
     body = r.json()
     assert body["status"] == "healthy"
     assert "app_version" in body
     assert body["database_mode"] == "sqlite"
     assert body["redis_enabled"] is False
+    assert isinstance(body["pid"], int)
+    assert body["uptime_sec"] is not None
+    assert body["uptime_sec"] >= 0
 
 
 async def test_root_200(http_test_client):
     r = http_test_client.get("/")
     assert r.status_code == 200
+    assert r.headers.get("x-request-id")
     body = r.json()
     assert body["name"] == "Trading Buddy API"
     assert body["status"] == "running"
     assert "version" in body
+
+
+async def test_x_request_id_echoes_valid_client_header(http_test_client):
+    r = http_test_client.get("/health", headers={"X-Request-ID": "trace-abc_1.x"})
+    assert r.status_code == 200
+    assert r.headers.get("x-request-id") == "trace-abc_1.x"
+
+
+async def test_x_request_id_ignores_invalid_client_header(http_test_client):
+    r = http_test_client.get("/health", headers={"X-Request-ID": "bad id"})
+    assert r.status_code == 200
+    rid = r.headers.get("x-request-id")
+    assert rid
+    assert rid != "bad id"
 
 
 async def test_health_ready_200(http_test_client):
@@ -42,6 +61,8 @@ async def test_health_ready_200(http_test_client):
     assert body["status"] == "ready"
     assert body["database"] == "ok"
     assert body["redis"] == "skipped"
+    assert "probe_ms" in body
+    assert body["probe_ms"] >= 0
 
 
 async def test_health_ready_503_when_db_fails(http_test_client, monkeypatch):
@@ -53,6 +74,7 @@ async def test_health_ready_503_when_db_fails(http_test_client, monkeypatch):
     assert body["status"] == "not_ready"
     assert body["database"] == "error"
     assert "database_error" in body
+    assert "probe_ms" in body
 
 
 async def test_health_ready_redis_ping_ok(http_test_client, monkeypatch):
@@ -80,6 +102,7 @@ async def test_health_ready_redis_ping_ok(http_test_client, monkeypatch):
         assert body["status"] == "ready"
         assert body["database"] == "ok"
         assert body["redis"] == "ok"
+        assert "probe_ms" in body
     finally:
         app.state.redis = prev
 
@@ -108,6 +131,7 @@ async def test_health_ready_redis_uninitialized_503(http_test_client, monkeypatc
         assert body["database"] == "ok"
         assert body["redis"] == "uninitialized"
         assert "redis_error" in body
+        assert "probe_ms" in body
     finally:
         if prev is not None:
             app.state.redis = prev
@@ -140,5 +164,6 @@ async def test_health_ready_redis_ping_error_503(http_test_client, monkeypatch):
         assert body["redis"] == "error"
         assert "redis_error" in body
         assert "ping refused" in body["redis_error"]
+        assert "probe_ms" in body
     finally:
         app.state.redis = prev

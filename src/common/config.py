@@ -208,6 +208,26 @@ class DataSourceSettings(BaseSettings):
         super().__init__(**data)
 
 
+def _path_ignore_prefixes_from_env(
+    env_key: str, *, default_when_unset: tuple[str, ...]
+) -> tuple[str, ...]:
+    """逗号分隔路径前缀；未设置或空串用 default；``none`` 表示不忽略。"""
+    raw = os.environ.get(env_key)
+    if raw is None or str(raw).strip() == "":
+        return default_when_unset
+    if str(raw).strip().lower() == "none":
+        return ()
+    parts: list[str] = []
+    for p in str(raw).split(","):
+        s = p.strip()
+        if not s:
+            continue
+        if not s.startswith("/"):
+            s = "/" + s
+        parts.append(s)
+    return tuple(parts)
+
+
 class APISettings(BaseSettings):
     """API 服务（API_HOST / API_PORT / API_DEBUG；实时接口缓存与限流）"""
     model_config = SettingsConfigDict(extra="ignore")
@@ -221,6 +241,14 @@ class APISettings(BaseSettings):
     realtime_rate_per_minute: int = 60
     # CORS：逗号分隔源列表，或 *；CORS_ORIGINS
     cors_origins: str = "*"
+    # 逐请求一行访问日志（方法、路径、状态码、耗时 ms）；API_ACCESS_LOG，默认关
+    access_log: bool = False
+    # 访问日志不记录的路径前缀；未设环境变量时默认 ("/health",)；none 表示全记
+    access_log_ignore_prefixes: tuple[str, ...] = ("/health",)
+    # 单请求 wall-clock ≥ 该毫秒数时打 WARN（http.slow）；0 关闭。API_SLOW_REQUEST_WARN_MS
+    slow_request_warn_ms: int = 0
+    # 慢请求 WARN 忽略的路径前缀（逗号分隔）；未设置环境变量时默认 ("/health",)；none 表示不忽略
+    slow_request_ignore_prefixes: tuple[str, ...] = ("/health",)
 
     def __init__(self, **data):
         if "host" not in data:
@@ -244,21 +272,49 @@ class APISettings(BaseSettings):
             v = os.environ.get("CORS_ORIGINS")
             if v is not None:
                 data["cors_origins"] = v.strip()
+        if "access_log" not in data:
+            v = (os.environ.get("API_ACCESS_LOG", "false") or "").strip().lower()
+            data["access_log"] = v in ("1", "true", "yes", "on")
+        if "slow_request_warn_ms" not in data:
+            raw = os.environ.get("API_SLOW_REQUEST_WARN_MS")
+            if raw is not None and str(raw).strip() != "":
+                try:
+                    ms = int(str(raw).strip())
+                    data["slow_request_warn_ms"] = max(0, min(ms, 3_600_000))
+                except ValueError:
+                    data["slow_request_warn_ms"] = 0
+        if "slow_request_ignore_prefixes" not in data:
+            data["slow_request_ignore_prefixes"] = _path_ignore_prefixes_from_env(
+                "API_SLOW_REQUEST_IGNORE_PREFIXES", default_when_unset=("/health",)
+            )
+        if "access_log_ignore_prefixes" not in data:
+            data["access_log_ignore_prefixes"] = _path_ignore_prefixes_from_env(
+                "API_ACCESS_LOG_IGNORE_PREFIXES", default_when_unset=("/health",)
+            )
         super().__init__(**data)
 
 
 class LogSettings(BaseSettings):
-    """日志（LOG_LEVEL）"""
+    """日志（LOG_LEVEL、LOG_JSON）"""
+
     model_config = SettingsConfigDict(extra="ignore")
 
     level: str = "INFO"
-    format: str = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>"
+    format: str = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level> | "
+        "<dim>rid={extra[request_id]}</dim>"
+    )
+    json_logs: bool = False
 
     def __init__(self, **data):
         if "level" not in data:
             lv = os.environ.get("LOG_LEVEL")
             if lv:
                 data["level"] = lv.strip().upper()
+        if "json_logs" not in data:
+            v = (os.environ.get("LOG_JSON", "false") or "").strip().lower()
+            data["json_logs"] = v in ("1", "true", "yes", "on")
         super().__init__(**data)
 
 

@@ -1,16 +1,33 @@
 {
   "name": "trading-buddy-dashboard",
   "private": true,
+  "license": "MIT",
   "version": "1.2.2",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "test:e2e": "node ./e2e/preflight.cjs && node ./e2e/run-pw-heartbeat.cjs",
+    "test:e2e:connected": "node ./e2e/run-e2e-connected.cjs",
+    "test:e2e:connected:chromium": "node ./e2e/run-e2e-connected-with-channel.cjs chromium",
+    "test:e2e:connected:chrome": "node ./e2e/run-e2e-connected-with-channel.cjs chrome",
+    "test:e2e:chromium": "node ./e2e/run-e2e-with-channel.cjs chromium",
+    "test:e2e:chrome": "node ./e2e/run-e2e-with-channel.cjs chrome",
     "test:e2e:diag-import": "node ./e2e/measure-import.mjs",
-    "test:e2e:ui": "node ./e2e/preflight.cjs && node ./node_modules/@playwright/test/cli.js test --ui",
-    "e2e:preview": "npm run build && vite preview --host 127.0.0.1 --port 4173 --strictPort"
+    "test:e2e:ui": "node ./e2e/run-e2e-ui.cjs",
+    "test:e2e:ui:chromium": "node ./e2e/run-e2e-ui-with-channel.cjs chromium",
+    "test:e2e:ui:chrome": "node ./e2e/run-e2e-ui-with-channel.cjs chrome",
+    "test:e2e:ui:connected": "node ./e2e/run-e2e-ui-connected.cjs",
+    "test:e2e:ui:connected:chromium": "node ./e2e/run-e2e-ui-connected-with-channel.cjs chromium",
+    "test:e2e:ui:connected:chrome": "node ./e2e/run-e2e-ui-connected-with-channel.cjs chrome",
+    "test:e2e:smoke": "node ./e2e/run-e2e-smoke.cjs local",
+    "test:e2e:smoke:connected": "node ./e2e/run-e2e-smoke.cjs connected",
+    "e2e:preview": "npm run build && vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "e2e:preview:only": "vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },
   "dependencies": {
     "echarts": "^5.5.0",

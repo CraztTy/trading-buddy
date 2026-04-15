@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
+from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -29,6 +31,16 @@ from src.data.sources import DataSourceFactory
 logger = get_logger("fetcher")
 
 
+@asynccontextmanager
+async def _timed_phase(phase: str):
+    """记录本阶段 wall-clock 耗时（秒，一位小数），供运维与定时任务日志分析。"""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        logger.info(f"[timing] {phase} {time.perf_counter() - t0:.1f}s")
+
+
 async def _get_daily_kline_with_retries(
     source,
     code: str,
@@ -37,12 +49,13 @@ async def _get_daily_kline_with_retries(
     *,
     retries: int,
     backoff_sec: float,
+    adjustflag: str = "3",
 ):
     """对单次拉取做有限次重试（网络抖动 / 上游短暂错误）。"""
     get_fn = getattr(source, "get_daily_kline")
     for attempt in range(max(1, retries)):
         try:
-            return await get_fn(code, start, end)
+            return await get_fn(code, start, end, adjustflag=adjustflag)
         except Exception as e:
             if attempt + 1 >= max(1, retries):
                 logger.warning(f"{code} K线在 {retries} 次尝试后仍失败: {e}")
@@ -114,12 +127,15 @@ async def fetch_daily_klines(
     overlap_days: int = 7,
     kline_retries: int = 3,
     kline_retry_backoff_sec: float = 0.5,
+    adjust_flags: list[str] | None = None,
 ) -> None:
     end = await kline_end_date(provider)
     window_start = end - timedelta(days=days)
+    flags = adjust_flags or ["3"]
     mode = "增量" if incremental else "全窗口"
     logger.info(
-        f"拉取日K线 {provider} ({mode}): 结束日 {end}, 无历史时回退窗口 {days} 天"
+        f"拉取日K线 {provider} ({mode}): 结束日 {end}, 无历史时回退窗口 {days} 天, "
+        f"复权档={flags}"
     )
 
     source = DataSourceFactory.create_from_settings(provider)
@@ -149,40 +165,45 @@ async def fetch_daily_klines(
             total = 0
             skipped = 0
             for i, code in enumerate(codes):
-                if provider == "baostock" and delay_sec > 0:
-                    await asyncio.sleep(delay_sec)
+                if incremental:
+                    last = last_map.get(code)
+                    if last and last >= end:
+                        skipped += 1
+                        if (i + 1) % 500 == 0:
+                            logger.info(
+                                f"进度 {i + 1}/{len(codes)}，跳过已最新 {skipped}，累计写入 {total} 条"
+                            )
+                        continue
+
                 try:
-                    if incremental:
-                        last = last_map.get(code)
-                        if last and last >= end:
-                            skipped += 1
-                            if (i + 1) % 500 == 0:
-                                logger.info(
-                                    f"进度 {i + 1}/{len(codes)}，跳过已最新 {skipped}，累计写入 {total} 条"
-                                )
-                            continue
-                        start = (
-                            last - overlap
-                            if last
-                            else window_start
+                    for flag in flags:
+                        if provider == "baostock" and delay_sec > 0:
+                            await asyncio.sleep(delay_sec)
+
+                        if incremental:
+                            start = (
+                                last - overlap
+                                if last
+                                else window_start
+                            )
+                        else:
+                            start = window_start
+
+                        if start > end:
+                            start = end - timedelta(days=1)
+
+                        klines = await _get_daily_kline_with_retries(
+                            source,
+                            code,
+                            start,
+                            end,
+                            retries=kline_retries,
+                            backoff_sec=kline_retry_backoff_sec,
+                            adjustflag=flag,
                         )
-                    else:
-                        start = window_start
-
-                    if start > end:
-                        start = end - timedelta(days=1)
-
-                    klines = await _get_daily_kline_with_retries(
-                        source,
-                        code,
-                        start,
-                        end,
-                        retries=kline_retries,
-                        backoff_sec=kline_retry_backoff_sec,
-                    )
-                    if klines:
-                        await kline_repo.bulk_insert(klines)
-                        total += len(klines)
+                        if klines:
+                            await kline_repo.bulk_insert(klines)
+                            total += len(klines)
                     if (i + 1) % 200 == 0 or i == len(codes) - 1:
                         logger.info(
                             f"进度 {i + 1}/{len(codes)}，跳过已最新 {skipped}，累计K线 {total} 条"
@@ -314,6 +335,7 @@ async def run(args: argparse.Namespace) -> None:
     kr = max(1, int(args.kline_retries))
     kb = float(args.kline_retry_backoff)
 
+    run_t0 = time.perf_counter()
     try:
         codes: list[str] | None = list(args.codes) if args.codes else None
 
@@ -342,53 +364,62 @@ async def run(args: argparse.Namespace) -> None:
             logger.info(
                 f"灌交易日历 baostock exchange={ex} {cal_start} ~ {cal_end} chunk={chunk} 天"
             )
-            n = await ingest_trade_calendar_from_baostock(
-                start=cal_start,
-                end=cal_end,
-                exchange=ex,
-                chunk_days=chunk,
-            )
+            async with _timed_phase("calendar_ingest"):
+                n = await ingest_trade_calendar_from_baostock(
+                    start=cal_start,
+                    end=cal_end,
+                    exchange=ex,
+                    chunk_days=chunk,
+                )
             logger.info(f"交易日历完成，累计 upsert 约 {n} 行")
         elif args.mode == "daily":
             # 收盘后日常：刷新股票表 + 增量指数 + 增量个股日K（全市场，适合定时任务）
-            await fetch_stock_list(provider)
-            await fetch_index_data(
-                provider,
-                index_days=args.index_days,
-                incremental=True,
-                overlap_days=args.overlap_days,
-                kline_retries=kr,
-                kline_retry_backoff_sec=kb,
-            )
-            await fetch_daily_klines(
-                provider,
-                codes,
-                days=args.days,
-                limit=args.limit,
-                delay_sec=args.baostock_delay,
-                incremental=True,
-                overlap_days=args.overlap_days,
-                kline_retries=kr,
-                kline_retry_backoff_sec=kb,
-            )
-        else:
-            if args.mode in ("all", "stocks"):
+            async with _timed_phase("stocks"):
                 await fetch_stock_list(provider)
-
-            if args.mode in ("all", "klines"):
-                if args.mode == "klines" and not codes:
-                    await fetch_stock_list(provider)
+            async with _timed_phase("indices"):
+                await fetch_index_data(
+                    provider,
+                    index_days=args.index_days,
+                    incremental=True,
+                    overlap_days=args.overlap_days,
+                    kline_retries=kr,
+                    kline_retry_backoff_sec=kb,
+                )
+            async with _timed_phase("daily_klines"):
                 await fetch_daily_klines(
                     provider,
                     codes,
                     days=args.days,
                     limit=args.limit,
                     delay_sec=args.baostock_delay,
-                    incremental=args.incremental,
+                    incremental=True,
                     overlap_days=args.overlap_days,
                     kline_retries=kr,
                     kline_retry_backoff_sec=kb,
+                    adjust_flags=list(args.adjust_flags),
                 )
+        else:
+            if args.mode in ("all", "stocks"):
+                async with _timed_phase("stocks"):
+                    await fetch_stock_list(provider)
+
+            if args.mode in ("all", "klines"):
+                if args.mode == "klines" and not codes:
+                    async with _timed_phase("stocks_before_klines"):
+                        await fetch_stock_list(provider)
+                async with _timed_phase("klines"):
+                    await fetch_daily_klines(
+                        provider,
+                        codes,
+                        days=args.days,
+                        limit=args.limit,
+                        delay_sec=args.baostock_delay,
+                        incremental=args.incremental,
+                        overlap_days=args.overlap_days,
+                        kline_retries=kr,
+                        kline_retry_backoff_sec=kb,
+                        adjust_flags=list(args.adjust_flags),
+                    )
 
             # 指数写入 daily_kline：all / indices 会跑；单独 klines 时也要跑——
             # klines 用的代码来自 stock_info，而 baostock 股票列表里已主动剔除了指数代码，
@@ -397,20 +428,23 @@ async def run(args: argparse.Namespace) -> None:
                 args.mode == "klines" and codes is None
             )
             if should_fetch_indices:
-                await fetch_index_data(
-                    provider,
-                    index_days=args.index_days,
-                    incremental=args.incremental,
-                    overlap_days=args.overlap_days,
-                    kline_retries=kr,
-                    kline_retry_backoff_sec=kb,
-                )
+                async with _timed_phase("indices"):
+                    await fetch_index_data(
+                        provider,
+                        index_days=args.index_days,
+                        incremental=args.incremental,
+                        overlap_days=args.overlap_days,
+                        kline_retries=kr,
+                        kline_retry_backoff_sec=kb,
+                    )
 
         if args.mode in ("daily", "all"):
-            await maybe_refresh_trade_calendar_tail(args, provider)
+            async with _timed_phase("calendar_tail_refresh"):
+                await maybe_refresh_trade_calendar_tail(args, provider)
 
         logger.info("数据拉取流程结束")
     finally:
+        logger.info(f"[timing] run_total {time.perf_counter() - run_t0:.1f}s")
         await dispose_database()
 
 
@@ -513,6 +547,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=450,
         metavar="N",
         help="--with-calendar 时从最后交易日起向前覆盖的自然日跨度（默认 450）",
+    )
+    p.add_argument(
+        "--adjust-flags",
+        nargs="+",
+        default=["3"],
+        choices=["1", "2", "3"],
+        help="拉取的复权类型，可多个（1=后复权 2=前复权 3=不复权）；默认 3",
     )
     return p
 

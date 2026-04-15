@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { installApiMocks } from "./fixtures/installApiMocks.js";
+import { MAIN_NAV } from "./fixtures/mainNavTestIds.js";
 
 test.describe("Backtest panel", () => {
   test.beforeEach(async ({ page }) => {
@@ -8,20 +9,20 @@ test.describe("Backtest panel", () => {
 
   test("single MA cross async job polls then shows mock metrics", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
     await expect(page.getByTestId("backtest-engine-catalog")).toBeVisible({ timeout: 10_000 });
     await page.getByTestId("mvp-async-run").check();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByText("e2e-mock-ma-cross single")).toBeVisible();
     await expect(page.locator(".metrics").getByText("12.34")).toBeVisible();
   });
 
   test("single MA cross async cancel queued job shows status and error", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
     await expect(page.getByTestId("backtest-engine-catalog")).toBeVisible({ timeout: 10_000 });
     await page.getByTestId("mvp-async-run").check();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByTestId("mvp-async-cancel")).toBeVisible({ timeout: 10_000 });
     await page.getByTestId("mvp-async-cancel").click();
     await expect(page.locator(".mvp-async-cancel-msg")).toContainText("已取消排队");
@@ -30,20 +31,20 @@ test.describe("Backtest panel", () => {
 
   test("single buy_hold shows mock metrics and persists buy_hold_single", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
     await expect(page.getByTestId("backtest-engine-catalog")).toBeVisible({ timeout: 10_000 });
     await page.getByTestId("single-run-strategy-buy-hold").check();
     await expect(page.getByRole("heading", { name: "买入持有（日线）" })).toBeVisible();
     await expect(page.locator(".sig-line")).toHaveCount(0);
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByText("e2e-mock-buy-hold")).toBeVisible();
-    await expect(page.locator(".metrics").getByText("3.21")).toBeVisible();
+    await expect(page.locator(".metrics").getByText("3.21").first()).toBeVisible();
     await expect(page.locator(".save-tip")).toContainText(/已存档 #\d+/);
   });
 
   test("single MA cross shows mock metrics", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
 
     await expect(page.getByTestId("backtest-engine-catalog")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("backtest-engine-catalog")).toContainText("engine 0.1");
@@ -58,17 +59,20 @@ test.describe("Backtest panel", () => {
     await expect(page.getByTestId("run-kind-map-hint")).toContainText("strategy_id=buy_hold");
 
     await expect(page.getByRole("heading", { name: "双均线（日线）" })).toBeVisible();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId("backtest-run-submit").click();
 
     await expect(page.getByText("e2e-mock-ma-cross single")).toBeVisible();
     await expect(page.locator(".metrics").getByText("12.34")).toBeVisible();
     await expect(page.locator(".sig-line")).toContainText("2024-06-28");
     await expect(page.locator(".sig-line")).toContainText("多");
+
+    await page.getByRole("button", { name: "复制双均线信号 API 路径" }).click();
+    await expect(page.getByTestId("toast-stack")).toContainText(/已复制双均线信号 API 路径/);
   });
 
   test("strategy catalog and trial signal row", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
     await page.getByRole("button", { name: "策略目录" }).click();
     await expect(page.locator(".strategy-contract-pre").first()).toContainText("e2e-mock-catalog");
     await page.getByRole("button", { name: "试算信号" }).click();
@@ -77,8 +81,8 @@ test.describe("Backtest panel", () => {
 
   test("single run persists to archive and detail loads JSON", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByText("e2e-mock-ma-cross single")).toBeVisible();
     await expect(page.locator(".save-tip")).toContainText(/已存档 #\d+/);
     await expect(page.getByRole("button", { name: /^#\d+$/ })).toBeVisible();
@@ -95,8 +99,8 @@ test.describe("Backtest panel", () => {
 
   test("archive pagination shows range and disables prev next on single page", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.locator(".save-tip")).toContainText(/已存档 #\d+/);
     await expect(page.locator(".run-history-pagination")).toContainText(/第 1–1 条，共 1 条/);
     await expect(page.getByText(/共 1 页/)).toBeVisible();
@@ -114,10 +118,10 @@ test.describe("Backtest panel", () => {
 
   test("batch checkbox zip export without opening detail", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByText("e2e-mock-ma-cross single")).toBeVisible();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByRole("checkbox", { name: "选择存档 #2" })).toBeVisible();
     await expect(page.locator(".run-detail")).toHaveCount(0);
     await page.getByRole("checkbox", { name: "本页全选" }).check();
@@ -131,10 +135,10 @@ test.describe("Backtest panel", () => {
 
   test("batch delete selected archives after confirm", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.locator(".save-tip")).toContainText(/已存档 #\d+/);
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByRole("checkbox", { name: "选择存档 #2" })).toBeVisible();
     await page.getByRole("checkbox", { name: "本页全选" }).check();
     page.once("dialog", (d) => d.accept());
@@ -145,8 +149,8 @@ test.describe("Backtest panel", () => {
 
   test("archive delete removes row after confirm", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
-    await page.getByRole("button", { name: "运行回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
+    await page.getByTestId("backtest-run-submit").click();
     await expect(page.getByText("e2e-mock-ma-cross single")).toBeVisible();
     await expect(page.getByRole("button", { name: /^#\d+$/ })).toBeVisible();
     page.once("dialog", (d) => d.accept());
@@ -157,7 +161,7 @@ test.describe("Backtest panel", () => {
 
   test("batch scan shows mock row", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
     await page.getByRole("button", { name: "批量扫描" }).click();
 
     await expect(page.getByRole("heading", { name: "多标的批量扫描" })).toBeVisible();
@@ -171,7 +175,7 @@ test.describe("Backtest panel", () => {
 
   test("batch scan async job polls then shows mock row", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
     await page.getByTestId("mvp-async-run").check();
     await page.getByRole("button", { name: "批量扫描" }).click();
 
@@ -186,7 +190,7 @@ test.describe("Backtest panel", () => {
 
   test("batch scan fill watchlist button when empty shows hint", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "策略回测" }).click();
+    await page.getByTestId(MAIN_NAV.backtest).click();
     await page.getByRole("button", { name: "批量扫描" }).click();
     await page.getByRole("button", { name: /填入自选/ }).click();
     await expect(page.getByText("自选为空")).toBeVisible();

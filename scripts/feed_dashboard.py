@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
@@ -37,14 +38,20 @@ def _print_db_target() -> None:
     print(f"  数据写入目标: {describe_database_write_target()}")
 
 
-def run_step(description: str, argv: list[str], dry_run: bool) -> None:
+def run_step(description: str, argv: list[str], dry_run: bool) -> float:
+    """执行一步子进程；dry-run 返回 0；否则返回 wall-clock 耗时（秒）。"""
     print(f"\n>>> {description}")
     print(f"    {' '.join(argv)}")
     if dry_run:
-        return
+        return 0.0
+    t0 = time.perf_counter()
     r = subprocess.run(argv, cwd=str(project_root))
+    elapsed = time.perf_counter() - t0
     if r.returncode != 0:
+        print(f"    (失败，已运行 {elapsed:.1f}s，exit {r.returncode})")
         raise SystemExit(r.returncode)
+    print(f"    (本步耗时 {elapsed:.1f}s)")
+    return elapsed
 
 
 def main() -> None:
@@ -103,11 +110,15 @@ def main() -> None:
         _print_db_target()
     print("  请确认已配置 .env 且能访问数据库与数据源（baostock 需外网）。")
 
+    step_seconds: list[float] = []
+
     if not args.skip_init:
-        run_step(
-            "初始化表结构",
-            [py, str(project_root / "scripts" / "init_db.py")],
-            args.dry_run,
+        step_seconds.append(
+            run_step(
+                "初始化表结构",
+                [py, str(project_root / "scripts" / "init_db.py")],
+                args.dry_run,
+            )
         )
 
     if args.profile == "daily":
@@ -123,36 +134,44 @@ def main() -> None:
         ]
         if not args.skip_calendar:
             daily_argv.append("--with-calendar")
-        run_step("日常增量拉数（股票表+指数+全市场日K）", daily_argv, args.dry_run)
+        step_seconds.append(
+            run_step("日常增量拉数（股票表+指数+全市场日K）", daily_argv, args.dry_run)
+        )
     else:
-        run_step("拉取股票列表", base + ["--mode", "stocks"], args.dry_run)
-        run_step(
-            "拉取主要指数K线",
-            base + ["--mode", "indices", "--index-days", str(index_days)],
-            args.dry_run,
+        step_seconds.append(run_step("拉取股票列表", base + ["--mode", "stocks"], args.dry_run))
+        step_seconds.append(
+            run_step(
+                "拉取主要指数K线",
+                base + ["--mode", "indices", "--index-days", str(index_days)],
+                args.dry_run,
+            )
         )
         k_argv = base + ["--mode", "klines", "--days", str(k_days)]
         if k_limit > 0:
             k_argv += ["--limit", str(k_limit)]
-        run_step("拉取股票日K（样本）", k_argv, args.dry_run)
+        step_seconds.append(run_step("拉取股票日K（样本）", k_argv, args.dry_run))
         if not args.skip_calendar:
-            run_step(
-                "灌交易日历 trade_calendar（Baostock）",
-                [
-                    py,
-                    str(project_root / "scripts" / "fetch_data.py"),
-                    "--mode",
-                    "calendar",
-                    "--source",
-                    "baostock",
-                ],
-                args.dry_run,
+            step_seconds.append(
+                run_step(
+                    "灌交易日历 trade_calendar（Baostock）",
+                    [
+                        py,
+                        str(project_root / "scripts" / "fetch_data.py"),
+                        "--mode",
+                        "calendar",
+                        "--source",
+                        "baostock",
+                    ],
+                    args.dry_run,
+                )
             )
 
     if args.dry_run:
         print("\n(dry-run 结束，未执行任何命令)")
     else:
-        print("\n完成。请保持 API 与 Vue dev 运行，刷新看板即可。")
+        total_s = sum(step_seconds)
+        print(f"\n喂数各步合计 wall-clock 约 {total_s:.1f}s（不含本脚本自身开销）。")
+        print("完成。请保持 API 与 Vue dev 运行，刷新看板即可。")
 
 
 if __name__ == "__main__":
