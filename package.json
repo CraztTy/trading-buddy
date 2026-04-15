@@ -2,7 +2,7 @@
   "name": "trading-buddy",
   "private": true,
   "license": "MIT",
-  "version": "0.0.0",
+  "version": "1.3.0",
   "description": "Python/FastAPI 为主；本文件仅提供从仓库根转发到 frontend/ 的 npm 脚本，无需在根目录 npm install。自检：npm run verify（pytest + frontend build）。向 Playwright 传 CLI 参数：在根用 npm run 时需多一层分隔，例如 npm run frontend:e2e:smoke -- -- --list；或直接 npm --prefix frontend run test:e2e:smoke -- --list。",
   "engines": {
     "node": ">=20"
