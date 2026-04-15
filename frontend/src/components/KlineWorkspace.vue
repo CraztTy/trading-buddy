@@ -20,6 +20,7 @@ function chartTitle(code, apiName) {
 
 const props = defineProps({
   code: { type: String, default: "sh.000001" },
+  adjustFlag: { type: String, default: "3" },
 });
 
 const title = ref("上证指数");
@@ -32,7 +33,18 @@ const chartLoading = ref(false);
 /** 最近一次成功请求的 `GET …/klines/analysis/…?limit=60` 相对路径（含 `/api`） */
 const lastKlineApiPath = ref("");
 /** 复权类型: 1=后复权, 2=前复权, 3=不复权 */
-const adjustFlag = ref("3");
+const innerAdjustFlag = ref(props.adjustFlag);
+
+const emit = defineEmits(["update:code", "update:adjustFlag"]);
+
+watch(() => props.adjustFlag, (v) => {
+  innerAdjustFlag.value = v;
+});
+
+watch(innerAdjustFlag, (v) => {
+  emit("update:adjustFlag", v);
+  if (props.code) loadKline(props.code);
+});
 
 function normalizeCode(input) {
   let code = input.trim().toLowerCase();
@@ -52,8 +64,6 @@ function onSearchKey(e) {
   emit("update:code", next);
 }
 
-const emit = defineEmits(["update:code"]);
-
 watch(
   () => props.code,
   (c) => {
@@ -64,10 +74,6 @@ watch(
   },
   { immediate: true }
 );
-
-watch(adjustFlag, () => {
-  if (props.code) loadKline(props.code);
-});
 
 async function copyAnalysisApiPath() {
   const u = lastKlineApiPath.value.trim();
@@ -87,7 +93,7 @@ async function loadKline(code) {
   chartLoading.value = true;
   chartError.value = "";
   const enc = encodeURIComponent(code);
-  const qs = new URLSearchParams({ limit: "60", adjust_flag: adjustFlag.value });
+  const qs = new URLSearchParams({ limit: "60", adjust_flag: innerAdjustFlag.value });
   const relPath = `/api/klines/analysis/${enc}?${qs}`;
   try {
     const data = await fetchJson(`klines/analysis/${enc}?${qs}`, {
@@ -280,7 +286,7 @@ const chartOption = computed(() => {
       <div class="search-divider" />
       <label class="adjust-label">
         <span class="adjust-lbl">复权</span>
-        <select v-model="adjustFlag" class="adjust-select mono">
+        <select v-model="innerAdjustFlag" class="adjust-select mono">
           <option value="3">不复权</option>
           <option value="2">前复权</option>
           <option value="1">后复权</option>

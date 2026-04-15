@@ -278,7 +278,9 @@ async function copyCurrentCode() {
         <KlineWorkspace
           class="col chart-col"
           :code="currentCode"
+          :adjust-flag="dashboardAdjustFlag"
           @update:code="onSelectCode"
+          @update:adjust-flag="dashboardAdjustFlag = $event"
         />
         <aside class="col side-col">
           <p class="eyebrow">涨跌 / 成交额</p>
@@ -311,6 +313,8 @@ async function copyCurrentCode() {
         v-else-if="mainView === 'backtest'"
         class="block enter-stagger"
         :code="currentCode"
+        :adjust-flag="dashboardAdjustFlag"
+        @update:adjust-flag="dashboardAdjustFlag = $event"
         @open-paper="onOpenPaper"
         @select-code="onSelectCode"
       />

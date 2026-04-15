@@ -50,9 +50,10 @@ function readStoredSingleRunStrategy() {
 
 const props = defineProps({
   code: { type: String, default: "sh.000001" },
+  adjustFlag: { type: String, default: "3" },
 });
 
-const emit = defineEmits(["open-paper", "select-code"]);
+const emit = defineEmits(["open-paper", "select-code", "update:adjustFlag"]);
 
 function emitOpenPaper() {
   const c = (props.code || "").trim();
@@ -77,7 +78,15 @@ const tradeEndDate = ref("");
 /** 可选：β/α 对基准日收益回归（如 sh.000300），留空则为对标的自身日收益 */
 const benchmarkCode = ref("");
 /** 复权类型: 1=后复权, 2=前复权, 3=不复权 */
-const adjustFlag = ref("3");
+const innerAdjustFlag = ref(props.adjustFlag);
+
+watch(() => props.adjustFlag, (v) => {
+  innerAdjustFlag.value = v;
+});
+
+watch(innerAdjustFlag, (v) => {
+  emit("update:adjustFlag", v);
+});
 
 const loading = ref(false);
 const error = ref("");
@@ -341,7 +350,7 @@ function commonParams() {
   if (e) p.set("end_date", e);
   const b = (benchmarkCode.value || "").trim().toLowerCase();
   if (b) p.set("benchmark_code", b);
-  p.set("adjust_flag", adjustFlag.value);
+  p.set("adjust_flag", innerAdjustFlag.value);
   return p;
 }
 
@@ -386,7 +395,7 @@ function scanRunParamsObject(codesRaw) {
   if (e) out.end_date = e;
   const b = (qp.benchmark_code || "").trim().toLowerCase();
   if (b) out.benchmark_code = b;
-  out.adjust_flag = adjustFlag.value;
+  out.adjust_flag = innerAdjustFlag.value;
   return out;
 }
 
@@ -488,7 +497,7 @@ function maCrossSingleRunParamsObject(code) {
   if (e) out.end_date = e;
   const b = (qp.benchmark_code || "").trim().toLowerCase();
   if (b) out.benchmark_code = b;
-  out.adjust_flag = adjustFlag.value;
+  out.adjust_flag = innerAdjustFlag.value;
   return out;
 }
 
@@ -509,7 +518,7 @@ function buyHoldSingleRunParamsObject(code) {
   if (e) out.end_date = e;
   const b = (benchmarkCode.value || "").trim().toLowerCase();
   if (b) out.benchmark_code = b;
-  out.adjust_flag = adjustFlag.value;
+  out.adjust_flag = innerAdjustFlag.value;
   return out;
 }
 
@@ -1023,7 +1032,7 @@ function signalQueryParams() {
   const e = (tradeEndDate.value || "").trim();
   if (s) p.set("start_date", s);
   if (e) p.set("end_date", e);
-  p.set("adjust_flag", adjustFlag.value);
+  p.set("adjust_flag", innerAdjustFlag.value);
   return p;
 }
 
@@ -1411,7 +1420,7 @@ onMounted(() => {
       </label>
       <label class="field">
         <span class="lbl">复权类型</span>
-        <select v-model="adjustFlag" class="inp mono">
+        <select v-model="innerAdjustFlag" class="inp mono">
           <option value="3">不复权</option>
           <option value="2">前复权</option>
           <option value="1">后复权</option>
