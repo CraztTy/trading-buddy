@@ -94,6 +94,21 @@ python scripts\fetch_data.py --mode daily
 
 本地联调可改用 `--source mock --limit 5` 快速灌入模拟数据。
 
+### 方式 C：趋势 v0 股票池维护（可选）
+
+若你使用 `config/trend_v0_pool.txt` 作为研究/回测股票池，可在全市场增量后，对池子做专项检查和补数：
+
+```powershell
+# 1. 检查池内日 K 覆盖（min-bars=60，同时检查 change_pct 缺失和最新 K 线是否超过 7 天）
+python scripts\check_trend_v0_pool.py --min-bars 60 --check-pct --max-age-days 7 --adjust-flag 3
+
+# 2. 若池子内个别标的缺数据，可单独增量补数（以 PowerShell 拼接代码为例）
+$codes = (Get-Content config\trend_v0_pool.txt | Where-Object { $_ -notmatch '^#' -and $_.Trim() }) -join ','
+python scripts\fetch_data.py --mode klines --codes $codes --incremental --with-calendar
+```
+
+> 注意：`check_trend_v0_pool.py` 依赖数据库 schema 已包含 `daily_kline.adjust_flag` 列；若从旧版本升级，请先执行 `python scripts\init_db.py`（SQLite）或在 MySQL 中执行 `scripts\alter_daily_kline_adjust_flag.sql`。
+
 ## 第四步：启动 API
 
 **方式 1（与文档一致，适合开发热重载）：**

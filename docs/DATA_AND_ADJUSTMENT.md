@@ -83,6 +83,12 @@ python scripts/check_daily_kline_quality.py --gap-sample 50 --gap-seed-offset 0 
 python scripts/fetch_trade_calendar.py --start 2022-01-01 --end 2025-12-31
 ```
 
+**趋势 v0 股票池专项检查**（见 [`docs/TREND_V0_SPEC.md`](TREND_V0_SPEC.md) B1/B2）：
+
+```bash
+python scripts/check_trend_v0_pool.py --min-bars 60 --check-pct --max-age-days 7 --adjust-flag 3
+```
+
 报告包含：
 
 - **`daily_kline`**：行数、distinct 标的、全局 `trade_date` 范围、最新交易日行数、仅 1 根 K 的标的数、**重复 `(code, trade_date)` 组**、**非法 OHLC 行**、**负成交量行**、**orphan 日 K**（`code` 不在 `stock_info`）、`stock_info` 侧无 K 线的标的数等。

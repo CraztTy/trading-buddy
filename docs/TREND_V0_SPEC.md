@@ -57,6 +57,71 @@
 
 ---
 
+## B1 / B2：池子数据质量检查与日常维护（前置条件）
+
+### 池子日 K 覆盖检查（B1）
+
+趋势 v0 要求池内每只标的都有**足够长度且足够新**的日 K，以及有效的 `change_pct`。推荐在首次拉数后和每次日常增量后执行：
+
+```bash
+# 基础检查：每只至少有 60 根日 K
+python scripts/check_trend_v0_pool.py --min-bars 60
+
+# 增强检查：同时检查 change_pct 缺失、以及最新 K 线是否超过 7 天（可能停牌/缺数据）
+python scripts/check_trend_v0_pool.py \
+  --min-bars 60 \
+  --check-pct \
+  --max-age-days 7 \
+  --adjust-flag 3
+```
+
+**验收标准**：
+- 池内全部通过 `min-bars` 检查
+- `change_pct` 缺失比例可接受（理想为 0%，若数据源偶发缺失则记录上限）
+- `max-age-days` 告警数量在可接受范围内（停牌属于正常市场行为，但需知情）
+
+**全局质量补充**：可同时跑全表检查，关注重复键、非法 OHLC、负成交量、orphan 日 K：
+
+```bash
+python scripts/check_daily_kline_quality.py --json
+# 或带交易日历缺口抽样（需已灌 trade_calendar）
+python scripts/check_daily_kline_quality.py --gap-sample 50 --gap-exchange cn
+```
+
+### 交易日历与日常增量节奏（B2）
+
+**首次建库后必须执行**（Baostock 数据源）：
+
+```bash
+python scripts/fetch_trade_calendar.py --start 2020-01-01 --end 2025-12-31
+```
+
+**日常收盘后增量（推荐）**：刷新股票列表 + 指数/个股增量补数 + 顺带刷新日历尾部：
+
+```bash
+python scripts/feed_dashboard.py --profile daily --skip-init
+```
+
+等价于 `fetch_data.py` 的 `daily` 模式：
+
+```bash
+python scripts/fetch_data.py --mode daily --with-calendar
+```
+
+**池子专属日更**（若只关注 `config/trend_v0_pool.txt` 中的标的，可减少流量）：
+
+```bash
+python scripts/fetch_data.py \
+  --mode klines \
+  --codes $(paste -sd',' config/trend_v0_pool.txt) \
+  --incremental \
+  --with-calendar
+```
+
+> 说明：Windows PowerShell 中可用 `(Get-Content config/trend_v0_pool.txt) -join ','` 拼接代码串。
+
+---
+
 ## A3：基线存档（需本机 API + 数据库已灌日 K）
 
 ### 步骤 1：单标的同步回测
