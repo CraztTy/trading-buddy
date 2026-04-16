@@ -51,15 +51,16 @@ def _bt_catalog_row(
 
 def _bt_catalog_body(*rows: dict) -> dict:
     rows_list = list(rows)
-    if not any(isinstance(r, dict) and r.get("strategy_id") == "buy_hold" for r in rows_list):
-        rows_list.append(
-            _bt_catalog_row(
-                "buy_hold",
-                "buy_hold_single",
-                response_shape="result",
-                paths=["/api/backtest/buy-hold"],
+    _defaults = {
+        "buy_hold": ("buy_hold_single", "result", ["/api/backtest/buy-hold"]),
+        "limit_up_pullback": ("limit_up_pullback_single", "result", ["/api/backtest/limit-up-pullback"]),
+        "limit_up_pullback_scan": ("limit_up_pullback_scan", "scan_result", ["/api/backtest/limit-up-pullback/scan"]),
+    }
+    for sid, (ak, shape, paths) in _defaults.items():
+        if not any(isinstance(r, dict) and r.get("strategy_id") == sid for r in rows_list):
+            rows_list.append(
+                _bt_catalog_row(sid, ak, response_shape=shape, paths=paths)
             )
-        )
     return {
         "engine_version": ENGINE_VERSION,
         "post_run_path": "/api/backtest/run",

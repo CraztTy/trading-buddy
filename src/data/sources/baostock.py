@@ -204,7 +204,7 @@ class BaostockSource(BaseDataSource):
         # adjustflag：1=后复权 2=前复权 3=不复权（与 docs/DATA_AND_ADJUSTMENT.md 默认口径一致）
         rs = bs.query_history_k_data_plus(
             code,
-            "date,open,high,low,close,volume,amount,pctChg",
+            "date,open,high,low,close,preclose,volume,amount,pctChg",
             start_date=start_date.strftime('%Y-%m-%d'),
             end_date=end_date.strftime('%Y-%m-%d'),
             frequency="d",
@@ -216,8 +216,9 @@ class BaostockSource(BaseDataSource):
             while rs.next():
                 row = rs.get_row_data()
                 try:
-                    # 字段顺序: date,open,high,low,close,volume,amount,pctChg
-                    pct = float(row[7]) if len(row) > 7 and row[7] not in (None, "") else None
+                    # 字段顺序: date,open,high,low,close,preclose,volume,amount,pctChg
+                    pct = float(row[8]) if len(row) > 8 and row[8] not in (None, "") else None
+                    pre_close = float(row[5]) if len(row) > 5 and row[5] not in (None, "") else None
                     kline = KLine(
                         code=code,
                         trade_date=datetime.strptime(row[0], '%Y-%m-%d').date(),
@@ -225,8 +226,9 @@ class BaostockSource(BaseDataSource):
                         high=float(row[2]),
                         low=float(row[3]),
                         close=float(row[4]),
-                        volume=int(float(row[5])) if row[5] else 0,
-                        amount=float(row[6]) if row[6] else 0.0,
+                        pre_close=pre_close,
+                        volume=int(float(row[6])) if row[6] else 0,
+                        amount=float(row[7]) if row[7] else 0.0,
                         turnover_rate=None,
                         pct_change=pct,
                         adjust_flag=adjustflag,

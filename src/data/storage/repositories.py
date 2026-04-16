@@ -3,7 +3,7 @@ Trading Buddy - 数据仓库
 封装数据库操作，提供简洁的增删改查接口
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Sequence
 
 from sqlalchemy import and_, func, select
@@ -255,6 +255,7 @@ class KlineRepository:
             "high": kline.high,
             "low": kline.low,
             "close": kline.close,
+            "pre_close": kline.pre_close,
             "volume": kline.volume,
             "amount": kline.amount,
             "turnover_rate": kline.turnover_rate,
@@ -280,6 +281,7 @@ class KlineRepository:
                     "high": ins.excluded.high,
                     "low": ins.excluded.low,
                     "close": ins.excluded.close,
+                    "pre_close": ins.excluded.pre_close,
                     "volume": ins.excluded.volume,
                     "amount": ins.excluded.amount,
                     "turnover_rate": ins.excluded.turnover_rate,
@@ -297,6 +299,7 @@ class KlineRepository:
                 high=ins.inserted.high,
                 low=ins.inserted.low,
                 close=ins.inserted.close,
+                pre_close=ins.inserted.pre_close,
                 volume=ins.inserted.volume,
                 amount=ins.inserted.amount,
                 turnover_rate=ins.inserted.turnover_rate,
@@ -315,6 +318,7 @@ class KlineRepository:
                         high=kline.high,
                         low=kline.low,
                         close=kline.close,
+                        pre_close=kline.pre_close,
                         volume=kline.volume,
                         amount=kline.amount,
                         turnover_rate=kline.turnover_rate,
@@ -363,6 +367,7 @@ class KlineRepository:
                 high=float(m.high),
                 low=float(m.low),
                 close=float(m.close),
+                pre_close=float(m.pre_close) if m.pre_close is not None else None,
                 volume=m.volume or 0,
                 amount=float(m.amount) if m.amount else 0.0,
                 turnover_rate=float(m.turnover_rate) if m.turnover_rate else None,
@@ -476,6 +481,7 @@ class KlineRepository:
                 DailyKlineModel.high,
                 DailyKlineModel.low,
                 DailyKlineModel.close,
+                DailyKlineModel.pre_close,
                 DailyKlineModel.volume,
                 DailyKlineModel.amount,
                 DailyKlineModel.turnover_rate,
@@ -504,6 +510,7 @@ class KlineRepository:
                 high=float(row["high"]),
                 low=float(row["low"]),
                 close=float(row["close"]),
+                pre_close=float(row["pre_close"]) if row["pre_close"] is not None else None,
                 volume=row["volume"] or 0,
                 amount=float(row["amount"]) if row["amount"] else 0.0,
                 turnover_rate=float(row["turnover_rate"])
@@ -549,6 +556,7 @@ class KlineRepository:
                 high=float(m.high),
                 low=float(m.low),
                 close=float(m.close),
+                pre_close=float(m.pre_close) if m.pre_close is not None else None,
                 volume=m.volume or 0,
                 amount=float(m.amount) if m.amount else 0.0,
                 pct_change=float(m.change_pct) if m.change_pct else None,
@@ -589,6 +597,7 @@ class KlineRepository:
                 high=float(m.high),
                 low=float(m.low),
                 close=float(m.close),
+                pre_close=float(m.pre_close) if m.pre_close is not None else None,
                 volume=m.volume or 0,
                 amount=float(m.amount) if m.amount else 0.0,
                 pct_change=float(m.change_pct) if m.change_pct else None,
@@ -641,6 +650,7 @@ class KlineRepository:
                 high=float(m.high),
                 low=float(m.low),
                 close=float(m.close),
+                pre_close=float(m.pre_close) if m.pre_close is not None else None,
                 volume=m.volume or 0,
                 amount=float(m.amount) if m.amount else 0.0,
                 turnover_rate=float(m.turnover_rate) if m.turnover_rate else None,
@@ -649,3 +659,71 @@ class KlineRepository:
             )
             for m in models
         ]
+
+
+class SectorRepository:
+    """板块与个股关联仓库"""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def get_sector_codes_for_stocks(self, codes: Sequence[str]) -> dict[str, list[str]]:
+        """批量查询个股所属的板块代码列表。"""
+        uniq = list(dict.fromkeys(c for c in codes if c))
+        if not uniq:
+            return {}
+        from .models import StockSectorModel
+        stmt = (
+            select(StockSectorModel.stock_code, StockSectorModel.sector_code)
+            .where(StockSectorModel.stock_code.in_(uniq))
+        )
+        result = await self._session.execute(stmt)
+        out: dict[str, list[str]] = {}
+        for row in result.all():
+            out.setdefault(row[0], []).append(row[1])
+        return out
+
+    async def get_stocks_by_sectors(self, sector_codes: Sequence[str]) -> list[str]:
+        """根据板块代码查询包含的个股代码。"""
+        uniq = list(dict.fromkeys(s for s in sector_codes if s))
+        if not uniq:
+            return []
+        from .models import StockSectorModel
+        stmt = (
+            select(StockSectorModel.stock_code)
+            .where(StockSectorModel.sector_code.in_(uniq))
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
+
+
+class PolicyRepository:
+    """政策事件仓库"""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def has_recent_events(
+        self,
+        sector_codes: Sequence[str],
+        days: int = 14,
+        as_of_date: date | None = None,
+    ) -> bool:
+        """判断指定板块在最近 N 天内是否有政策催化事件。"""
+        from .models import PolicyEventModel
+        uniq = list(dict.fromkeys(s for s in sector_codes if s))
+        if not uniq:
+            return False
+        anchor = as_of_date or date.today()
+        start = anchor - timedelta(days=max(1, days))
+        stmt = (
+            select(func.count(PolicyEventModel.id))
+            .where(
+                PolicyEventModel.sector_code.in_(uniq),
+                PolicyEventModel.event_date >= start,
+                PolicyEventModel.event_date <= anchor,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return bool((result.scalar_one_or_none() or 0) > 0)

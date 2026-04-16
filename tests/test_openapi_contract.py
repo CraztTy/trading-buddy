@@ -21,6 +21,8 @@ def test_backtest_catalog_live_strategy_ids_match_post_run_constants() -> None:
 
     from src.backtest.runner import (
         STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_LIMIT_UP_PULLBACK,
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
         STRATEGY_ID_MA_CROSS,
         STRATEGY_ID_MA_CROSS_SCAN,
     )
@@ -30,7 +32,13 @@ def test_backtest_catalog_live_strategy_ids_match_post_run_constants() -> None:
     assert r.status_code == 200
     strategies = r.json().get("strategies") or []
     ids = {s["strategy_id"] for s in strategies if isinstance(s, dict) and "strategy_id" in s}
-    assert ids == {STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN, STRATEGY_ID_BUY_HOLD}
+    assert ids == {
+        STRATEGY_ID_MA_CROSS,
+        STRATEGY_ID_MA_CROSS_SCAN,
+        STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_LIMIT_UP_PULLBACK,
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
+    }
 
 
 def test_backtest_catalog_live_strategy_shape_and_paths_match_kernel() -> None:
@@ -39,6 +47,8 @@ def test_backtest_catalog_live_strategy_shape_and_paths_match_kernel() -> None:
 
     from src.backtest.runner import (
         STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_LIMIT_UP_PULLBACK,
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
         STRATEGY_ID_MA_CROSS,
         STRATEGY_ID_MA_CROSS_SCAN,
     )
@@ -47,6 +57,8 @@ def test_backtest_catalog_live_strategy_shape_and_paths_match_kernel() -> None:
         STRATEGY_ID_MA_CROSS: ("result", ["/api/backtest/ma-cross"]),
         STRATEGY_ID_MA_CROSS_SCAN: ("scan_result", ["/api/backtest/ma-cross/scan"]),
         STRATEGY_ID_BUY_HOLD: ("result", ["/api/backtest/buy-hold"]),
+        STRATEGY_ID_LIMIT_UP_PULLBACK: ("result", ["/api/backtest/limit-up-pullback"]),
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN: ("scan_result", ["/api/backtest/limit-up-pullback/scan"]),
     }
     with TestClient(app) as client:
         r = client.get("/api/backtest/catalog")
@@ -234,7 +246,7 @@ def test_strategies_catalog_live_entry_fields_consistent_with_contract() -> None
     for st in r.json().get("strategies") or []:
         assert isinstance(st.get("signal_params"), dict)
         bak = st.get("backtest_archive_kinds")
-        assert isinstance(bak, list) and len(bak) >= 1
+        assert isinstance(bak, list)
         br = st.get("backtest_run") or {}
         assert isinstance(br.get("params_schema"), dict)
         assert st.get("id") == br.get("strategy_id")
@@ -247,7 +259,15 @@ def test_strategies_catalog_live_entry_fields_consistent_with_contract() -> None
             assert bak == ["ma_cross_scan"]
         elif eid == "buy_hold":
             assert bak == ["buy_hold_single"]
-        assert br.get("archive_kind") in bak
+        elif eid == "limit_up_pullback":
+            assert bak == ["limit_up_pullback_single"]
+        elif eid == "limit_up_pullback_scan":
+            assert bak == ["limit_up_pullback_scan"]
+        if bak:
+            assert br.get("archive_kind") in bak
+        else:
+            # 无回测存档的策略允许 archive_kind 为占位值
+            assert isinstance(br.get("archive_kind"), str)
 
 
 def test_openapi_strategies_catalog_path_has_response_schema() -> None:

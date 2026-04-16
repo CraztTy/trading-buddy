@@ -7,8 +7,15 @@ from .models import (
     IndexDataModel,
     SyncLogModel,
     TradingCalendarModel,
+    StockSectorModel,
+    PolicyEventModel,
 )
-from .repositories import StockRepository, KlineRepository
+from .repositories import (
+    StockRepository,
+    KlineRepository,
+    SectorRepository,
+    PolicyRepository,
+)
 from .calendar_repository import TradeCalendarRepository
 from .paper_repository import PaperRepository
 from .stock_name_cache import resolve_stock_names
@@ -20,8 +27,12 @@ __all__ = [
     "get_session",
     "StockRepository",
     "KlineRepository",
+    "SectorRepository",
+    "PolicyRepository",
     "TradeCalendarRepository",
     "PaperRepository",
     "resolve_stock_names",
     "TradingCalendarModel",
+    "StockSectorModel",
+    "PolicyEventModel",
 ]

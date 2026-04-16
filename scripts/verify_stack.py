@@ -128,6 +128,8 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
     from src.backtest.runner import (
         ENGINE_VERSION,
         STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_LIMIT_UP_PULLBACK,
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
         STRATEGY_ID_MA_CROSS,
         STRATEGY_ID_MA_CROSS_SCAN,
     )
@@ -136,6 +138,8 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
         STRATEGY_ID_MA_CROSS: ("result", ["/api/backtest/ma-cross"]),
         STRATEGY_ID_MA_CROSS_SCAN: ("scan_result", ["/api/backtest/ma-cross/scan"]),
         STRATEGY_ID_BUY_HOLD: ("result", ["/api/backtest/buy-hold"]),
+        STRATEGY_ID_LIMIT_UP_PULLBACK: ("result", ["/api/backtest/limit-up-pullback"]),
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN: ("scan_result", ["/api/backtest/limit-up-pullback/scan"]),
     }
 
     if not isinstance(data, dict):
@@ -285,7 +289,23 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
             "backtest catalog: buy_hold 的 archive_kind 应为 buy_hold_single，"
             f"实际 {by_sid.get('buy_hold')!r}"
         )
-    expected_ids = frozenset({STRATEGY_ID_MA_CROSS, STRATEGY_ID_MA_CROSS_SCAN, STRATEGY_ID_BUY_HOLD})
+    if by_sid.get("limit_up_pullback") != "limit_up_pullback_single":
+        return (
+            "backtest catalog: limit_up_pullback 的 archive_kind 应为 limit_up_pullback_single，"
+            f"实际 {by_sid.get('limit_up_pullback')!r}"
+        )
+    if by_sid.get("limit_up_pullback_scan") != "limit_up_pullback_scan":
+        return (
+            "backtest catalog: limit_up_pullback_scan 的 archive_kind 应为 limit_up_pullback_scan，"
+            f"实际 {by_sid.get('limit_up_pullback_scan')!r}"
+        )
+    expected_ids = frozenset({
+        STRATEGY_ID_MA_CROSS,
+        STRATEGY_ID_MA_CROSS_SCAN,
+        STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_LIMIT_UP_PULLBACK,
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
+    })
     got_ids = frozenset(by_sid.keys())
     if got_ids != expected_ids:
         return (
@@ -537,10 +557,10 @@ def _strategies_catalog_shape_errors(sc_body: object) -> str | None:
         if not isinstance(sp, dict):
             return f"strategies catalog: strategies[{i}].signal_params 非对象"
         bak = st.get("backtest_archive_kinds")
-        if not isinstance(bak, list) or len(bak) < 1:
+        if not isinstance(bak, list):
             return (
                 f"strategies catalog: strategies[{i}].backtest_archive_kinds "
-                "缺失或为空列表"
+                "须为列表"
             )
         if entry_id == "ma_cross":
             if bak != ["ma_cross_single", "ma_cross_scan"]:
@@ -559,6 +579,18 @@ def _strategies_catalog_shape_errors(sc_body: object) -> str | None:
                 return (
                     "strategies catalog: buy_hold 的 backtest_archive_kinds 应为 "
                     f"['buy_hold_single'] 实际 {bak!r}"
+                )
+        elif entry_id == "limit_up_pullback":
+            if bak != ["limit_up_pullback_single"]:
+                return (
+                    "strategies catalog: limit_up_pullback 的 backtest_archive_kinds 应为 "
+                    f"['limit_up_pullback_single'] 实际 {bak!r}"
+                )
+        elif entry_id == "limit_up_pullback_scan":
+            if bak != ["limit_up_pullback_scan"]:
+                return (
+                    "strategies catalog: limit_up_pullback_scan 的 backtest_archive_kinds 应为 "
+                    f"['limit_up_pullback_scan'] 实际 {bak!r}"
                 )
         if not all(isinstance(x, str) for x in bak):
             return (
@@ -626,10 +658,20 @@ def _strategy_catalog_vs_backtest_archive_errors(client: Any) -> str | None:
                 f"strategies.catalog={ak!r} backtest.catalog={by_engine[sid]!r}"
             )
     eng_keys = frozenset(by_engine.keys())
-    if frozenset(strat_sids) != eng_keys:
+    # 仅要求有 backtest_archive_kinds 的策略出现在 backtest catalog 中
+    strat_sids_with_backtest = frozenset(
+        sid for sid in strat_sids
+        if any(
+            (st.get("backtest_run") or {}).get("strategy_id") == sid
+            and (st.get("backtest_archive_kinds") or [])
+            for st in strategies
+            if isinstance(st, dict)
+        )
+    )
+    if strat_sids_with_backtest != eng_keys:
         return (
             "strategies catalog 与 backtest catalog 的 strategy_id 集合须完全一致 "
-            f"engine={sorted(eng_keys)!r} strategies={sorted(strat_sids)!r}"
+            f"engine={sorted(eng_keys)!r} strategies={sorted(strat_sids_with_backtest)!r}"
         )
     return None
 

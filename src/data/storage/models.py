@@ -16,6 +16,7 @@ from sqlalchemy import (
     BigInteger,
     ForeignKey,
     UniqueConstraint,
+    PrimaryKeyConstraint,
     Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -60,29 +61,53 @@ class TradingCalendarModel(Base):
 
 
 class DailyKlineModel(Base):
-    """日线K线表"""
+    """日线K线表（复合主键：code + trade_date + adjust_flag）"""
     __tablename__ = "daily_kline"
     __table_args__ = (
-        UniqueConstraint("code", "trade_date", "adjust_flag", name="uq_daily_kline_code_date_flag"),
         # 涨跌榜：WHERE trade_date=? ORDER BY change_pct LIMIT N（避免全分区排序）
         Index("ix_daily_kline_trade_date_pct", "trade_date", "change_pct"),
         # 成交额榜：WHERE trade_date=? ORDER BY amount DESC LIMIT N
         Index("ix_daily_kline_trade_date_amount", "trade_date", "amount"),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    code: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
-    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    code: Mapped[str] = mapped_column(String(10), nullable=False, primary_key=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, primary_key=True)
+    adjust_flag: Mapped[str] = mapped_column(String(2), nullable=False, default="3", server_default="3", primary_key=True)
     open: Mapped[float] = mapped_column(Float, nullable=False)
     high: Mapped[float] = mapped_column(Float, nullable=False)
     low: Mapped[float] = mapped_column(Float, nullable=False)
     close: Mapped[float] = mapped_column(Float, nullable=False)
+    pre_close: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 指数日 K 成交量为全市场合计，易超过 32 位 INT
     volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     turnover_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
-    adjust_flag: Mapped[str] = mapped_column(String(2), nullable=False, default="3", server_default="3")
+
+
+class StockSectorModel(Base):
+    """个股与板块多对多关联表"""
+    __tablename__ = "stock_sector"
+    __table_args__ = (
+        UniqueConstraint("stock_code", "sector_code", name="uq_stock_sector"),
+        Index("ix_stock_sector_sector", "sector_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    stock_code: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    sector_code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class PolicyEventModel(Base):
+    """政策催化事件表"""
+    __tablename__ = "policy_event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sector_code: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    event_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 

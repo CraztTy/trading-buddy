@@ -1601,6 +1601,422 @@
         }
       }
     },
+    "/api/backtest/limit-up-pullback": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Limit Up Pullback Backtest",
+        "operationId": "limit_up_pullback_backtest_api_backtest_limit_up_pullback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "标的代码，如 sh.000001",
+              "title": "Code"
+            },
+            "description": "标的代码，如 sh.000001"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "起始日（含）",
+              "title": "Start Date"
+            },
+            "description": "起始日（含）"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "结束日（含）",
+              "title": "End Date"
+            },
+            "description": "结束日（含）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "description": "最多使用多少根日 K",
+              "default": 500,
+              "title": "Limit"
+            },
+            "description": "最多使用多少根日 K"
+          },
+          {
+            "name": "commission_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "default": 0.0,
+              "title": "Commission Rate"
+            }
+          },
+          {
+            "name": "slippage_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "default": 0.0,
+              "title": "Slippage Rate"
+            }
+          },
+          {
+            "name": "benchmark_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Benchmark Code"
+            }
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1",
+                "2",
+                "3"
+              ],
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
+          },
+          {
+            "name": "pullback_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 60,
+              "minimum": 1,
+              "default": 10,
+              "title": "Pullback Days"
+            }
+          },
+          {
+            "name": "entry_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "default": "neutral",
+              "title": "Entry Type"
+            }
+          },
+          {
+            "name": "volume_shrink_ratio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.1,
+              "default": 0.5,
+              "title": "Volume Shrink Ratio"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaCrossBacktestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backtest/limit-up-pullback/scan": {
+      "get": {
+        "tags": [
+          "回测"
+        ],
+        "summary": "Limit Up Pullback Scan",
+        "operationId": "limit_up_pullback_scan_api_backtest_limit_up_pullback_scan_get",
+        "parameters": [
+          {
+            "name": "codes",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "逗号或换行分隔的标的列表",
+              "title": "Codes"
+            },
+            "description": "逗号或换行分隔的标的列表"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Date"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "default": 500,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "commission_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "default": 0.0,
+              "title": "Commission Rate"
+            }
+          },
+          {
+            "name": "slippage_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 0.05,
+              "minimum": 0.0,
+              "default": 0.0,
+              "title": "Slippage Rate"
+            }
+          },
+          {
+            "name": "max_codes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 40,
+              "minimum": 1,
+              "default": 25,
+              "title": "Max Codes"
+            }
+          },
+          {
+            "name": "export",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "json 或 csv",
+              "default": "json",
+              "title": "Export"
+            },
+            "description": "json 或 csv"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "total_return",
+              "title": "Sort By"
+            }
+          },
+          {
+            "name": "max_concurrent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20,
+              "minimum": 1,
+              "default": 8,
+              "title": "Max Concurrent"
+            }
+          },
+          {
+            "name": "benchmark_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Benchmark Code"
+            }
+          },
+          {
+            "name": "adjust_flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1",
+                "2",
+                "3"
+              ],
+              "type": "string",
+              "description": "复权类型: 1=后复权 2=前复权 3=不复权",
+              "default": "3",
+              "title": "Adjust Flag"
+            },
+            "description": "复权类型: 1=后复权 2=前复权 3=不复权"
+          },
+          {
+            "name": "pullback_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 60,
+              "minimum": 1,
+              "default": 10,
+              "title": "Pullback Days"
+            }
+          },
+          {
+            "name": "entry_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "default": "neutral",
+              "title": "Entry Type"
+            }
+          },
+          {
+            "name": "volume_shrink_ratio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.1,
+              "default": 0.5,
+              "title": "Volume Shrink Ratio"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/backtest/jobs/{job_id}/cancel": {
       "post": {
         "tags": [
@@ -1842,7 +2258,9 @@
                   "enum": [
                     "ma_cross_single",
                     "ma_cross_scan",
-                    "buy_hold_single"
+                    "buy_hold_single",
+                    "limit_up_pullback_single",
+                    "limit_up_pullback_scan"
                   ],
                   "type": "string"
                 },
@@ -2319,6 +2737,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StrategySignalResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/strategies/limit-up-pullback/scan": {
+      "post": {
+        "tags": [
+          "策略"
+        ],
+        "summary": "Post Limit Up Pullback Scan",
+        "description": "涨停回调选股策略批量扫描。\n按文档 v2.0 的五层过滤（当前实现第3~5层技术面，第1~2层通过可选参数控制）。",
+        "operationId": "post_limit_up_pullback_scan_api_strategies_limit_up_pullback_scan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LimitUpPullbackScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitUpPullbackScanResponse"
                 }
               }
             }
@@ -2928,7 +3388,9 @@
             "enum": [
               "ma_cross_single",
               "ma_cross_scan",
-              "buy_hold_single"
+              "buy_hold_single",
+              "limit_up_pullback_single",
+              "limit_up_pullback_scan"
             ],
             "title": "Kind"
           },
@@ -3681,6 +4143,18 @@
             "title": "Close",
             "description": "收盘价"
           },
+          "pre_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pre Close",
+            "description": "前收盘价"
+          },
           "volume": {
             "type": "integer",
             "title": "Volume",
@@ -3783,6 +4257,241 @@
         ],
         "title": "KLine",
         "description": "K线数据"
+      },
+      "LimitUpPullbackMatchItem": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "buy_point_type": {
+            "type": "string",
+            "title": "Buy Point Type"
+          },
+          "buy_point_price": {
+            "type": "number",
+            "title": "Buy Point Price"
+          },
+          "stop_loss_price": {
+            "type": "number",
+            "title": "Stop Loss Price"
+          },
+          "limit_up_date": {
+            "type": "string",
+            "title": "Limit Up Date"
+          },
+          "limit_up_close": {
+            "type": "number",
+            "title": "Limit Up Close"
+          },
+          "limit_up_open": {
+            "type": "number",
+            "title": "Limit Up Open"
+          },
+          "limit_up_low": {
+            "type": "number",
+            "title": "Limit Up Low"
+          },
+          "current_close": {
+            "type": "number",
+            "title": "Current Close"
+          },
+          "matched_rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matched Rules"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "buy_point_type",
+          "buy_point_price",
+          "stop_loss_price",
+          "limit_up_date",
+          "limit_up_close",
+          "limit_up_open",
+          "limit_up_low",
+          "current_close",
+          "matched_rules",
+          "note"
+        ],
+        "title": "LimitUpPullbackMatchItem"
+      },
+      "LimitUpPullbackScanRequest": {
+        "properties": {
+          "codes": {
+            "type": "string",
+            "title": "Codes",
+            "description": "逗号或换行分隔的标的列表"
+          },
+          "as_of_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of Date",
+            "description": "基准日期，默认为最近交易日"
+          },
+          "max_codes": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Max Codes",
+            "default": 100
+          },
+          "min_market_cap": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Market Cap",
+            "default": 5000000000.0
+          },
+          "max_market_cap": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Market Cap",
+            "default": 50000000000.0
+          },
+          "exclude_st": {
+            "type": "boolean",
+            "title": "Exclude St",
+            "default": true
+          },
+          "min_limit_up_3m": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Min Limit Up 3M",
+            "default": 1
+          },
+          "max_limit_up_3m": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Max Limit Up 3M",
+            "default": 3
+          },
+          "limit_up_lookback_min": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Limit Up Lookback Min",
+            "default": 5
+          },
+          "limit_up_lookback_max": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Limit Up Lookback Max",
+            "default": 10
+          },
+          "ma_strict": {
+            "type": "boolean",
+            "title": "Ma Strict",
+            "default": false
+          },
+          "adjustment_days_min": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Adjustment Days Min",
+            "default": 5
+          },
+          "buy_point_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Buy Point Types"
+          },
+          "sector_codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector Codes"
+          },
+          "require_policy": {
+            "type": "boolean",
+            "title": "Require Policy",
+            "default": false
+          },
+          "policy_lookback_days": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Policy Lookback Days",
+            "default": 14
+          }
+        },
+        "type": "object",
+        "required": [
+          "codes"
+        ],
+        "title": "LimitUpPullbackScanRequest",
+        "description": "涨停回调选股扫描请求"
+      },
+      "LimitUpPullbackScanResponse": {
+        "properties": {
+          "as_of_date": {
+            "type": "string",
+            "title": "As Of Date"
+          },
+          "total_scanned": {
+            "type": "integer",
+            "title": "Total Scanned"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/LimitUpPullbackMatchItem"
+            },
+            "type": "array",
+            "title": "Matches"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": "选股结果基于日线数据与技术面过滤，不构成投资建议"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of_date",
+          "total_scanned",
+          "matches"
+        ],
+        "title": "LimitUpPullbackScanResponse"
       },
       "MaCrossBacktestResponse": {
         "properties": {
@@ -4695,6 +5404,30 @@
             "title": "Is Trading",
             "description": "是否交易中（未停牌）",
             "default": true
+          },
+          "market_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Cap",
+            "description": "总市值（元）"
+          },
+          "float_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Float Cap",
+            "description": "流通市值（元）"
           }
         },
         "type": "object",

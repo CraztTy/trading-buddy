@@ -159,6 +159,99 @@ def list_strategy_catalog() -> list[dict[str, Any]]:
             },
         },
         {
+            "id": "limit_up_pullback",
+            "title": "涨停回调 · 单标的",
+            "description": (
+                "涨停回调策略单标的历史回测；"
+                "与 POST /api/backtest/run（strategy_id=limit_up_pullback）及 "
+                "GET /api/backtest/limit-up-pullback 等价。"
+            ),
+            "backtest_archive_kinds": ["limit_up_pullback_single"],
+            "strategy_contract_version": "1",
+            "signal_params": {
+                "type": "object",
+                "description": "不提供单标 signal；请使用回测 GET/POST 或选股 POST /api/strategies/limit-up-pullback/scan。",
+                "properties": {},
+                "required": [],
+                "maxProperties": 0,
+                "additionalProperties": False,
+            },
+            "backtest_run": {
+                "strategy_id": "limit_up_pullback",
+                "strategy_version": "1",
+                "archive_kind": "limit_up_pullback_single",
+                "description": "涨停回调策略单标回测参数。",
+                "params_schema": {
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string", "minLength": 1, "maxLength": 64},
+                        "limit": {"type": "integer", "minimum": 30, "maximum": 5000, "default": 500},
+                        "start_date": {"type": "string", "format": "date", "nullable": True},
+                        "end_date": {"type": "string", "format": "date", "nullable": True},
+                        "commission_rate": {"type": "number", "minimum": 0, "maximum": 0.05, "default": 0},
+                        "slippage_rate": {"type": "number", "minimum": 0, "maximum": 0.05, "default": 0},
+                        "benchmark_code": {"type": "string", "nullable": True, "maxLength": 64},
+                        "pullback_days": {"type": "integer", "minimum": 1, "maximum": 60, "default": 10},
+                        "entry_type": {
+                            "type": "string",
+                            "enum": ["aggressive", "neutral", "conservative"],
+                            "default": "neutral",
+                        },
+                        "volume_shrink_ratio": {"type": "number", "minimum": 0.1, "maximum": 1.0, "default": 0.5},
+                    },
+                    "required": ["code"],
+                },
+            },
+        },
+        {
+            "id": "limit_up_pullback_scan",
+            "title": "涨停回调 · 批量扫描",
+            "description": (
+                "涨停回调策略批量扫描回测；"
+                "与 POST /api/backtest/run（strategy_id=limit_up_pullback_scan）及 "
+                "GET /api/backtest/limit-up-pullback/scan 等价。"
+            ),
+            "backtest_archive_kinds": ["limit_up_pullback_scan"],
+            "strategy_contract_version": "1",
+            "signal_params": {
+                "type": "object",
+                "description": "不提供批量 signal；请使用扫描 GET/POST 或选股 POST /api/strategies/limit-up-pullback/scan。",
+                "properties": {},
+                "required": [],
+                "maxProperties": 0,
+                "additionalProperties": False,
+            },
+            "backtest_run": {
+                "strategy_id": "limit_up_pullback_scan",
+                "strategy_version": "1",
+                "archive_kind": "limit_up_pullback_scan",
+                "description": "涨停回调策略批量扫描回测参数。",
+                "params_schema": {
+                    "type": "object",
+                    "properties": {
+                        "codes": {"type": "string", "minLength": 1, "description": "逗号或换行分隔的标的列表"},
+                        "limit": {"type": "integer", "minimum": 30, "maximum": 5000, "default": 500},
+                        "start_date": {"type": "string", "format": "date", "nullable": True},
+                        "end_date": {"type": "string", "format": "date", "nullable": True},
+                        "commission_rate": {"type": "number", "minimum": 0, "maximum": 0.05, "default": 0},
+                        "slippage_rate": {"type": "number", "minimum": 0, "maximum": 0.05, "default": 0},
+                        "max_codes": {"type": "integer", "minimum": 1, "maximum": 40, "default": 25},
+                        "sort_by": {"type": "string", "default": "total_return"},
+                        "max_concurrent": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+                        "benchmark_code": {"type": "string", "nullable": True, "maxLength": 64},
+                        "pullback_days": {"type": "integer", "minimum": 1, "maximum": 60, "default": 10},
+                        "entry_type": {
+                            "type": "string",
+                            "enum": ["aggressive", "neutral", "conservative"],
+                            "default": "neutral",
+                        },
+                        "volume_shrink_ratio": {"type": "number", "minimum": 0.1, "maximum": 1.0, "default": 0.5},
+                    },
+                    "required": ["codes"],
+                },
+            },
+        },
+        {
             "id": "buy_hold",
             "title": "买入持有（日线收盘）",
             "description": (

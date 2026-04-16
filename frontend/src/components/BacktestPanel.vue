@@ -41,7 +41,7 @@ function readStoredMvpAsync() {
 function readStoredSingleRunStrategy() {
   try {
     const v = localStorage.getItem(LS_SINGLE_RUN_STRATEGY_KEY);
-    if (v === "buy_hold" || v === "ma_cross") return v;
+    if (v === "buy_hold" || v === "ma_cross" || v === "limit_up_pullback") return v;
   } catch {
     /* ignore */
   }
@@ -96,12 +96,29 @@ const scanCodesText = ref("sh.000001\nsh.000300\nsz.399001");
 /** 批量扫描排序：与 API sort_by 一致 */
 const scanSortBy = ref("total_return");
 const scanMaxConcurrent = ref(8);
+const scanStrategy = ref("ma_cross_scan");
 const scanLoading = ref(false);
 const scanCsvLoading = ref(false);
 const scanError = ref("");
 const scanResult = ref(null);
 const wlItems = ref([]);
 const wlLoadErr = ref("");
+
+/** 涨停回调选股 */
+const limitUpCodesText = ref("sh.000001\nsh.000300\nsz.399001");
+const limitUpAsOfDate = ref("");
+const limitUpExcludeSt = ref(true);
+const limitUpMinMarketCap = ref(50); // 展示为 亿
+const limitUpMaxMarketCap = ref(500); // 展示为 亿
+const limitUpBuyPointTypes = ref(["neutral"]);
+const limitUpSectorCodes = ref("");
+const limitUpRequirePolicy = ref(false);
+const limitUpLoading = ref(false);
+const limitUpError = ref("");
+const limitUpResult = ref(null);
+const limitUpPullbackDays = ref(10);
+const limitUpEntryType = ref("neutral");
+const limitUpVolumeShrinkRatio = ref(0.5);
 
 /** POST /run?async=1 并轮询 GET …/jobs/{id}；结果 JSON 与同步 200 同形；轮询体含 async_job_persistence（与 catalog 同源） */
 const mvpAsyncRun = ref(readStoredMvpAsync());
@@ -364,27 +381,31 @@ function tradeRangeInvalidMsg() {
   return "";
 }
 
-/** 扫描 / CSV 下载在 common 基础上附加排序与并发 */
+/** 扫描 / CSV 下载在 common 基础上附加排序与并发及策略特有参数 */
 function scanQueryParams() {
   const p = commonParams();
   p.set("sort_by", scanSortBy.value);
   p.set("max_concurrent", String(Math.max(1, Math.min(20, Number(scanMaxConcurrent.value) || 8))));
+  if (scanStrategy.value === "ma_cross_scan") {
+    p.set("fast", String(fast.value));
+    p.set("slow", String(slow.value));
+  } else if (scanStrategy.value === "limit_up_pullback_scan") {
+    p.set("pullback_days", String(Math.max(1, Math.min(60, Number(limitUpPullbackDays.value) || 10))));
+    p.set("entry_type", String(limitUpEntryType.value || "neutral"));
+    p.set("volume_shrink_ratio", String(Math.max(0.1, Math.min(1.0, Number(limitUpVolumeShrinkRatio.value) || 0.5))));
+  }
   return p;
 }
 
-/** 与 POST /api/backtest/run（strategy_id=ma_cross_scan）的 params 一致；用于预览与存档 request_params */
+/** 与 POST /api/backtest/run 的扫描 params 一致；用于预览与存档 request_params */
 function scanRunParamsObject(codesRaw) {
   const qp = Object.fromEntries(commonParams().entries());
-  const fast = parseInt(qp.fast, 10);
-  const slow = parseInt(qp.slow, 10);
   const lim = parseInt(qp.limit, 10);
   const commission_rate = Number(qp.commission_rate);
   const slippage_rate = Number(qp.slippage_rate);
   const maxConcurrent = Math.max(1, Math.min(20, Number(scanMaxConcurrent.value) || 8));
   const out = {
     codes: codesRaw,
-    fast,
-    slow,
     limit: lim,
     commission_rate,
     slippage_rate,
@@ -392,6 +413,14 @@ function scanRunParamsObject(codesRaw) {
     sort_by: String(scanSortBy.value || "total_return"),
     max_concurrent: maxConcurrent,
   };
+  if (scanStrategy.value === "ma_cross_scan") {
+    out.fast = parseInt(qp.fast, 10);
+    out.slow = parseInt(qp.slow, 10);
+  } else if (scanStrategy.value === "limit_up_pullback_scan") {
+    out.pullback_days = Math.max(1, Math.min(60, Number(limitUpPullbackDays.value) || 10));
+    out.entry_type = String(limitUpEntryType.value || "neutral");
+    out.volume_shrink_ratio = Math.max(0.1, Math.min(1.0, Number(limitUpVolumeShrinkRatio.value) || 0.5));
+  }
   const s = (qp.start_date || "").trim();
   const e = (qp.end_date || "").trim();
   if (s) out.start_date = s;
@@ -404,7 +433,7 @@ function scanRunParamsObject(codesRaw) {
 
 function scanRunMvpEnvelope(codesRaw) {
   return {
-    strategy_id: "ma_cross_scan",
+    strategy_id: scanStrategy.value,
     strategy_version: "1",
     params: scanRunParamsObject(codesRaw),
   };
@@ -465,9 +494,76 @@ function downloadScanJson() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `ma_cross_scan_${Date.now()}.json`;
+  const fileTag = scanStrategy.value === "ma_cross_scan" ? "ma_cross_scan" : "limit_up_pullback_scan";
+  a.download = `${fileTag}_${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadLimitUpJson() {
+  if (!limitUpResult.value?.matches?.length) return;
+  const text = JSON.stringify(limitUpResult.value, null, 2);
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `limit_up_pullback_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function runLimitUpPullbackScan() {
+  limitUpLoading.value = true;
+  limitUpError.value = "";
+  limitUpResult.value = null;
+  const codesRaw = (limitUpCodesText.value || "").trim();
+  if (!codesRaw) {
+    limitUpError.value = "请输入代码列表";
+    limitUpLoading.value = false;
+    return;
+  }
+  const parsed = codesRaw
+    .replace(/\n/g, ",")
+    .replace(/;/g, ",")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const uniq = [...new Set(parsed)].slice(0, 200);
+  if (!uniq.length) {
+    limitUpError.value = "代码解析后为空";
+    limitUpLoading.value = false;
+    return;
+  }
+  const asOf = (limitUpAsOfDate.value || "").trim() || new Date().toISOString().slice(0, 10);
+  const minCap = limitUpMinMarketCap.value != null ? Number(limitUpMinMarketCap.value) * 1e8 : null;
+  const maxCap = limitUpMaxMarketCap.value != null ? Number(limitUpMaxMarketCap.value) * 1e8 : null;
+  const sectors = (limitUpSectorCodes.value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  try {
+    const body = await fetchJson("strategies/limit-up-pullback/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        codes: uniq.join(","),
+        as_of_date: asOf,
+        max_codes: 200,
+        min_market_cap: minCap,
+        max_market_cap: maxCap,
+        exclude_st: limitUpExcludeSt.value,
+        buy_point_types: limitUpBuyPointTypes.value,
+        sector_codes: sectors.length ? sectors : undefined,
+        require_policy: limitUpRequirePolicy.value,
+      }),
+      toast: false,
+    });
+    limitUpResult.value = body;
+  } catch (e) {
+    limitUpError.value = e?.message || "选股请求失败";
+  } finally {
+    limitUpLoading.value = false;
+  }
 }
 
 function cloneJson(obj) {
@@ -526,7 +622,32 @@ function buyHoldSingleRunParamsObject(code) {
 }
 
 function singleRunArchiveKind() {
-  return singleRunStrategy.value === "buy_hold" ? "buy_hold_single" : "ma_cross_single";
+  if (singleRunStrategy.value === "buy_hold") return "buy_hold_single";
+  if (singleRunStrategy.value === "limit_up_pullback") return "limit_up_pullback_single";
+  return "ma_cross_single";
+}
+
+function limitUpPullbackSingleRunParamsObject(code) {
+  const lim = Math.max(30, Math.min(5000, Number(limit.value) || 500));
+  const commission_rate = feeRate.value;
+  const slippage_rate = slipRate.value;
+  const out = {
+    code: String(code || "").trim(),
+    limit: lim,
+    commission_rate,
+    slippage_rate,
+    pullback_days: Math.max(1, Math.min(60, Number(limitUpPullbackDays.value) || 10)),
+    entry_type: String(limitUpEntryType.value || "neutral"),
+    volume_shrink_ratio: Math.max(0.1, Math.min(1.0, Number(limitUpVolumeShrinkRatio.value) || 0.5)),
+  };
+  const s = (tradeStartDate.value || "").trim();
+  const e = (tradeEndDate.value || "").trim();
+  if (s) out.start_date = s;
+  if (e) out.end_date = e;
+  const b = (benchmarkCode.value || "").trim().toLowerCase();
+  if (b) out.benchmark_code = b;
+  out.adjust_flag = innerAdjustFlag.value;
+  return out;
 }
 
 function singleRunMvpEnvelope(code) {
@@ -535,6 +656,13 @@ function singleRunMvpEnvelope(code) {
       strategy_id: "buy_hold",
       strategy_version: "1",
       params: buyHoldSingleRunParamsObject(code),
+    };
+  }
+  if (singleRunStrategy.value === "limit_up_pullback") {
+    return {
+      strategy_id: "limit_up_pullback",
+      strategy_version: "1",
+      params: limitUpPullbackSingleRunParamsObject(code),
     };
   }
   return {
@@ -1047,7 +1175,8 @@ async function runScan() {
       throw new Error("响应缺少 scan_result");
     }
     scanResult.value = sr;
-    await persistRun("ma_cross_scan", envelope, cloneJson(sr));
+    const archiveKind = scanStrategy.value === "ma_cross_scan" ? "ma_cross_scan" : "limit_up_pullback_scan";
+    await persistRun(archiveKind, envelope, cloneJson(sr));
   } catch (e) {
     scanError.value = e?.message || "请求失败";
   } finally {
@@ -1057,6 +1186,16 @@ async function runScan() {
 
 function fillPresetMajors() {
   scanCodesText.value = PRESET_MAJORS;
+}
+
+function fillPresetMajorsForLimitUp() {
+  limitUpCodesText.value = PRESET_MAJORS;
+}
+
+async function fillLimitUpFromWatchlist() {
+  await loadWatchlist();
+  const codes = wlItems.value.map((w) => w.code).filter(Boolean);
+  limitUpCodesText.value = codes.slice(0, 40).join("\n");
 }
 
 function signalQueryParams() {
@@ -1259,14 +1398,17 @@ async function downloadScanCsv() {
   params.set("codes", raw);
   params.set("export", "csv");
   try {
-    const res = await fetchOkResponse(`backtest/ma-cross/scan?${params.toString()}`, {
-      toast: false,
-    });
+    const path =
+      scanStrategy.value === "ma_cross_scan"
+        ? `backtest/ma-cross/scan?${params.toString()}`
+        : `backtest/limit-up-pullback/scan?${params.toString()}`;
+    const res = await fetchOkResponse(path, { toast: false });
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ma_cross_scan_${Date.now()}.csv`;
+    const fileTag = scanStrategy.value === "ma_cross_scan" ? "ma_cross_scan" : "limit_up_pullback_scan";
+    a.download = `${fileTag}_${Date.now()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
@@ -1321,7 +1463,7 @@ watch(singleRunStrategy, (v) => {
   result.value = null;
   error.value = "";
   try {
-    if (v === "buy_hold" || v === "ma_cross") {
+    if (v === "buy_hold" || v === "ma_cross" || v === "limit_up_pullback") {
       localStorage.setItem(LS_SINGLE_RUN_STRATEGY_KEY, v);
     }
   } catch {
@@ -1378,6 +1520,14 @@ onMounted(() => {
         @click="innerTab = 'scan'"
       >
         批量扫描
+      </button>
+      <button
+        type="button"
+        class="subtab"
+        :class="{ active: innerTab === 'limit_up' }"
+        @click="innerTab = 'limit_up'"
+      >
+        涨停回调选股
       </button>
     </div>
 
@@ -1511,15 +1661,37 @@ onMounted(() => {
           />
           <span>买入持有（<span class="mono">buy_hold</span>）</span>
         </label>
+        <label class="single-strategy-opt">
+          <input
+            v-model="singleRunStrategy"
+            type="radio"
+            value="limit_up_pullback"
+            data-testid="single-run-strategy-limit-up-pullback"
+          />
+          <span>涨停回调（<span class="mono">limit_up_pullback</span>）</span>
+        </label>
       </div>
       <header class="hd">
         <div>
           <p class="eyebrow">策略回测</p>
-          <h2 class="h2">{{ singleRunStrategy === "buy_hold" ? "买入持有（日线）" : "双均线（日线）" }}</h2>
+          <h2 class="h2">
+            {{
+              singleRunStrategy === "buy_hold"
+                ? "买入持有（日线）"
+                : singleRunStrategy === "limit_up_pullback"
+                  ? "涨停回调（日线）"
+                  : "双均线（日线）"
+            }}
+          </h2>
           <p v-if="singleRunStrategy === 'buy_hold'" class="sub mono">
             标的 {{ (code || "—").trim() }} · 与行情看板当前代码联动；回测与存档走
             <span class="mono">POST /api/backtest/run</span>（<span class="mono">buy_hold</span>）；全样本做多，与
             <span class="mono">GET …/buy-hold</span> 同核。买入持有无均线信号行。
+          </p>
+          <p v-else-if="singleRunStrategy === 'limit_up_pullback'" class="sub mono">
+            标的 {{ (code || "—").trim() }} · 涨停后回调买点触发建仓；回测与存档前试算走
+            <span class="mono">POST /api/backtest/run</span>（<span class="mono">limit_up_pullback</span>）；与
+            <span class="mono">GET …/limit-up-pullback</span> 同核。
           </p>
           <p v-else class="sub mono">
             标的 {{ (code || "—").trim() }} · 与行情看板当前代码联动；回测与存档前试算走
@@ -1601,8 +1773,8 @@ onMounted(() => {
             min="1"
             max="120"
             class="inp mono"
-            :disabled="singleRunStrategy === 'buy_hold'"
-            :title="singleRunStrategy === 'buy_hold' ? '买入持有不使用快慢线' : ''"
+            :disabled="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback'"
+            :title="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback' ? '当前策略不使用快慢线' : ''"
           />
         </label>
         <label class="field">
@@ -1613,10 +1785,41 @@ onMounted(() => {
             min="2"
             max="500"
             class="inp mono"
-            :disabled="singleRunStrategy === 'buy_hold'"
-            :title="singleRunStrategy === 'buy_hold' ? '买入持有不使用快慢线' : ''"
+            :disabled="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback'"
+            :title="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback' ? '当前策略不使用快慢线' : ''"
           />
         </label>
+        <template v-if="singleRunStrategy === 'limit_up_pullback'">
+          <label class="field">
+            <span class="lbl">回调观察天数</span>
+            <input
+              v-model.number="limitUpPullbackDays"
+              type="number"
+              min="1"
+              max="60"
+              class="inp mono"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">买点类型</span>
+            <select v-model="limitUpEntryType" class="inp mono">
+              <option value="aggressive">激进（涨停日收盘价）</option>
+              <option value="neutral">中性（实体 1/2）</option>
+              <option value="conservative">保守（涨停日开盘价）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="lbl">缩量比例</span>
+            <input
+              v-model.number="limitUpVolumeShrinkRatio"
+              type="number"
+              min="0.1"
+              max="1.0"
+              step="0.1"
+              class="inp mono"
+            />
+          </label>
+        </template>
         <label class="field">
           <span class="lbl">K 根数</span>
           <input v-model.number="limit" type="number" min="30" max="5000" class="inp mono" />
@@ -1770,6 +1973,134 @@ onMounted(() => {
       <p v-if="result?.note" class="note">{{ result.note }}</p>
     </template>
 
+    <template v-else-if="innerTab === 'limit_up'">
+      <header class="hd">
+        <div>
+          <p class="eyebrow">涨停回调选股</p>
+          <h2 class="h2">涨停回调选股扫描</h2>
+          <p class="sub">
+            基于 A股涨停回调选股策略 v2.0 的五层过滤技术面选股；调用
+            <span class="mono">POST /api/strategies/limit-up-pullback/scan</span>。
+          </p>
+        </div>
+        <div class="hd-actions">
+          <button
+            type="button"
+            class="run gold"
+            :disabled="limitUpLoading"
+            @click="runLimitUpPullbackScan"
+          >
+            {{ limitUpLoading ? "选股中…" : "开始选股" }}
+          </button>
+          <button
+            type="button"
+            class="run secondary"
+            :disabled="!limitUpResult?.matches?.length"
+            @click="downloadLimitUpJson"
+          >
+            下载 JSON
+          </button>
+        </div>
+      </header>
+
+      <div class="form">
+        <label class="field wide">
+          <span class="lbl">基准日期</span>
+          <input v-model="limitUpAsOfDate" type="date" class="inp mono" />
+        </label>
+        <label class="field">
+          <span class="lbl">最小市值（亿）</span>
+          <input v-model.number="limitUpMinMarketCap" type="number" min="0" class="inp mono" />
+        </label>
+        <label class="field">
+          <span class="lbl">最大市值（亿）</span>
+          <input v-model.number="limitUpMaxMarketCap" type="number" min="0" class="inp mono" />
+        </label>
+        <label class="field wide">
+          <span class="lbl">买点类型</span>
+          <span class="checkbox-row">
+            <label><input v-model="limitUpBuyPointTypes" type="checkbox" value="aggressive" /> 激进型</label>
+            <label><input v-model="limitUpBuyPointTypes" type="checkbox" value="neutral" /> 中性型</label>
+            <label><input v-model="limitUpBuyPointTypes" type="checkbox" value="conservative" /> 保守型</label>
+          </span>
+        </label>
+        <label class="field wide">
+          <span class="lbl">板块代码过滤（逗号分隔，可选）</span>
+          <input
+            v-model="limitUpSectorCodes"
+            type="text"
+            class="inp mono"
+            placeholder="如 AI,新能源"
+            spellcheck="false"
+          />
+        </label>
+        <label class="field wide policy-check">
+          <input v-model="limitUpRequirePolicy" type="checkbox" />
+          <span>要求近14天内有政策催化</span>
+        </label>
+        <label class="field wide st-check">
+          <input v-model="limitUpExcludeSt" type="checkbox" />
+          <span>排除 ST 股票</span>
+        </label>
+      </div>
+
+      <div class="codes-toolbar">
+        <label class="block-label">代码列表（每行一个或逗号分隔）</label>
+        <div class="codes-toolbar-actions">
+          <button type="button" class="linkish" @click="fillPresetMajorsForLimitUp">填入主要指数</button>
+          <button type="button" class="linkish" @click="fillLimitUpFromWatchlist">填入自选</button>
+        </div>
+      </div>
+      <textarea v-model="limitUpCodesText" class="codes-ta mono" rows="5" spellcheck="false" />
+
+      <div v-if="limitUpError" class="err">{{ limitUpError }}</div>
+
+      <p v-if="limitUpResult?.matches?.length" class="scan-meta mono">
+        <span>基准 {{ limitUpResult.as_of_date }}</span>
+        <span class="scan-meta-sep">·</span>
+        <span>扫描 {{ limitUpResult.total_scanned }} 只</span>
+        <span class="scan-meta-sep">·</span>
+        <span>命中 {{ limitUpResult.matches.length }} 只</span>
+      </p>
+
+      <div v-if="limitUpResult?.matches?.length" class="scan-wrap">
+        <table class="scan-table">
+          <thead>
+            <tr>
+              <th>代码</th>
+              <th>名称</th>
+              <th>买点</th>
+              <th>买点价</th>
+              <th>止损价</th>
+              <th>涨停日</th>
+              <th>当前价</th>
+              <th>匹配规则</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in limitUpResult.matches" :key="row.code">
+              <td class="mono">{{ row.code }}</td>
+              <td>{{ row.name }}</td>
+              <td>
+                {{
+                  row.buy_point_type === "aggressive"
+                    ? "激进"
+                    : row.buy_point_type === "neutral"
+                      ? "中性"
+                      : "保守"
+                }}
+              </td>
+              <td class="mono">{{ row.buy_point_price?.toFixed?.(2) ?? "—" }}</td>
+              <td class="mono">{{ row.stop_loss_price?.toFixed?.(2) ?? "—" }}</td>
+              <td class="mono">{{ row.limit_up_date }}</td>
+              <td class="mono">{{ row.current_close?.toFixed?.(2) ?? "—" }}</td>
+              <td class="mono sm">{{ row.matched_rules?.join("；") }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
     <template v-else>
       <header class="hd">
         <div>
@@ -1777,11 +2108,12 @@ onMounted(() => {
           <h2 class="h2">多标的批量扫描</h2>
           <p class="sub">
             相同参数下对列表逐只回测；排序含收益、超额、夏普、Sortino、Calmar、年化、胜率、均段收益等（失败行沉底）。
-            JSON 预览与存档前试算走 <span class="mono">POST /api/backtest/run</span>（<span class="mono">ma_cross_scan</span>，<span
+            JSON 预览与存档前试算走 <span class="mono">POST /api/backtest/run</span>（<span class="mono">ma_cross_scan</span> 或
+            <span class="mono">limit_up_pullback_scan</span>，<span
               class="mono"
               >max_codes={{ SCAN_CODES_FROM_WL_MAX }}</span
             >
-            与自选上限一致）；下载 CSV 仍直连 <span class="mono">GET …/ma-cross/scan?export=csv</span>。
+            与自选上限一致）；下载 CSV 仍直连对应 <span class="mono">GET …/scan?export=csv</span>。
           </p>
         </div>
         <div class="hd-actions">
@@ -1808,14 +2140,54 @@ onMounted(() => {
       </header>
 
       <div class="form">
-        <label class="field">
-          <span class="lbl">快线</span>
-          <input v-model.number="fast" type="number" min="1" max="120" class="inp mono" />
+        <label class="field wide">
+          <span class="lbl">扫描策略</span>
+          <select v-model="scanStrategy" class="inp mono">
+            <option value="ma_cross_scan">双均线（ma_cross_scan）</option>
+            <option value="limit_up_pullback_scan">涨停回调（limit_up_pullback_scan）</option>
+          </select>
         </label>
-        <label class="field">
-          <span class="lbl">慢线</span>
-          <input v-model.number="slow" type="number" min="2" max="500" class="inp mono" />
-        </label>
+        <template v-if="scanStrategy === 'ma_cross_scan'">
+          <label class="field">
+            <span class="lbl">快线</span>
+            <input v-model.number="fast" type="number" min="1" max="120" class="inp mono" />
+          </label>
+          <label class="field">
+            <span class="lbl">慢线</span>
+            <input v-model.number="slow" type="number" min="2" max="500" class="inp mono" />
+          </label>
+        </template>
+        <template v-if="scanStrategy === 'limit_up_pullback_scan'">
+          <label class="field">
+            <span class="lbl">回调观察天数</span>
+            <input
+              v-model.number="limitUpPullbackDays"
+              type="number"
+              min="1"
+              max="60"
+              class="inp mono"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">买点类型</span>
+            <select v-model="limitUpEntryType" class="inp mono">
+              <option value="aggressive">激进（涨停日收盘价）</option>
+              <option value="neutral">中性（实体 1/2）</option>
+              <option value="conservative">保守（涨停日开盘价）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="lbl">缩量比例</span>
+            <input
+              v-model.number="limitUpVolumeShrinkRatio"
+              type="number"
+              min="0.1"
+              max="1.0"
+              step="0.1"
+              class="inp mono"
+            />
+          </label>
+        </template>
         <label class="field">
           <span class="lbl">K 根数</span>
           <input v-model.number="limit" type="number" min="30" max="5000" class="inp mono" />
@@ -1869,8 +2241,14 @@ onMounted(() => {
       <div v-if="scanError" class="err">{{ scanError }}</div>
 
       <p v-if="scanResult?.items?.length" class="scan-meta mono">
-        <span>MA {{ scanResult.fast_period }}/{{ scanResult.slow_period }}</span>
-        <span class="scan-meta-sep">·</span>
+        <template v-if="scanResult.fast_period || scanResult.slow_period">
+          <span>MA {{ scanResult.fast_period }}/{{ scanResult.slow_period }}</span>
+          <span class="scan-meta-sep">·</span>
+        </template>
+        <template v-else>
+          <span>涨停回调扫描</span>
+          <span class="scan-meta-sep">·</span>
+        </template>
         <span>K {{ scanResult.limit }}</span>
         <span class="scan-meta-sep">·</span>
         <span>排序 {{ scanSortLabel(scanResult.sort_by) }}</span>

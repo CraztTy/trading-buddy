@@ -339,6 +339,14 @@ async def run(args: argparse.Namespace) -> None:
     try:
         codes: list[str] | None = list(args.codes) if args.codes else None
 
+        # --mode all/klines 未显式指定 --days 时，自动扩展为 20 年历史窗口
+        effective_days = args.days
+        if args.mode in ("all", "klines") and args.days == 30:
+            effective_days = 7300
+            logger.info(
+                f"--mode {args.mode} 未显式指定 --days，自动使用 20 年历史窗口 ({effective_days} 天)"
+            )
+
         if args.mode == "calendar":
             if provider != "baostock":
                 raise SystemExit(
@@ -389,7 +397,7 @@ async def run(args: argparse.Namespace) -> None:
                 await fetch_daily_klines(
                     provider,
                     codes,
-                    days=args.days,
+                    days=effective_days,
                     limit=args.limit,
                     delay_sec=args.baostock_delay,
                     incremental=True,
@@ -411,7 +419,7 @@ async def run(args: argparse.Namespace) -> None:
                     await fetch_daily_klines(
                         provider,
                         codes,
-                        days=args.days,
+                        days=effective_days,
                         limit=args.limit,
                         delay_sec=args.baostock_delay,
                         incremental=args.incremental,
@@ -476,7 +484,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="增量模式下向前多取若干自然日，覆盖长假与修正已入库尾部",
     )
     p.add_argument("--codes", nargs="+", help="仅拉指定代码（K线模式）")
-    p.add_argument("--days", type=int, default=30, help="日K向前天数（相对结束交易日）")
+    p.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help="日K向前天数（相对结束交易日）；--mode all 未显式指定时自动扩展为 7300（约20年）",
+    )
     p.add_argument(
         "--index-days",
         type=int,

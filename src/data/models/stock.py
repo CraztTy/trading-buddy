@@ -42,6 +42,8 @@ class StockInfo(BaseModel):
     industry: Optional[str] = Field(None, description="所属行业")
     sector_code: Optional[str] = Field(None, description="板块代码（概念/行业）")
     is_trading: bool = Field(True, description="是否交易中（未停牌）")
+    market_cap: Optional[float] = Field(None, description="总市值（元）")
+    float_cap: Optional[float] = Field(None, description="流通市值（元）")
 
 
 class KLine(BaseModel):
@@ -55,11 +57,12 @@ class KLine(BaseModel):
     high: float = Field(..., description="最高价")
     low: float = Field(..., description="最低价")
     close: float = Field(..., description="收盘价")
+    pre_close: Optional[float] = Field(None, description="前收盘价")
     volume: int = Field(..., description="成交量")
     amount: float = Field(..., description="成交额")
     turnover_rate: Optional[float] = Field(None, description="换手率")
     adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
-    
+
     # 预计算字段（可选）
     change: Optional[float] = Field(None, description="涨跌额")
     pct_change: Optional[float] = Field(None, description="涨跌幅")

@@ -915,3 +915,205 @@ async def test_backtest_catalog_lists_registered_strategies(http_test_client: Te
     assert bh["response_shape"] == "result"
     assert bh.get("archive_kind") == "buy_hold_single"
     assert bh["get_equivalent_paths"] == ["/api/backtest/buy-hold"]
+    lu = next(s for s in b["strategies"] if s["strategy_id"] == "limit_up_pullback")
+    assert lu["response_shape"] == "result"
+    assert lu.get("archive_kind") == "limit_up_pullback_single"
+    assert lu["get_equivalent_paths"] == ["/api/backtest/limit-up-pullback"]
+    lu_scan = next(s for s in b["strategies"] if s["strategy_id"] == "limit_up_pullback_scan")
+    assert lu_scan["response_shape"] == "scan_result"
+    assert lu_scan.get("archive_kind") == "limit_up_pullback_scan"
+    assert lu_scan["get_equivalent_paths"] == ["/api/backtest/limit-up-pullback/scan"]
+
+
+def _trend_bar(code: str, d: date, close: float, vol: int = 1000) -> KLine:
+    o = close - 0.05
+    return KLine(
+        code=code,
+        trade_date=d,
+        open=o,
+        high=close + 0.05,
+        low=o - 0.05,
+        close=close,
+        volume=vol,
+        amount=close * vol,
+        turnover_rate=None,
+        pct_change=None,
+    )
+
+
+async def _seed_limit_up_pullback(
+    empty_sqlite_db,
+    code: str,
+    base: date,
+    n_bars: int = 100,
+) -> None:
+    """构造满足涨停回调买点条件的日K序列并入库。"""
+    rows: list[KLine] = []
+    # 前段：缓慢上升，建立多头排列
+    for i in range(40):
+        rows.append(_trend_bar(code, base + timedelta(days=i), 10.0 + i * 0.02))
+    # 中段：横盘
+    for i in range(20):
+        rows.append(_trend_bar(code, base + timedelta(days=40 + i), 10.8))
+    # 涨停日（从 10.8 涨 10% 到 11.88）
+    lu_idx = len(rows)
+    rows.append(
+        KLine(
+            code=code,
+            trade_date=base + timedelta(days=60),
+            open=10.8,
+            high=11.9,
+            low=10.8,
+            close=11.88,
+            pre_close=10.8,
+            volume=2000,
+            amount=11.88 * 2000,
+            turnover_rate=None,
+            pct_change=10.0,
+        )
+    )
+    # 回调：收盘价在激进买点 11.88±2%（11.64~12.12）内，缩量
+    for i in range(8):
+        rows.append(_trend_bar(code, base + timedelta(days=61 + i), 11.75, vol=800))
+    # 后段：继续上涨，让策略能触发止盈或持有到期
+    remaining = n_bars - len(rows)
+    for i in range(remaining):
+        rows.append(_trend_bar(code, base + timedelta(days=69 + i), 11.8 + i * 0.05, vol=900))
+
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+
+async def test_limit_up_pullback_backtest_returns_metrics(http_test_client, empty_sqlite_db):
+    code = "sh.lupb1"
+    base = date(2025, 3, 1)
+    await _seed_limit_up_pullback(empty_sqlite_db, code, base, n_bars=100)
+
+    r = http_test_client.get(
+        "/api/backtest/limit-up-pullback",
+        params={"code": code, "limit": 100, "entry_type": "aggressive"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["code"] == code
+    assert body["bars_used"] == 100
+    assert "total_return_pct" in body
+    assert isinstance(body.get("equity_curve"), list)
+    assert len(body["equity_curve"]) >= 1
+
+
+async def test_limit_up_pullback_backtest_entry_type_invalid_400(http_test_client: TestClient):
+    r = http_test_client.get(
+        "/api/backtest/limit-up-pullback",
+        params={"code": "sh.x", "entry_type": "invalid"},
+    )
+    assert r.status_code == 400
+
+
+async def test_limit_up_pullback_scan_json_two_codes(http_test_client, empty_sqlite_db):
+    base = date(2025, 3, 1)
+    for code in ("sh.lus1", "sh.lus2"):
+        await _seed_limit_up_pullback(empty_sqlite_db, code, base, n_bars=100)
+
+    r = http_test_client.get(
+        "/api/backtest/limit-up-pullback/scan",
+        params={
+            "codes": "sh.lus1,sh.lus2",
+            "limit": 100,
+            "entry_type": "aggressive",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["fast_period"] == 0
+    assert body["slow_period"] == 0
+    assert len(body["items"]) == 2
+    codes = {it["code"] for it in body["items"]}
+    assert codes == {"sh.lus1", "sh.lus2"}
+    for it in body["items"]:
+        assert it.get("error") is None
+        assert it["bars_used"] == 100
+        assert "total_return_pct" in it
+
+
+async def test_limit_up_pullback_scan_csv_export(http_test_client, empty_sqlite_db):
+    code = "sh.lucsv"
+    base = date(2025, 3, 1)
+    await _seed_limit_up_pullback(empty_sqlite_db, code, base, n_bars=100)
+
+    r = http_test_client.get(
+        "/api/backtest/limit-up-pullback/scan",
+        params={"codes": code, "limit": 100, "entry_type": "aggressive", "export": "csv"},
+    )
+    assert r.status_code == 200
+    assert "text/csv" in r.headers.get("content-type", "")
+    raw = r.content
+    assert raw.startswith(b"\xef\xbb\xbf")
+    assert b"sh.lucsv" in raw
+
+
+async def test_limit_up_pullback_scan_invalid_sort_by_400(http_test_client: TestClient):
+    r = http_test_client.get(
+        "/api/backtest/limit-up-pullback/scan",
+        params={"codes": "sh.a", "sort_by": "not_valid"},
+    )
+    assert r.status_code == 400
+    assert "sort_by" in r.json().get("detail", "")
+
+
+async def test_backtest_run_mvp_limit_up_pullback_matches_get(http_test_client, empty_sqlite_db):
+    code = "sh.lurun"
+    base = date(2025, 3, 1)
+    await _seed_limit_up_pullback(empty_sqlite_db, code, base, n_bars=100)
+
+    g = http_test_client.get(
+        "/api/backtest/limit-up-pullback",
+        params={"code": code, "limit": 100, "entry_type": "aggressive"},
+    )
+    assert g.status_code == 200
+    p = http_test_client.post(
+        "/api/backtest/run",
+        json={
+            "strategy_id": "limit_up_pullback",
+            "strategy_version": "1",
+            "params": {"code": code, "limit": 100, "entry_type": "aggressive"},
+        },
+    )
+    assert p.status_code == 200
+    body = p.json()
+    assert body["engine_version"] == "0.1"
+    assert body["strategy_id"] == "limit_up_pullback"
+    assert isinstance(body.get("assumptions"), list)
+    assert body["result"] == g.json()
+    assert body.get("scan_result") is None
+
+
+async def test_backtest_run_mvp_limit_up_pullback_scan_matches_get(http_test_client, empty_sqlite_db):
+    base = date(2025, 3, 1)
+    for code in ("sh.lurun1", "sh.lurun2"):
+        await _seed_limit_up_pullback(empty_sqlite_db, code, base, n_bars=100)
+
+    g = http_test_client.get(
+        "/api/backtest/limit-up-pullback/scan",
+        params={"codes": "sh.lurun1,sh.lurun2", "limit": 100, "entry_type": "aggressive"},
+    )
+    assert g.status_code == 200
+    p = http_test_client.post(
+        "/api/backtest/run",
+        json={
+            "strategy_id": "limit_up_pullback_scan",
+            "strategy_version": "1",
+            "params": {
+                "codes": "sh.lurun1,sh.lurun2",
+                "limit": 100,
+                "entry_type": "aggressive",
+            },
+        },
+    )
+    assert p.status_code == 200
+    body = p.json()
+    assert body["engine_version"] == "0.1"
+    assert body["strategy_id"] == "limit_up_pullback_scan"
+    assert isinstance(body.get("assumptions"), list)
+    assert body.get("result") is None
+    assert body["scan_result"] == g.json()

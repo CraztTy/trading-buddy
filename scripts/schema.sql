@@ -60,7 +60,33 @@ CREATE TABLE IF NOT EXISTS daily_kline (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='日线K线数据';
 
 -- =============================================
--- 3. 分钟K线数据表（可选，后续扩展）
+-- 3. 个股板块关联表
+-- =============================================
+CREATE TABLE IF NOT EXISTS stock_sector (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    stock_code VARCHAR(20) NOT NULL COMMENT '股票代码',
+    sector_code VARCHAR(20) NOT NULL COMMENT '板块代码',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_stock_sector (stock_code, sector_code),
+    INDEX idx_sector_code (sector_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个股板块关联';
+
+-- =============================================
+-- 4. 政策事件表
+-- =============================================
+CREATE TABLE IF NOT EXISTS policy_event (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    sector_code VARCHAR(20) COMMENT '关联板块代码',
+    title VARCHAR(200) NOT NULL COMMENT '事件标题',
+    source VARCHAR(50) COMMENT '来源',
+    event_date DATE COMMENT '事件日期',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_sector_code (sector_code),
+    INDEX idx_event_date (event_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='政策催化事件';
+
+-- =============================================
+-- 5. 分钟K线数据表（可选，后续扩展）
 -- =============================================
 CREATE TABLE IF NOT EXISTS minute_kline (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

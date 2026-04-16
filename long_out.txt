@@ -1,0 +1,121 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-8.3.0, pluggy-1.6.0 -- C:\Python314\python.exe
+cachedir: .pytest_cache
+benchmark: 5.2.3 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: C:\Users\Administrator\Desktop\trading-buddy\trading-buddy
+configfile: pytest.ini
+plugins: anyio-4.12.1, langsmith-0.7.18, asyncio-0.24.0, benchmark-5.2.3, cov-6.0.0, mock-3.15.1, xdist-3.8.0
+asyncio: mode=Mode.AUTO, default_loop_scope=function
+collecting ... collected 1 item
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic FAILED [100%]
+
+================================== FAILURES ===================================
+________________ test_strategies_limit_up_pullback_scan_basic _________________
+
+http_test_client = <starlette.testclient.TestClient object at 0x000002113F2D3380>
+empty_sqlite_db = <src.data.storage.database.Database object at 0x000002113D9A5400>
+
+    async def test_strategies_limit_up_pullback_scan_basic(http_test_client, empty_sqlite_db):
+        from src.data.storage import StockRepository
+        from src.data.models import StockInfo, Market
+    
+        code = "sh.lu1"
+        base = date(2025, 9, 1)
+        rows = [_bar(code, base + timedelta(days=i), 10.0 + (i % 3) * 0.1) for i in range(120)]
+        # ÖÆÔìÒ»¸öÕÇÍ£ÈÕ£¨µ¹ÊýµÚ8Ìì£©
+        lu_idx = len(rows) - 8
+        rows[lu_idx].pre_close = 10.0
+        rows[lu_idx].open = 10.0
+        rows[lu_idx].close = 11.0
+        rows[lu_idx].high = 11.1
+        rows[lu_idx].low = 9.9
+        rows[lu_idx].volume = 2000
+        rows[lu_idx - 1].volume = 1000
+        # °ÑÕÇÍ£ºóµ÷Õûµ½ÖÐÐÔÂòµã 10.5 ¸½½ü
+        for offset in range(1, 8):
+            rows[lu_idx + offset].close = 10.5 + (offset % 2) * 0.02
+            rows[lu_idx + offset].open = rows[lu_idx + offset].close - 0.01
+            rows[lu_idx + offset].high = rows[lu_idx + offset].close + 0.03
+            rows[lu_idx + offset].low = rows[lu_idx + offset].close - 0.03
+            rows[lu_idx + offset].volume = 800
+    
+        async with empty_sqlite_db.session() as session:
+            await KlineRepository(session).bulk_insert(rows)
+            await StockRepository(session).bulk_upsert([
+                StockInfo(
+                    code=code,
+                    name="ÕÇÍ£²âÊÔ",
+                    market=Market.SH,
+>                   stock_type=StockType.COMMON,  # type: ignore[arg-type]
+                    market_cap=100_000_000_000,
+                    is_trading=True,
+                )
+            ])
+E           NameError: name 'StockType' is not defined
+
+tests\test_strategies_api_http.py:221: NameError
+---------------------------- Captured stdout setup ----------------------------
+Starting Trading Buddy API on 0.0.0.0:8000
+Database mode: sqlite, Redis enabled: False
+---------------------------- Captured stdout call -----------------------------
+[32m2026-04-15 13:35:44[0m | [1mINFO    [0m | [36msrc.data.storage.repositories[0m:[36mbulk_insert[0m - [1mBulk upserted 120 klines[0m | [2mrid=-[0m
+-------------------------- Captured stdout teardown ---------------------------
+Trading Buddy API shutdown complete
+============================== warnings summary ===============================
+..\..\..\..\..\Python314\Lib\site-packages\pytest_asyncio\plugin.py:179: 442 warnings
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:179: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(obj) or inspect.isasyncgenfunction(obj)
+
+..\..\..\..\..\Python314\Lib\site-packages\pytest_asyncio\plugin.py:450: 10 warnings
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:450: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(func)
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:1056: DeprecationWarning: 'asyncio.get_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    return asyncio.get_event_loop_policy()
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:773: DeprecationWarning: 'asyncio.get_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    _restore_event_loop_policy(asyncio.get_event_loop_policy()),
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:1028: DeprecationWarning: 'asyncio.set_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    asyncio.set_event_loop_policy(new_loop_policy)
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:1029: DeprecationWarning: 'asyncio.get_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:788: DeprecationWarning: 'asyncio.get_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    policy = asyncio.get_event_loop_policy()
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\starlette\formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+tests/test_strategies_api_http.py: 81 warnings
+  C:\Python314\Lib\site-packages\fastapi\routing.py:233: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    is_coroutine = asyncio.iscoroutinefunction(dependant.call)
+
+tests/test_strategies_api_http.py: 87 warnings
+  C:\Python314\Lib\site-packages\starlette\_utils.py:40: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(obj) or (callable(obj) and asyncio.iscoroutinefunction(obj.__call__))
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:833: DeprecationWarning: 'asyncio.get_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    policy = asyncio.get_event_loop_policy()
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:857: DeprecationWarning: 'asyncio.set_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    asyncio.set_event_loop_policy(previous_policy)
+
+tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+  C:\Python314\Lib\site-packages\pytest_asyncio\plugin.py:869: DeprecationWarning: 'asyncio.get_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    policy = asyncio.get_event_loop_policy()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_strategies_api_http.py::test_strategies_limit_up_pullback_scan_basic
+======================= 1 failed, 629 warnings in 0.82s =======================

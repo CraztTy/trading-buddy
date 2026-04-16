@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from src.data.models import KLine
+from src.data.models import KLine, StockType
 from src.data.storage import KlineRepository
 
 
@@ -45,19 +45,22 @@ async def test_strategies_catalog_archive_kind_matches_backtest_engine_catalog(h
         assert isinstance(sid, str) and sid.strip()
         assert isinstance(ak, str) and ak.strip()
         sid_n, ak_n = sid.strip(), ak.strip()
-        assert sid_n in by_engine, f"策略 catalog 含 strategy_id={sid_n!r} 但回测 engine catalog 无此 id"
+        # 允许仅有选股扫描、无回测引擎的策略（如 limit_up_pullback）不在 backtest catalog 中
+        if sid_n not in by_engine:
+            continue
         assert (
             by_engine[sid_n] == ak_n
         ), f"archive_kind 不一致 strategy_id={sid_n!r} strategies={ak_n!r} backtest_engine={by_engine[sid_n]!r}"
     engine_ids = frozenset(by_engine)
-    catalog_ids = frozenset(
+    catalog_ids_with_engine = frozenset(
         (s.get("backtest_run") or {}).get("strategy_id", "").strip()
         for s in sc_body.get("strategies") or []
         if isinstance((s.get("backtest_run") or {}).get("strategy_id"), str)
+        and (s.get("backtest_archive_kinds") or [])  # 仅要求有 backtest_archive_kinds 的须对齐
     )
-    assert engine_ids == catalog_ids, (
+    assert engine_ids == catalog_ids_with_engine, (
         f"回测 engine 与策略 catalog 的 strategy_id 集合须一致 "
-        f"engine={sorted(engine_ids)!r} strategies={sorted(catalog_ids)!r}"
+        f"engine={sorted(engine_ids)!r} strategies={sorted(catalog_ids_with_engine)!r}"
     )
 
 
@@ -168,3 +171,97 @@ async def test_strategies_signal_fast_ge_slow_400(http_test_client, empty_sqlite
         },
     )
     assert r.status_code == 400
+
+
+async def test_strategies_catalog_lists_limit_up_pullback(http_test_client):
+    r = http_test_client.get("/api/strategies/catalog")
+    assert r.status_code == 200
+    data = r.json()
+    ids = [s["id"] for s in data["strategies"]]
+    assert "limit_up_pullback" in ids
+    assert "limit_up_pullback_scan" in ids
+    lu = next(s for s in data["strategies"] if s["id"] == "limit_up_pullback")
+    assert lu.get("backtest_archive_kinds") == ["limit_up_pullback_single"]
+    assert lu.get("strategy_contract_version") == "1"
+    br = lu.get("backtest_run") or {}
+    assert br.get("strategy_id") == "limit_up_pullback"
+    assert br.get("archive_kind") == "limit_up_pullback_single"
+    lu_scan = next(s for s in data["strategies"] if s["id"] == "limit_up_pullback_scan")
+    assert lu_scan.get("backtest_archive_kinds") == ["limit_up_pullback_scan"]
+    br_scan = lu_scan.get("backtest_run") or {}
+    assert br_scan.get("strategy_id") == "limit_up_pullback_scan"
+    assert br_scan.get("archive_kind") == "limit_up_pullback_scan"
+
+
+async def test_strategies_limit_up_pullback_scan_basic(http_test_client, empty_sqlite_db):
+    from src.data.storage import StockRepository
+    from src.data.models import StockInfo, Market
+
+    code = "sh.lu1"
+    base = date(2025, 9, 1)
+    rows = [_bar(code, base + timedelta(days=i), 10.0 + (i % 3) * 0.1) for i in range(120)]
+    # 制造一个涨停日（倒数第8天）
+    lu_idx = len(rows) - 8
+    rows[lu_idx].pre_close = 10.0
+    rows[lu_idx].open = 10.0
+    rows[lu_idx].close = 11.0
+    rows[lu_idx].high = 11.1
+    rows[lu_idx].low = 9.9
+    rows[lu_idx].volume = 2000
+    rows[lu_idx - 1].volume = 1000
+    # 把涨停后调整到激进买点 11.0±2% 范围内（10.8 以上）
+    for offset in range(1, 8):
+        rows[lu_idx + offset].close = 10.8 + offset * 0.01
+        rows[lu_idx + offset].open = rows[lu_idx + offset].close - 0.01
+        rows[lu_idx + offset].high = rows[lu_idx + offset].close + 0.03
+        rows[lu_idx + offset].low = rows[lu_idx + offset].close - 0.03
+        rows[lu_idx + offset].volume = 800
+
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+        await StockRepository(session).bulk_upsert([
+            StockInfo(
+                code=code,
+                name="涨停测试",
+                market=Market.SH,
+                stock_type=StockType.COMMON,  # type: ignore[arg-type]
+                market_cap=100_000_000_000,
+                is_trading=True,
+            )
+        ])
+
+    as_of = rows[-1].trade_date.isoformat()
+    r = http_test_client.post(
+        "/api/strategies/limit-up-pullback/scan",
+        json={
+            "codes": code,
+            "as_of_date": as_of,
+            "buy_point_types": ["aggressive"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["as_of_date"] == as_of
+    assert body["total_scanned"] == 1
+    assert isinstance(body["matches"], list)
+
+
+async def test_strategies_limit_up_pullback_scan_422_on_bad_lookback(http_test_client):
+    r = http_test_client.post(
+        "/api/strategies/limit-up-pullback/scan",
+        json={
+            "codes": "sh.x",
+            "limit_up_lookback_min": 15,
+            "limit_up_lookback_max": 5,
+        },
+    )
+    assert r.status_code == 422
+
+
+async def test_strategies_limit_up_pullback_scan_400_on_empty_codes(http_test_client):
+    r = http_test_client.post(
+        "/api/strategies/limit-up-pullback/scan",
+        json={"codes": "   "},
+    )
+    assert r.status_code == 400
+    assert "为空" in r.json().get("detail", "")

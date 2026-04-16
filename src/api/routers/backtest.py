@@ -15,12 +15,18 @@ from starlette.responses import JSONResponse, Response
 from src.backtest.runner import (
     ENGINE_VERSION,
     STRATEGY_ID_BUY_HOLD,
+    STRATEGY_ID_LIMIT_UP_PULLBACK,
+    STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
     STRATEGY_ID_MA_CROSS,
     STRATEGY_ID_MA_CROSS_SCAN,
     build_ma_cross_scan_assumptions,
     execute_buy_hold_single,
+    execute_limit_up_pullback_scan,
+    execute_limit_up_pullback_single,
     execute_ma_cross_scan,
     execute_ma_cross_single,
+    limit_up_pullback_scan_items,
+    parse_scan_codes,
 )
 from src.strategies import compute_ma_cross_signal
 from src.backtest.scan import ma_cross_scan_csv_bytes, parse_scan_codes
@@ -179,6 +185,53 @@ class BuyHoldRunParamsBody(BaseModel):
     slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
     benchmark_code: str | None = None
     adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
+
+
+class LimitUpPullbackRunParamsBody(BaseModel):
+    """POST /api/backtest/run 在 strategy_id=limit_up_pullback 时的 params 形状。"""
+
+    code: str
+    limit: int = Field(500, ge=30, le=5000)
+    start_date: date | None = None
+    end_date: date | None = None
+    commission_rate: float = Field(0.0, ge=0.0, le=0.05)
+    slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
+    benchmark_code: str | None = None
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
+    pullback_days: int = Field(10, ge=1, le=60)
+    entry_type: str = Field("neutral", min_length=1, max_length=32)
+    volume_shrink_ratio: float = Field(0.5, ge=0.1, le=1.0)
+
+    @model_validator(mode="after")
+    def _check_entry_type(self) -> "LimitUpPullbackRunParamsBody":
+        if self.entry_type not in {"aggressive", "neutral", "conservative"}:
+            raise ValueError("entry_type 须为 aggressive / neutral / conservative 之一")
+        return self
+
+
+class LimitUpPullbackScanRunParamsBody(BaseModel):
+    """POST /api/backtest/run 在 strategy_id=limit_up_pullback_scan 时的 params 形状。"""
+
+    codes: str = Field(..., description="逗号或换行分隔的标的列表")
+    limit: int = Field(500, ge=30, le=5000)
+    start_date: date | None = None
+    end_date: date | None = None
+    commission_rate: float = Field(0.0, ge=0.0, le=0.05)
+    slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
+    max_codes: int = Field(25, ge=1, le=40)
+    sort_by: str = Field("total_return", min_length=1, max_length=64)
+    max_concurrent: int = Field(8, ge=1, le=20)
+    benchmark_code: str | None = None
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
+    pullback_days: int = Field(10, ge=1, le=60)
+    entry_type: str = Field("neutral", min_length=1, max_length=32)
+    volume_shrink_ratio: float = Field(0.5, ge=0.1, le=1.0)
+
+    @model_validator(mode="after")
+    def _check_entry_type(self) -> "LimitUpPullbackScanRunParamsBody":
+        if self.entry_type not in {"aggressive", "neutral", "conservative"}:
+            raise ValueError("entry_type 须为 aggressive / neutral / conservative 之一")
+        return self
 
 
 class BacktestRunMvpRequest(BaseModel):
@@ -376,7 +429,13 @@ async def _cancel_memory_job(job_id: str) -> Literal["absent", "ok", "bad_state"
 
 
 def _validate_mvp_request(body: BacktestRunMvpRequest) -> None:
-    supported = (STRATEGY_ID_MA_CROSS, STRATEGY_ID_BUY_HOLD, STRATEGY_ID_MA_CROSS_SCAN)
+    supported = (
+        STRATEGY_ID_MA_CROSS,
+        STRATEGY_ID_BUY_HOLD,
+        STRATEGY_ID_MA_CROSS_SCAN,
+        STRATEGY_ID_LIMIT_UP_PULLBACK,
+        STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
+    )
     if body.strategy_id not in supported or body.strategy_version != "1":
         raise HTTPException(
             status_code=400,
@@ -397,6 +456,22 @@ def _validate_mvp_request(body: BacktestRunMvpRequest) -> None:
         except ValidationError as e:
             raise HTTPException(status_code=422, detail=e.errors()) from e
         return
+    if body.strategy_id == STRATEGY_ID_LIMIT_UP_PULLBACK:
+        try:
+            LimitUpPullbackRunParamsBody.model_validate(body.params)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors()) from e
+        return
+    if body.strategy_id == STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN:
+        try:
+            p = LimitUpPullbackScanRunParamsBody.model_validate(body.params)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors()) from e
+        parsed = parse_scan_codes(p.codes, p.max_codes)
+        if not parsed:
+            raise HTTPException(status_code=400, detail="codes 解析后为空")
+        return
+    # ma_cross_scan
     try:
         p = MaCrossScanRunParamsBody.model_validate(body.params)
     except ValidationError as e:
@@ -461,6 +536,98 @@ async def _execute_run_mvp(
             assumptions=assumptions,
             result=MaCrossBacktestResponse(**payload),
             scan_result=None,
+        )
+
+    if body.strategy_id == STRATEGY_ID_LIMIT_UP_PULLBACK:
+        p = LimitUpPullbackRunParamsBody.model_validate(body.params)
+        try:
+            payload, assumptions = await execute_limit_up_pullback_single(
+                session,
+                code=p.code.strip(),
+                limit=p.limit,
+                start_date=p.start_date,
+                end_date=p.end_date,
+                commission_rate=p.commission_rate,
+                slippage_rate=p.slippage_rate,
+                benchmark_code=p.benchmark_code,
+                adjust_flag=p.adjust_flag,
+                pullback_days=p.pullback_days,
+                entry_type=p.entry_type,
+                volume_shrink_ratio=p.volume_shrink_ratio,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return BacktestRunMvpResponse(
+            engine_version=ENGINE_VERSION,
+            strategy_id=body.strategy_id,
+            strategy_version=body.strategy_version,
+            assumptions=assumptions,
+            result=MaCrossBacktestResponse(**payload),
+            scan_result=None,
+        )
+
+    if body.strategy_id == STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN:
+        p = LimitUpPullbackScanRunParamsBody.model_validate(body.params)
+        parsed = parse_scan_codes(p.codes, p.max_codes)
+        try:
+            items, sort_norm, bench_key = await execute_limit_up_pullback_scan(
+                session,
+                codes=parsed,
+                limit=p.limit,
+                start_date=p.start_date,
+                end_date=p.end_date,
+                commission_rate=p.commission_rate,
+                slippage_rate=p.slippage_rate,
+                sort_by=p.sort_by,
+                max_concurrent=p.max_concurrent,
+                benchmark_code=p.benchmark_code,
+                adjust_flag=p.adjust_flag,
+                pullback_days=p.pullback_days,
+                entry_type=p.entry_type,
+                volume_shrink_ratio=p.volume_shrink_ratio,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        bench_norm = bench_key or None
+        rows = [MaCrossScanRow.model_validate(x) for x in items]
+        scan = MaCrossScanResponse(
+            fast_period=0,
+            slow_period=0,
+            limit=p.limit,
+            commission_rate=round(p.commission_rate, 8),
+            slippage_rate=round(p.slippage_rate, 8),
+            sort_by=sort_norm,
+            max_concurrent=p.max_concurrent,
+            start_date=p.start_date.isoformat() if p.start_date else None,
+            end_date=p.end_date.isoformat() if p.end_date else None,
+            benchmark_code=bench_norm,
+            items=rows,
+        )
+        assumptions = [
+            (
+                f"涨停回调策略批量扫描（entry_type={p.entry_type}, pullback_days={p.pullback_days}）；"
+                "涨停检测后观察回调窗口并逐只回测。"
+            ),
+            f"共 {len(parsed)} 只标的（按 max_codes 截断后）。",
+            f"结果按 {sort_norm} 降序；失败行沉底。",
+            f"拉取日 K 最大并发 max_concurrent={p.max_concurrent}。",
+        ]
+        if bench_norm:
+            assumptions.append(f"各标的 β/α 相对基准 {bench_norm}。")
+        else:
+            assumptions.append("各标的 β/α 为对标的自身日收益的回归。")
+        if p.start_date or p.end_date:
+            assumptions.append(
+                f"日期约束：start_date={p.start_date or '∅'}，end_date={p.end_date or '∅'}（含端点）。"
+            )
+        return BacktestRunMvpResponse(
+            engine_version=ENGINE_VERSION,
+            strategy_id=body.strategy_id,
+            strategy_version=body.strategy_version,
+            assumptions=assumptions,
+            result=None,
+            scan_result=scan,
         )
 
     p = MaCrossScanRunParamsBody.model_validate(body.params)
@@ -614,6 +781,32 @@ def _backtest_engine_catalog_payload() -> BacktestEngineCatalogResponse:
                 response_shape="result",
                 archive_kind="buy_hold_single",
                 get_equivalent_paths=["/api/backtest/buy-hold"],
+            ),
+            BacktestStrategyCatalogEntry(
+                strategy_id=STRATEGY_ID_LIMIT_UP_PULLBACK,
+                strategy_version="1",
+                title="涨停回调 · 单标的",
+                description=(
+                    "params: code, limit, start_date, end_date, commission_rate, slippage_rate, "
+                    "benchmark_code, pullback_days, entry_type, volume_shrink_ratio；"
+                    "响应中 fast_period/slow_period/signal_changes 为占位 0。"
+                ),
+                response_shape="result",
+                archive_kind="limit_up_pullback_single",
+                get_equivalent_paths=["/api/backtest/limit-up-pullback"],
+            ),
+            BacktestStrategyCatalogEntry(
+                strategy_id=STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
+                strategy_version="1",
+                title="涨停回调 · 批量扫描",
+                description=(
+                    "params: codes, limit, start_date, end_date, commission_rate, slippage_rate, "
+                    "max_codes, sort_by, max_concurrent, benchmark_code, pullback_days, "
+                    "entry_type, volume_shrink_ratio；扫描响应中 fast_period/slow_period 为占位 0。"
+                ),
+                response_shape="scan_result",
+                archive_kind="limit_up_pullback_scan",
+                get_equivalent_paths=["/api/backtest/limit-up-pullback/scan"],
             ),
         ],
     )
@@ -896,6 +1089,140 @@ async def buy_hold_backtest(
     return MaCrossBacktestResponse(**body)
 
 
+@router.get("/limit-up-pullback", response_model=MaCrossBacktestResponse)
+async def limit_up_pullback_backtest(
+    code: str = Query(..., description="标的代码，如 sh.000001"),
+    start_date: date | None = Query(None, description="起始日（含）"),
+    end_date: date | None = Query(None, description="结束日（含）"),
+    limit: int = Query(500, ge=30, le=5000, description="最多使用多少根日 K"),
+    commission_rate: float = Query(0.0, ge=0.0, le=0.05),
+    slippage_rate: float = Query(0.0, ge=0.0, le=0.05),
+    benchmark_code: str | None = Query(None),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
+    pullback_days: int = Query(10, ge=1, le=60),
+    entry_type: str = Query("neutral", min_length=1, max_length=32),
+    volume_shrink_ratio: float = Query(0.5, ge=0.1, le=1.0),
+    session: AsyncSession = Depends(get_session),
+):
+    if entry_type not in {"aggressive", "neutral", "conservative"}:
+        raise HTTPException(status_code=400, detail="entry_type 须为 aggressive / neutral / conservative 之一")
+    if commission_rate + slippage_rate > 0.08:
+        raise HTTPException(status_code=400, detail="commission_rate 与 slippage_rate 之和勿超过 0.08")
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+
+    try:
+        body, _assumptions = await execute_limit_up_pullback_single(
+            session,
+            code=code.strip(),
+            limit=limit,
+            start_date=start_date,
+            end_date=end_date,
+            commission_rate=commission_rate,
+            slippage_rate=slippage_rate,
+            benchmark_code=benchmark_code,
+            adjust_flag=adjust_flag,
+            pullback_days=pullback_days,
+            entry_type=entry_type,
+            volume_shrink_ratio=volume_shrink_ratio,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return MaCrossBacktestResponse(**body)
+
+
+@router.get("/limit-up-pullback/scan")
+async def limit_up_pullback_scan(
+    codes: str = Query(..., description="逗号或换行分隔的标的列表"),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    limit: int = Query(500, ge=30, le=5000),
+    commission_rate: float = Query(0.0, ge=0.0, le=0.05),
+    slippage_rate: float = Query(0.0, ge=0.0, le=0.05),
+    max_codes: int = Query(25, ge=1, le=40),
+    export: str = Query("json", description="json 或 csv"),
+    sort_by: str = Query("total_return"),
+    max_concurrent: int = Query(8, ge=1, le=20),
+    benchmark_code: str | None = Query(None),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
+    pullback_days: int = Query(10, ge=1, le=60),
+    entry_type: str = Query("neutral", min_length=1, max_length=32),
+    volume_shrink_ratio: float = Query(0.5, ge=0.1, le=1.0),
+    session: AsyncSession = Depends(get_session),
+):
+    if entry_type not in {"aggressive", "neutral", "conservative"}:
+        raise HTTPException(status_code=400, detail="entry_type 须为 aggressive / neutral / conservative 之一")
+    if commission_rate + slippage_rate > 0.08:
+        raise HTTPException(status_code=400, detail="commission_rate 与 slippage_rate 之和勿超过 0.08")
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+    if export not in ("json", "csv"):
+        raise HTTPException(status_code=400, detail="export 须为 json 或 csv")
+
+    parsed = parse_scan_codes(codes, max_codes)
+    if not parsed:
+        raise HTTPException(status_code=400, detail="codes 解析后为空")
+
+    try:
+        items, sort_norm, bench_key = await execute_limit_up_pullback_scan(
+            session,
+            codes=parsed,
+            limit=limit,
+            start_date=start_date,
+            end_date=end_date,
+            commission_rate=commission_rate,
+            slippage_rate=slippage_rate,
+            sort_by=sort_by,
+            max_concurrent=max_concurrent,
+            benchmark_code=benchmark_code,
+            adjust_flag=adjust_flag,
+            pullback_days=pullback_days,
+            entry_type=entry_type,
+            volume_shrink_ratio=volume_shrink_ratio,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    bench_norm = bench_key or None
+
+    if export == "csv":
+        # 复用 ma_cross 的 CSV 生成器（字段形状一致）
+        from src.backtest.scan import ma_cross_scan_csv_bytes
+
+        body = ma_cross_scan_csv_bytes(
+            items,
+            fast=0,
+            slow=0,
+            limit=limit,
+            commission_rate=round(commission_rate, 8),
+            slippage_rate=round(slippage_rate, 8),
+            sort_by=sort_norm,
+            start_date=start_date,
+            end_date=end_date,
+            benchmark_code=bench_norm,
+        )
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="limit_up_pullback_scan.csv"'},
+        )
+
+    rows = [MaCrossScanRow.model_validate(x) for x in items]
+    return MaCrossScanResponse(
+        fast_period=0,
+        slow_period=0,
+        limit=limit,
+        commission_rate=round(commission_rate, 8),
+        slippage_rate=round(slippage_rate, 8),
+        sort_by=sort_norm,
+        max_concurrent=max_concurrent,
+        start_date=start_date.isoformat() if start_date else None,
+        end_date=end_date.isoformat() if end_date else None,
+        benchmark_code=bench_norm,
+        items=rows,
+    )
+
+
 @router.post(
     "/jobs/{job_id}/cancel",
     response_model=BacktestJobCancelResponse,
@@ -1029,7 +1356,13 @@ async def backtest_run_mvp(
 
 
 class BacktestRunCreate(BaseModel):
-    kind: Literal["ma_cross_single", "ma_cross_scan", "buy_hold_single"]
+    kind: Literal[
+        "ma_cross_single",
+        "ma_cross_scan",
+        "buy_hold_single",
+        "limit_up_pullback_single",
+        "limit_up_pullback_scan",
+    ]
     request_params: dict[str, Any] = Field(default_factory=dict)
     response_payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -1085,7 +1418,13 @@ async def backtest_runs_list(
     session: AsyncSession = Depends(get_session),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    kind: Literal["ma_cross_single", "ma_cross_scan", "buy_hold_single"] | None = Query(
+    kind: Literal[
+        "ma_cross_single",
+        "ma_cross_scan",
+        "buy_hold_single",
+        "limit_up_pullback_single",
+        "limit_up_pullback_scan",
+    ] | None = Query(
         None, description="仅列出该类型的存档；不传则全部"
     ),
     q: str | None = Query(None, max_length=120, description="摘要子串过滤（LIKE %q%）"),
