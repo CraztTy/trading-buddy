@@ -17,7 +17,7 @@ cryptography>=42.0.0
 redis>=5.0.0
 
 # Data Source
-baostock>=0.8.8
+baostock>=0.9.1
 pandas>=2.1.0
 numpy>=1.26.0
 pyarrow>=14.0.0
