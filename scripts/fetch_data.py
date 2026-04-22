@@ -123,6 +123,7 @@ async def fetch_daily_klines(
     limit: int,
     delay_sec: float,
     *,
+    skip: int = 0,
     incremental: bool = False,
     overlap_days: int = 7,
     kline_retries: int = 3,
@@ -142,77 +143,87 @@ async def fetch_daily_klines(
     db = get_database()
     try:
         await source.connect()
+
+        # 先获取代码列表（独立事务，快速返回）
         async with db.session() as session:
             stock_repo = StockRepository(session)
-            kline_repo = KlineRepository(session)
             if not codes:
                 codes = await stock_repo.get_all_codes(is_trading=True)
             if not codes:
                 logger.warning("无股票代码，请先执行 --mode stocks")
                 return
+            if skip > 0:
+                codes = codes[skip:]
+                logger.info(f"跳过前 {skip} 只，剩余 {len(codes)} 只")
             if limit > 0:
                 codes = codes[:limit]
                 logger.info(f"限制条数: 仅处理前 {limit} 只")
 
-            last_map: dict[str, date] = {}
-            if incremental:
+        last_map: dict[str, date] = {}
+        if incremental:
+            async with db.session() as session:
+                kline_repo = KlineRepository(session)
                 last_map = await kline_repo.get_latest_trade_dates_for_codes(codes)
                 logger.info(
                     f"增量模式: 已缓存 {len(last_map)}/{len(codes)} 只的最新交易日，重叠 {overlap_days} 天"
                 )
 
-            overlap = timedelta(days=overlap_days)
-            total = 0
-            skipped = 0
-            for i, code in enumerate(codes):
-                if incremental:
-                    last = last_map.get(code)
-                    if last and last >= end:
-                        skipped += 1
-                        if (i + 1) % 500 == 0:
-                            logger.info(
-                                f"进度 {i + 1}/{len(codes)}，跳过已最新 {skipped}，累计写入 {total} 条"
+        overlap = timedelta(days=overlap_days)
+        total = 0
+        skipped = 0
+        batch_size = 100
+
+        for batch_start in range(0, len(codes), batch_size):
+            batch = codes[batch_start : batch_start + batch_size]
+            batch_total = 0
+            async with db.session() as session:
+                kline_repo = KlineRepository(session)
+                for i, code in enumerate(batch):
+                    global_i = batch_start + i
+                    if incremental:
+                        last = last_map.get(code)
+                        if last and last >= end:
+                            skipped += 1
+                            continue
+
+                    try:
+                        for flag in flags:
+                            if provider == "baostock" and delay_sec > 0:
+                                await asyncio.sleep(delay_sec)
+
+                            if incremental:
+                                start = last - overlap if last else window_start
+                            else:
+                                start = window_start
+
+                            if start > end:
+                                start = end - timedelta(days=1)
+
+                            klines = await _get_daily_kline_with_retries(
+                                source,
+                                code,
+                                start,
+                                end,
+                                retries=kline_retries,
+                                backoff_sec=kline_retry_backoff_sec,
+                                adjustflag=flag,
                             )
-                        continue
+                            if klines:
+                                await kline_repo.bulk_insert(klines)
+                                total += len(klines)
+                                batch_total += len(klines)
+                    except Exception as e:
+                        logger.warning(f"{code} K线失败: {e}")
 
-                try:
-                    for flag in flags:
-                        if provider == "baostock" and delay_sec > 0:
-                            await asyncio.sleep(delay_sec)
-
-                        if incremental:
-                            start = (
-                                last - overlap
-                                if last
-                                else window_start
-                            )
-                        else:
-                            start = window_start
-
-                        if start > end:
-                            start = end - timedelta(days=1)
-
-                        klines = await _get_daily_kline_with_retries(
-                            source,
-                            code,
-                            start,
-                            end,
-                            retries=kline_retries,
-                            backoff_sec=kline_retry_backoff_sec,
-                            adjustflag=flag,
-                        )
-                        if klines:
-                            await kline_repo.bulk_insert(klines)
-                            total += len(klines)
-                    if (i + 1) % 200 == 0 or i == len(codes) - 1:
-                        logger.info(
-                            f"进度 {i + 1}/{len(codes)}，跳过已最新 {skipped}，累计K线 {total} 条"
-                        )
-                except Exception as e:
-                    logger.warning(f"{code} K线失败: {e}")
+            batch_end = min(batch_start + batch_size, len(codes))
             logger.info(
-                f"日K线完成，写入约 {total} 条（增量跳过已最新 {skipped} 只）"
+                f"进度 {batch_end}/{len(codes)}，跳过已最新 {skipped}，"
+                f"本批K线 {batch_total} 条，累计K线 {total} 条"
             )
+
+        logger.info(
+            f"日K线完成，写入约 {total} 条（增量跳过已最新 {skipped} 只）"
+        )
     finally:
         await source.disconnect()
 
@@ -400,6 +411,7 @@ async def run(args: argparse.Namespace) -> None:
                     days=effective_days,
                     limit=args.limit,
                     delay_sec=args.baostock_delay,
+                    skip=args.skip,
                     incremental=True,
                     overlap_days=args.overlap_days,
                     kline_retries=kr,
@@ -422,6 +434,7 @@ async def run(args: argparse.Namespace) -> None:
                         days=effective_days,
                         limit=args.limit,
                         delay_sec=args.baostock_delay,
+                        skip=args.skip,
                         incremental=args.incremental,
                         overlap_days=args.overlap_days,
                         kline_retries=kr,
@@ -501,6 +514,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="K线模式下最多处理股票数量，0 表示不限制（测试用小一点）",
+    )
+    p.add_argument(
+        "--skip",
+        type=int,
+        default=0,
+        help="K线模式下跳过前 N 只股票（与 --limit 配合做分批拉取）",
     )
     p.add_argument(
         "--baostock-delay",

@@ -190,9 +190,8 @@ class BaostockSource(BaseDataSource):
         end_date: date | None = None,
         adjustflag: str = "3",
     ) -> list[KLine]:
-        """获取日K线数据"""
-        # 每次调用都重新登录，确保连接正常
-        bs.login()
+        """获取日K线数据；每只股票独立登录+登出，设置套接字超时避免连接僵死。"""
+        import socket as _socket
 
         if end_date is None:
             end_date = date.today()
@@ -201,43 +200,53 @@ class BaostockSource(BaseDataSource):
 
         logger.info(f"Fetching daily kline: {code} from {start_date} to {end_date} (adjustflag={adjustflag})")
 
-        # adjustflag：1=后复权 2=前复权 3=不复权（与 docs/DATA_AND_ADJUSTMENT.md 默认口径一致）
-        rs = bs.query_history_k_data_plus(
-            code,
-            "date,open,high,low,close,preclose,volume,amount,pctChg",
-            start_date=start_date.strftime('%Y-%m-%d'),
-            end_date=end_date.strftime('%Y-%m-%d'),
-            frequency="d",
-            adjustflag=adjustflag,
-        )
+        # 单只股票查询总超时（秒）；过长会拖慢整体进度，过短可能触发正常慢查询
+        QUERY_TIMEOUT = 45
+        _socket.setdefaulttimeout(QUERY_TIMEOUT)
 
-        klines = []
-        if rs.error_code == '0':
-            while rs.next():
-                row = rs.get_row_data()
-                try:
-                    # 字段顺序: date,open,high,low,close,preclose,volume,amount,pctChg
-                    pct = float(row[8]) if len(row) > 8 and row[8] not in (None, "") else None
-                    pre_close = float(row[5]) if len(row) > 5 and row[5] not in (None, "") else None
-                    kline = KLine(
-                        code=code,
-                        trade_date=datetime.strptime(row[0], '%Y-%m-%d').date(),
-                        open=float(row[1]),
-                        high=float(row[2]),
-                        low=float(row[3]),
-                        close=float(row[4]),
-                        pre_close=pre_close,
-                        volume=int(float(row[6])) if row[6] else 0,
-                        amount=float(row[7]) if row[7] else 0.0,
-                        turnover_rate=None,
-                        pct_change=pct,
-                        adjust_flag=adjustflag,
-                    )
-                    klines.append(kline)
-                except (ValueError, IndexError) as e:
-                    logger.warning(f"Parse error for {code} on {row[0]}: {e}")
-        else:
-            logger.warning(f"Query failed for {code}: {rs.error_msg}")
+        klines: list[KLine] = []
+        try:
+            bs.login()
+            rs = bs.query_history_k_data_plus(
+                code,
+                "date,open,high,low,close,preclose,volume,amount,pctChg",
+                start_date=start_date.strftime('%Y-%m-%d'),
+                end_date=end_date.strftime('%Y-%m-%d'),
+                frequency="d",
+                adjustflag=adjustflag,
+            )
+
+            if rs.error_code == '0':
+                while rs.next():
+                    row = rs.get_row_data()
+                    try:
+                        # 字段顺序: date,open,high,low,close,preclose,volume,amount,pctChg
+                        pct = float(row[8]) if len(row) > 8 and row[8] not in (None, "") else None
+                        pre_close = float(row[5]) if len(row) > 5 and row[5] not in (None, "") else None
+                        kline = KLine(
+                            code=code,
+                            trade_date=datetime.strptime(row[0], '%Y-%m-%d').date(),
+                            open=float(row[1]),
+                            high=float(row[2]),
+                            low=float(row[3]),
+                            close=float(row[4]),
+                            pre_close=pre_close,
+                            volume=int(float(row[6])) if row[6] else 0,
+                            amount=float(row[7]) if row[7] else 0.0,
+                            turnover_rate=None,
+                            pct_change=pct,
+                            adjust_flag=adjustflag,
+                        )
+                        klines.append(kline)
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Parse error for {code} on {row[0]}: {e}")
+            else:
+                logger.warning(f"Query failed for {code}: {rs.error_msg}")
+        except Exception as e:
+            logger.warning(f"Exception for {code}: {e}")
+        finally:
+            bs.logout()
+            _socket.setdefaulttimeout(None)
 
         logger.info(f"Fetched {len(klines)} klines for {code}")
         return klines
