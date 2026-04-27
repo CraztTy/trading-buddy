@@ -26,6 +26,10 @@ def test_backtest_catalog_live_strategy_ids_match_post_run_constants() -> None:
         STRATEGY_ID_MA_CROSS,
         STRATEGY_ID_MA_CROSS_SCAN,
     )
+    from src.backtest.runner.portfolio_executor import (
+        STRATEGY_ID_PORTFOLIO_EQUAL,
+        STRATEGY_ID_PORTFOLIO_VALUE,
+    )
 
     with TestClient(app) as client:
         r = client.get("/api/backtest/catalog")
@@ -38,6 +42,8 @@ def test_backtest_catalog_live_strategy_ids_match_post_run_constants() -> None:
         STRATEGY_ID_BUY_HOLD,
         STRATEGY_ID_LIMIT_UP_PULLBACK,
         STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
+        STRATEGY_ID_PORTFOLIO_EQUAL,
+        STRATEGY_ID_PORTFOLIO_VALUE,
     }
 
 
@@ -52,6 +58,10 @@ def test_backtest_catalog_live_strategy_shape_and_paths_match_kernel() -> None:
         STRATEGY_ID_MA_CROSS,
         STRATEGY_ID_MA_CROSS_SCAN,
     )
+    from src.backtest.runner.portfolio_executor import (
+        STRATEGY_ID_PORTFOLIO_EQUAL,
+        STRATEGY_ID_PORTFOLIO_VALUE,
+    )
 
     want = {
         STRATEGY_ID_MA_CROSS: ("result", ["/api/backtest/ma-cross"]),
@@ -59,6 +69,8 @@ def test_backtest_catalog_live_strategy_shape_and_paths_match_kernel() -> None:
         STRATEGY_ID_BUY_HOLD: ("result", ["/api/backtest/buy-hold"]),
         STRATEGY_ID_LIMIT_UP_PULLBACK: ("result", ["/api/backtest/limit-up-pullback"]),
         STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN: ("scan_result", ["/api/backtest/limit-up-pullback/scan"]),
+        STRATEGY_ID_PORTFOLIO_EQUAL: ("result", []),
+        STRATEGY_ID_PORTFOLIO_VALUE: ("result", []),
     }
     with TestClient(app) as client:
         r = client.get("/api/backtest/catalog")

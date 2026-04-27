@@ -29,16 +29,35 @@ class WatchlistRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get_or_create_default_watchlist(self) -> WatchlistModel:
-        stmt = select(WatchlistModel).where(WatchlistModel.label == DEFAULT_WATCHLIST_LABEL)
+    async def get_or_create_watchlist(
+        self, user_id: int | None = None, label: str = DEFAULT_WATCHLIST_LABEL
+    ) -> WatchlistModel:
+        """按 (user_id, label) 查找或创建自选股分组。
+
+        - user_id 为 None 时查找 user_id IS NULL 的记录（兼容旧数据）。
+        """
+        if user_id is not None:
+            stmt = select(WatchlistModel).where(
+                WatchlistModel.user_id == user_id,
+                WatchlistModel.label == label,
+            )
+        else:
+            stmt = select(WatchlistModel).where(
+                WatchlistModel.user_id.is_(None),
+                WatchlistModel.label == label,
+            )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row:
             return row
-        wl = WatchlistModel(label=DEFAULT_WATCHLIST_LABEL)
+        wl = WatchlistModel(user_id=user_id, label=label)
         self._session.add(wl)
         await self._session.flush()
-        logger.info("watchlist created label=%s id=%s", wl.label, wl.id)
+        logger.info("watchlist created user_id=%s label=%s id=%s", user_id, wl.label, wl.id)
         return wl
+
+    async def get_or_create_default_watchlist(self) -> WatchlistModel:
+        """向后兼容：无 user_id 时查找/创建 label='default' 且 user_id=NULL 的分组。"""
+        return await self.get_or_create_watchlist(user_id=None, label=DEFAULT_WATCHLIST_LABEL)
 
     async def count_items(self, watchlist_id: int) -> int:
         stmt = select(func.count()).select_from(WatchlistItemModel).where(

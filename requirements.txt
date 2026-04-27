@@ -28,6 +28,9 @@ httpx>=0.26.0
 # Logging
 loguru>=0.7.2
 
+# ML / Optimization
+optuna>=4.0.0
+
 # Utils
 python-dotenv>=1.0.0
 schedule>=1.2.0

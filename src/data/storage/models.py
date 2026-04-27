@@ -161,16 +161,53 @@ class IndexDataModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
+class UserModel(Base):
+    """用户表"""
+
+    __tablename__ = "user"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="user")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class ApiKeyModel(Base):
+    """API Key 表（供程序化调用）"""
+
+    __tablename__ = "api_key"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
 class PaperAccountModel(Base):
-    """纸交易资金账户（单默认账户 MVP）"""
+    """纸交易资金账户"""
 
     __tablename__ = "paper_account"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    label: Mapped[str] = mapped_column(String(32), nullable=False, default="default", unique=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    label: Mapped[str] = mapped_column(String(32), nullable=False, default="default")
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cash: Mapped[float] = mapped_column(Float, nullable=False, default=1_000_000.0)
     initial_cash: Mapped[float] = mapped_column(Float, nullable=False, default=1_000_000.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "label", name="uq_paper_account_user_label"),
+    )
 
 
 class PaperPositionModel(Base):
@@ -226,13 +263,20 @@ class PaperLotModel(Base):
 
 
 class WatchlistModel(Base):
-    """自选股分组（MVP：单默认分组）"""
+    """自选股分组"""
 
     __tablename__ = "watchlist"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    label: Mapped[str] = mapped_column(String(32), nullable=False, default="default", unique=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    label: Mapped[str] = mapped_column(String(32), nullable=False, default="default")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "label", name="uq_watchlist_user_label"),
+    )
 
 
 class WatchlistItemModel(Base):
@@ -255,6 +299,9 @@ class BacktestRunModel(Base):
     __tablename__ = "backtest_run"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     summary: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     request_params: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -262,10 +309,159 @@ class BacktestRunModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
 
 
+class RiskRuleModel(Base):
+    """风控规则配置"""
+
+    __tablename__ = "risk_rule"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    rule_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="all")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class RiskEventModel(Base):
+    """风控事件记录"""
+
+    __tablename__ = "risk_event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    rule_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("risk_rule.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
+
+
+class FactorSnapshotModel(Base):
+    """因子截面数据表 — 每日各标的因子值快照"""
+    __tablename__ = "factor_snapshot"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    turnover_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pct_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ret_5d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ret_20d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ret_60d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ma_5: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ma_20: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ma_60: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rsi_14: Mapped[float | None] = mapped_column(Float, nullable=True)
+    macd_dif: Mapped[float | None] = mapped_column(Float, nullable=True)
+    macd_dea: Mapped[float | None] = mapped_column(Float, nullable=True)
+    macd_hist: Mapped[float | None] = mapped_column(Float, nullable=True)
+    kdj_k: Mapped[float | None] = mapped_column(Float, nullable=True)
+    kdj_d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    kdj_j: Mapped[float | None] = mapped_column(Float, nullable=True)
+    atr_14: Mapped[float | None] = mapped_column(Float, nullable=True)
+    boll_upper: Mapped[float | None] = mapped_column(Float, nullable=True)
+    boll_lower: Mapped[float | None] = mapped_column(Float, nullable=True)
+    meta_bars: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(32), default="compute_v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class AuditLogModel(Base):
+    """审计日志表 — 记录交易操作、风控变更、系统管理事件"""
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
+
+
+class ExperimentModel(Base):
+    """实验定义表 — 策略实验的元信息"""
+    __tablename__ = "experiment"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    strategy_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    params_template: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    tags: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class ExperimentRunModel(Base):
+    """实验运行记录表 — 单次运行的参数与结果"""
+    __tablename__ = "experiment_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    experiment_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    run_params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="completed")
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    git_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
+
+
+class StressScenarioModel(Base):
+    """压力测试场景定义表"""
+    __tablename__ = "stress_scenario"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    benchmark_drop_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tags: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class StressTestResultModel(Base):
+    """压力测试运行结果表"""
+    __tablename__ = "stress_test_result"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scenario_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    strategy_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    portfolio_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_drawdown_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vs_benchmark_excess_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
 class SyncLogModel(Base):
     """数据同步日志表"""
     __tablename__ = "sync_log"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     data_type: Mapped[str] = mapped_column(String(50), nullable=False)

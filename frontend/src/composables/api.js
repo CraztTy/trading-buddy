@@ -116,11 +116,39 @@ async function fetchJsonFromUrl(url, options = {}, defaultToast = true) {
 }
 
 /**
+ * 从 localStorage 读取认证 token。
+ */
+function getAuthToken() {
+  try {
+    return localStorage.getItem("tb_auth_token") || "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 在 headers 中注入 Authorization: Bearer <token>。
+ */
+function injectAuthHeader(options) {
+  const token = getAuthToken();
+  if (!token) return options;
+  const headers = options.headers || {};
+  if (headers instanceof Headers) {
+    headers.set("Authorization", `Bearer ${token}`);
+    return { ...options, headers };
+  }
+  return {
+    ...options,
+    headers: { ...headers, Authorization: `Bearer ${token}` },
+  };
+}
+
+/**
  * @param {string} path
  * @param {RequestInit & { toast?: boolean }} [options] 传入 `toast: false` 可关闭全局提示（轮询或与面板内错误重复时）
  */
 export async function fetchJson(path, options = {}) {
-  return fetchJsonFromUrl(apiUrl(path), options, true);
+  return fetchJsonFromUrl(apiUrl(path), injectAuthHeader(options), true);
 }
 
 /**
@@ -130,7 +158,7 @@ export async function fetchJson(path, options = {}) {
  */
 export async function fetchJsonAbs(urlPath, options = {}) {
   const url = urlPath.startsWith("/") ? urlPath : `/${urlPath}`;
-  return fetchJsonFromUrl(url, options, false);
+  return fetchJsonFromUrl(url, injectAuthHeader(options), false);
 }
 
 /**
@@ -139,5 +167,5 @@ export async function fetchJsonAbs(urlPath, options = {}) {
  * @param {RequestInit & { toast?: boolean }} [options]
  */
 export async function fetchOkResponse(path, options = {}) {
-  return fetchOkResponseFromUrl(apiUrl(path), options, true);
+  return fetchOkResponseFromUrl(apiUrl(path), injectAuthHeader(options), true);
 }

@@ -41,7 +41,14 @@ function readStoredMvpAsync() {
 function readStoredSingleRunStrategy() {
   try {
     const v = localStorage.getItem(LS_SINGLE_RUN_STRATEGY_KEY);
-    if (v === "buy_hold" || v === "ma_cross" || v === "limit_up_pullback") return v;
+    if (
+      v === "buy_hold" ||
+      v === "ma_cross" ||
+      v === "limit_up_pullback" ||
+      v === "portfolio_equal_weight" ||
+      v === "portfolio_value_weight"
+    )
+      return v;
   } catch {
     /* ignore */
   }
@@ -119,6 +126,53 @@ const limitUpResult = ref(null);
 const limitUpPullbackDays = ref(10);
 const limitUpEntryType = ref("neutral");
 const limitUpVolumeShrinkRatio = ref(0.5);
+const limitUpMaxHoldDays = ref(0);
+const limitUpTimeStopDays = ref(0);
+const limitUpTimeStopPct = ref(0.0);
+const limitUpMarketIndexCode = ref("");
+const limitUpRequireMarketBull = ref(false);
+const limitUpMarketStrict = ref(false);
+
+// 组合回测
+const portfolioCodesText = ref("sh.000001\nsh.000300");
+const portfolioSignalStrategy = ref("ma_cross");
+const portfolioWeightsScheme = ref("equal");
+const portfolioRebalanceFreq = ref("monthly");
+const portfolioMaxCodes = ref(25);
+const portfolioPositionSizingMethod = ref("equal");
+const portfolioPositionSizingAmount = ref(100_000);
+const portfolioResult = ref(null);
+const portfolioLoading = ref(false);
+const portfolioError = ref("");
+
+// ── 涨停回调参数优化 ──
+const showOptimizePanel = ref(false);
+const optimizeLoading = ref(false);
+const optimizeError = ref("");
+const optimizeResult = ref(null);
+const optimizeSortBy = ref("sharpe");
+const optimizeTopN = ref(10);
+const optimizeMaxCombinations = ref(100);
+const optimizePullbackDaysMin = ref(5);
+const optimizePullbackDaysMax = ref(15);
+const optimizePullbackDaysStep = ref(1);
+const optimizeEntryTypes = ref(["neutral"]);
+const optimizeVolumeShrinkRatios = ref("0.5");
+const optimizeMaxHoldDaysList = ref("0");
+const optimizeTimeStopDaysList = ref("0");
+const optimizeTimeStopPcts = ref("0.0");
+const optimizeMaStrictValues = ref("false");
+
+const OPTIMIZE_SORT_BY_LABELS = {
+  total_return: "总收益",
+  excess_return: "超额收益",
+  sharpe: "夏普比率",
+  sortino: "Sortino",
+  calmar: "Calmar",
+  win_rate: "胜率",
+  max_drawdown: "最大回撤",
+  trades_count: "交易次数",
+};
 
 /** POST /run?async=1 并轮询 GET …/jobs/{id}；结果 JSON 与同步 200 同形；轮询体含 async_job_persistence（与 catalog 同源） */
 const mvpAsyncRun = ref(readStoredMvpAsync());
@@ -292,13 +346,21 @@ const benchSortAlphaLabel = computed(() =>
   (benchmarkCode.value || "").trim() ? "α 年化 %（对基准）" : "α 年化 %（对标的）"
 );
 
+const isPortfolioStrategy = computed(
+  () => singleRunStrategy.value === "portfolio_equal_weight" || singleRunStrategy.value === "portfolio_value_weight"
+);
+
 const chartOption = computed(() => {
-  const curve = result.value?.equity_curve;
+  // 优先使用组合回测结果，其次单标的回测结果
+  const activeResult = portfolioResult.value || result.value;
+  const isLoading = portfolioLoading.value || loading.value;
+  const activeError = portfolioError.value || error.value;
+  const curve = activeResult?.equity_curve;
   if (!curve?.length) {
     return {
       backgroundColor: "transparent",
       title: {
-        text: loading.value ? "计算中…" : error.value || "运行回测后显示权益曲线",
+        text: isLoading ? "计算中…" : activeError || "运行回测后显示权益曲线",
         left: "center",
         top: "center",
         textStyle: { color: "#6d6a7a", fontSize: 13, fontFamily: "Noto Serif SC" },
@@ -307,6 +369,88 @@ const chartOption = computed(() => {
   }
   const dates = curve.map((p) => p.trade_date);
   const eq = curve.map((p) => p.equity);
+  const dateIndexMap = new Map(dates.map((d, i) => [d, i]));
+
+  // 交易明细标记
+  const buyPoints = [];
+  const sellPoints = [];
+  const trades = activeResult?.trades || [];
+  for (const t of trades) {
+    const buyIdx = dateIndexMap.get(t.entry_date);
+    if (buyIdx != null) {
+      buyPoints.push({
+        name: "买入",
+        value: [buyIdx, eq[buyIdx]],
+        itemStyle: { color: "#52c41a" },
+        tradeInfo: t,
+      });
+    }
+    const sellIdx = dateIndexMap.get(t.exit_date);
+    if (sellIdx != null) {
+      sellPoints.push({
+        name: "卖出",
+        value: [sellIdx, eq[sellIdx]],
+        itemStyle: { color: "#ff4d4f" },
+        tradeInfo: t,
+      });
+    }
+  }
+
+  const series = [
+    {
+      name: "权益",
+      type: "line",
+      data: eq,
+      smooth: true,
+      symbol: "none",
+      lineStyle: { width: 1.6, color: "#3ee0ff" },
+      areaStyle: {
+        color: {
+          type: "linear",
+          x: 0,
+          y: 0,
+          x2: 0,
+          y2: 1,
+          colorStops: [
+            { offset: 0, color: "rgba(62, 224, 255, 0.22)" },
+            { offset: 1, color: "rgba(62, 224, 255, 0)" },
+          ],
+        },
+      },
+    },
+  ];
+
+  if (buyPoints.length) {
+    series.push({
+      name: "买入",
+      type: "scatter",
+      data: buyPoints.map((p) => ({
+        value: p.value,
+        itemStyle: p.itemStyle,
+        tradeInfo: p.tradeInfo,
+      })),
+      symbol: "triangle",
+      symbolSize: 14,
+      symbolRotate: 0,
+      z: 10,
+    });
+  }
+  if (sellPoints.length) {
+    series.push({
+      name: "卖出",
+      type: "scatter",
+      data: sellPoints.map((p) => ({
+        value: p.value,
+        itemStyle: p.itemStyle,
+        tradeInfo: p.tradeInfo,
+      })),
+      symbol: "triangle",
+      symbolSize: 14,
+      symbolRotate: 180,
+      z: 10,
+    });
+  }
+
   return {
     backgroundColor: "transparent",
     animationDuration: 500,
@@ -315,6 +459,46 @@ const chartOption = computed(() => {
       backgroundColor: "rgba(8, 8, 12, 0.94)",
       borderColor: "rgba(232, 197, 71, 0.28)",
       textStyle: { color: "#b8b4c8", fontFamily: "IBM Plex Mono, monospace" },
+      formatter(params) {
+        if (!params?.length) return "";
+        const line0 = params[0];
+        const date = line0?.axisValue || "";
+        let out = `<div style="font-weight:700;margin-bottom:6px;">${date}</div>`;
+        const equityPt = params.find((p) => p.seriesName === "权益");
+        if (equityPt) {
+          out += `<div>权益: ${Number(equityPt.value).toFixed(4)}</div>`;
+        }
+        for (const p of params) {
+          if (p.seriesName === "买入" || p.seriesName === "卖出") {
+            const t = p.data?.tradeInfo;
+            if (!t) continue;
+            const color = p.seriesName === "买入" ? "#52c41a" : "#ff4d4f";
+            out += `<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:4px;">`;
+            out += `<span style="color:${color};font-weight:700;">${p.seriesName}</span> `;
+            out += `<span style="color:#b8b4c8;">@${t.entry_price || t.exit_price}</span>`;
+            if (t.exit_reason) {
+              out += `<div style="font-size:11px;color:#888;margin-top:2px;">原因: ${t.exit_reason}</div>`;
+            }
+            if (t.pnl_pct != null && p.seriesName === "卖出") {
+              const pnlColor = t.pnl_pct > 0 ? "#52c41a" : t.pnl_pct < 0 ? "#ff4d4f" : "#b8b4c8";
+              out += `<div style="font-size:11px;color:${pnlColor};margin-top:2px;">盈亏: ${t.pnl_pct.toFixed(2)}%  持仓: ${t.hold_days}天</div>`;
+            }
+            if (t.max_return_pct != null) {
+              out += `<div style="font-size:11px;color:#52c41a;margin-top:2px;">最大浮盈: ${t.max_return_pct.toFixed(2)}%</div>`;
+            }
+            out += `</div>`;
+          }
+        }
+        return out;
+      },
+    },
+    legend: {
+      data: ["权益", buyPoints.length ? "买入" : null, sellPoints.length ? "卖出" : null].filter(Boolean),
+      textStyle: { color: "#6d6a7a", fontSize: 10 },
+      top: 4,
+      right: 10,
+      itemWidth: 14,
+      itemHeight: 10,
     },
     grid: { left: "3%", right: "4%", top: "12%", bottom: "14%", containLabel: true },
     xAxis: {
@@ -330,29 +514,7 @@ const chartOption = computed(() => {
       axisLabel: { color: "#6d6a7a", fontSize: 10, fontFamily: "IBM Plex Mono" },
       splitLine: { lineStyle: { color: "#1a1824" } },
     },
-    series: [
-      {
-        name: "权益",
-        type: "line",
-        data: eq,
-        smooth: true,
-        symbol: "none",
-        lineStyle: { width: 1.6, color: "#3ee0ff" },
-        areaStyle: {
-          color: {
-            type: "linear",
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: "rgba(62, 224, 255, 0.22)" },
-              { offset: 1, color: "rgba(62, 224, 255, 0)" },
-            ],
-          },
-        },
-      },
-    ],
+    series,
   };
 });
 
@@ -420,6 +582,15 @@ function scanRunParamsObject(codesRaw) {
     out.pullback_days = Math.max(1, Math.min(60, Number(limitUpPullbackDays.value) || 10));
     out.entry_type = String(limitUpEntryType.value || "neutral");
     out.volume_shrink_ratio = Math.max(0.1, Math.min(1.0, Number(limitUpVolumeShrinkRatio.value) || 0.5));
+    out.max_hold_days = Math.max(0, Math.min(120, Number(limitUpMaxHoldDays.value) || 0));
+    out.time_stop_days = Math.max(0, Math.min(120, Number(limitUpTimeStopDays.value) || 0));
+    out.time_stop_pct = Math.max(-0.5, Math.min(0.5, Number(limitUpTimeStopPct.value) || 0));
+    const mktCode = (limitUpMarketIndexCode.value || "").trim();
+    if (mktCode) {
+      out.market_index_code = mktCode;
+      out.require_market_bull = Boolean(limitUpRequireMarketBull.value);
+      out.market_strict = Boolean(limitUpMarketStrict.value);
+    }
   }
   const s = (qp.start_date || "").trim();
   const e = (qp.end_date || "").trim();
@@ -475,6 +646,18 @@ function wanFromRate(r) {
 }
 
 function downloadSingleJson() {
+  if (portfolioResult.value) {
+    const text = JSON.stringify(portfolioResult.value, null, 2);
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const tag = singleRunStrategy.value === "portfolio_value_weight" ? "portfolio_value" : "portfolio_equal";
+    a.download = `${tag}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
   if (!result.value) return;
   const text = JSON.stringify(result.value, null, 2);
   const blob = new Blob([text], { type: "application/json;charset=utf-8" });
@@ -485,6 +668,16 @@ function downloadSingleJson() {
   a.download = `${tag}_${(props.code || "code").replace(/[^a-z0-9.]/gi, "_")}_${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function fillPresetMajorsForPortfolio() {
+  portfolioCodesText.value = PRESET_MAJORS;
+}
+
+async function fillPortfolioFromWatchlist() {
+  await loadWatchlist();
+  const codes = wlItems.value.map((w) => w.code).filter(Boolean);
+  portfolioCodesText.value = codes.slice(0, Math.max(1, Math.min(40, Number(portfolioMaxCodes.value) || 25))).join("\n");
 }
 
 function downloadScanJson() {
@@ -555,6 +748,9 @@ async function runLimitUpPullbackScan() {
         buy_point_types: limitUpBuyPointTypes.value,
         sector_codes: sectors.length ? sectors : undefined,
         require_policy: limitUpRequirePolicy.value,
+        market_index_code: limitUpMarketIndexCode.value || undefined,
+        require_market_bull: limitUpRequireMarketBull.value || undefined,
+        market_strict: limitUpMarketStrict.value || undefined,
       }),
       toast: false,
     });
@@ -564,6 +760,117 @@ async function runLimitUpPullbackScan() {
   } finally {
     limitUpLoading.value = false;
   }
+}
+
+function parseNumberList(str) {
+  return (str || "")
+    .split(/[,;\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n));
+}
+
+function parseBoolList(str) {
+  return (str || "")
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .map((s) => s === "true" || s === "1" || s === "yes");
+}
+
+async function runLimitUpOptimize() {
+  optimizeLoading.value = true;
+  optimizeError.value = "";
+  optimizeResult.value = null;
+  const c = (props.code || "").trim();
+  if (!c) {
+    optimizeError.value = "请选择标的代码";
+    optimizeLoading.value = false;
+    return;
+  }
+  const entryTypes = optimizeEntryTypes.value?.length ? optimizeEntryTypes.value : ["neutral"];
+  const volumeShrinkRatios = parseNumberList(optimizeVolumeShrinkRatios.value);
+  if (!volumeShrinkRatios.length) volumeShrinkRatios.push(0.5);
+  const maxHoldDaysList = parseNumberList(optimizeMaxHoldDaysList.value);
+  if (!maxHoldDaysList.length) maxHoldDaysList.push(0);
+  const timeStopDaysList = parseNumberList(optimizeTimeStopDaysList.value);
+  if (!timeStopDaysList.length) timeStopDaysList.push(0);
+  const timeStopPcts = parseNumberList(optimizeTimeStopPcts.value);
+  if (!timeStopPcts.length) timeStopPcts.push(0.0);
+  const maStrictValues = parseBoolList(optimizeMaStrictValues.value);
+  if (!maStrictValues.length) maStrictValues.push(false);
+
+  const s = (tradeStartDate.value || "").trim();
+  const e = (tradeEndDate.value || "").trim();
+  const b = (benchmarkCode.value || "").trim().toLowerCase();
+
+  const payload = {
+    code: c,
+    limit: Math.max(30, Math.min(5000, Number(limit.value) || 500)),
+    commission_rate: feeRate.value,
+    slippage_rate: slipRate.value,
+    adjust_flag: innerAdjustFlag.value,
+    entry_types: entryTypes,
+    pullback_days_min: Math.max(1, Math.min(60, Number(optimizePullbackDaysMin.value) || 5)),
+    pullback_days_max: Math.max(1, Math.min(60, Number(optimizePullbackDaysMax.value) || 15)),
+    pullback_days_step: Math.max(1, Math.min(10, Number(optimizePullbackDaysStep.value) || 1)),
+    volume_shrink_ratios: volumeShrinkRatios,
+    max_hold_days_list: maxHoldDaysList,
+    time_stop_days_list: timeStopDaysList,
+    time_stop_pcts: timeStopPcts,
+    ma_strict_values: maStrictValues,
+    max_combinations: Math.max(1, Math.min(500, Number(optimizeMaxCombinations.value) || 100)),
+    sort_by: optimizeSortBy.value || "sharpe",
+    top_n: Math.max(1, Math.min(100, Number(optimizeTopN.value) || 10)),
+  };
+  if (s) payload.start_date = s;
+  if (e) payload.end_date = e;
+  if (b) payload.benchmark_code = b;
+
+  try {
+    const body = await fetchJson("backtest/limit-up-pullback/optimize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      toast: false,
+    });
+    optimizeResult.value = body;
+  } catch (err) {
+    optimizeError.value = err?.message || "优化请求失败";
+  } finally {
+    optimizeLoading.value = false;
+  }
+}
+
+function applyOptimizeRow(row) {
+  if (!row?.params) return;
+  const p = row.params;
+  limitUpPullbackDays.value = p.pullback_days ?? limitUpPullbackDays.value;
+  limitUpEntryType.value = p.entry_type ?? limitUpEntryType.value;
+  limitUpVolumeShrinkRatio.value = p.volume_shrink_ratio ?? limitUpVolumeShrinkRatio.value;
+  limitUpMaxHoldDays.value = p.max_hold_days ?? limitUpMaxHoldDays.value;
+  limitUpTimeStopDays.value = p.time_stop_days ?? limitUpTimeStopDays.value;
+  limitUpTimeStopPct.value = p.time_stop_pct ?? limitUpTimeStopPct.value;
+  limitUpMarketStrict.value = p.ma_strict ?? limitUpMarketStrict.value;
+  showOptimizePanel.value = false;
+  showToast(`已应用参数组合：回调${p.pullback_days}天 · ${p.entry_type} · 夏普${row.sharpe_ratio?.toFixed?.(3) ?? "—"}`, {
+    type: "success",
+    duration: 2500,
+  });
+}
+
+function downloadOptimizeJson() {
+  if (!optimizeResult.value?.results?.length) return;
+  const text = JSON.stringify(optimizeResult.value, null, 2);
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const c = (props.code || "code").replace(/[^a-z0-9.]/gi, "_");
+  a.download = `optimize_${c}_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function cloneJson(obj) {
@@ -639,7 +946,16 @@ function limitUpPullbackSingleRunParamsObject(code) {
     pullback_days: Math.max(1, Math.min(60, Number(limitUpPullbackDays.value) || 10)),
     entry_type: String(limitUpEntryType.value || "neutral"),
     volume_shrink_ratio: Math.max(0.1, Math.min(1.0, Number(limitUpVolumeShrinkRatio.value) || 0.5)),
+    max_hold_days: Math.max(0, Math.min(120, Number(limitUpMaxHoldDays.value) || 0)),
+    time_stop_days: Math.max(0, Math.min(120, Number(limitUpTimeStopDays.value) || 0)),
+    time_stop_pct: Math.max(-0.5, Math.min(0.5, Number(limitUpTimeStopPct.value) || 0)),
   };
+  const mktCode = (limitUpMarketIndexCode.value || "").trim();
+  if (mktCode) {
+    out.market_index_code = mktCode;
+    out.require_market_bull = Boolean(limitUpRequireMarketBull.value);
+    out.market_strict = Boolean(limitUpMarketStrict.value);
+  }
   const s = (tradeStartDate.value || "").trim();
   const e = (tradeEndDate.value || "").trim();
   if (s) out.start_date = s;
@@ -1120,6 +1436,11 @@ async function exportRunArchiveById(id, ev) {
 }
 
 async function runBacktest() {
+  // 组合回测走独立逻辑
+  if (isPortfolioStrategy.value) {
+    await runPortfolioBacktest();
+    return;
+  }
   loading.value = true;
   error.value = "";
   result.value = null;
@@ -1148,6 +1469,95 @@ async function runBacktest() {
     error.value = e?.message || "请求失败";
   } finally {
     loading.value = false;
+  }
+}
+
+async function runPortfolioBacktest() {
+  portfolioLoading.value = true;
+  portfolioError.value = "";
+  portfolioResult.value = null;
+  const rangeErr = tradeRangeInvalidMsg();
+  if (rangeErr) {
+    portfolioError.value = rangeErr;
+    portfolioLoading.value = false;
+    return;
+  }
+  const codesRaw = (portfolioCodesText.value || "").trim();
+  if (!codesRaw) {
+    portfolioError.value = "请输入代码列表";
+    portfolioLoading.value = false;
+    return;
+  }
+  const parsed = codesRaw
+    .replace(/\n/g, ",")
+    .replace(/;/g, ",")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const uniq = [...new Set(parsed)].slice(0, portfolioMaxCodes.value);
+  if (!uniq.length) {
+    portfolioError.value = "代码解析后为空";
+    portfolioLoading.value = false;
+    return;
+  }
+  const weightsScheme =
+    singleRunStrategy.value === "portfolio_value_weight" ? "value" : "equal";
+  const payload = {
+    strategy_id: singleRunStrategy.value,
+    strategy_version: "1",
+    params: {
+      codes: uniq.join(","),
+      limit: Math.max(30, Math.min(5000, Number(limit.value) || 500)),
+      commission_rate: feeRate.value,
+      slippage_rate: slipRate.value,
+      strategy_for_signal: portfolioSignalStrategy.value,
+      weights_scheme: weightsScheme,
+      rebalance_freq: portfolioRebalanceFreq.value,
+      max_codes: Math.max(1, Math.min(40, Number(portfolioMaxCodes.value) || 25)),
+      max_concurrent: 8,
+      position_sizing_method: portfolioPositionSizingMethod.value,
+    },
+  };
+  // 固定金额方案：传入 amount_per_position
+  if (portfolioPositionSizingMethod.value === "fixed_amount") {
+    payload.params.position_sizing_params = {
+      amount_per_position: Math.max(1000, Number(portfolioPositionSizingAmount.value) || 100_000),
+    };
+  }
+  // 目标波动率方案：传入 target_annual_volatility
+  if (portfolioPositionSizingMethod.value === "volatility_target") {
+    payload.params.position_sizing_params = {
+      target_annual_volatility: 0.10,
+    };
+  }
+  const s = (tradeStartDate.value || "").trim();
+  const e = (tradeEndDate.value || "").trim();
+  if (s) payload.params.start_date = s;
+  if (e) payload.params.end_date = e;
+  const b = (benchmarkCode.value || "").trim().toLowerCase();
+  if (b) payload.params.benchmark_code = b;
+  payload.params.adjust_flag = innerAdjustFlag.value;
+  // fast / slow 仅当信号策略为 ma_cross 时传入
+  if (portfolioSignalStrategy.value === "ma_cross") {
+    payload.params.fast = Math.max(1, Math.min(120, Number(fast.value) || 5));
+    payload.params.slow = Math.max(2, Math.min(500, Number(slow.value) || 20));
+  }
+  try {
+    const runRes = await postMvpRunResolve(payload);
+    const r = runRes?.result;
+    if (!r || !Array.isArray(r.equity_curve)) {
+      throw new Error("响应缺少 result 或 equity_curve");
+    }
+    portfolioResult.value = r;
+    const archiveKind =
+      singleRunStrategy.value === "portfolio_value_weight"
+        ? "portfolio_value_weight"
+        : "portfolio_equal_weight";
+    await persistRun(archiveKind, payload, cloneJson(r));
+  } catch (err) {
+    portfolioError.value = err?.message || "请求失败";
+  } finally {
+    portfolioLoading.value = false;
   }
 }
 
@@ -1234,7 +1644,7 @@ async function loadSignalSnapshot() {
     signalErr.value = "";
     return;
   }
-  if (singleRunStrategy.value === "buy_hold") {
+  if (singleRunStrategy.value === "buy_hold" || isPortfolioStrategy.value) {
     signalSnap.value = null;
     lastSignalApiPath.value = "";
     signalErr.value = "";
@@ -1462,8 +1872,19 @@ watch(
 watch(singleRunStrategy, (v) => {
   result.value = null;
   error.value = "";
+  portfolioResult.value = null;
+  portfolioError.value = "";
+  showOptimizePanel.value = false;
+  optimizeResult.value = null;
+  optimizeError.value = "";
   try {
-    if (v === "buy_hold" || v === "ma_cross" || v === "limit_up_pullback") {
+    if (
+      v === "buy_hold" ||
+      v === "ma_cross" ||
+      v === "limit_up_pullback" ||
+      v === "portfolio_equal_weight" ||
+      v === "portfolio_value_weight"
+    ) {
       localStorage.setItem(LS_SINGLE_RUN_STRATEGY_KEY, v);
     }
   } catch {
@@ -1670,6 +2091,24 @@ onMounted(() => {
           />
           <span>涨停回调（<span class="mono">limit_up_pullback</span>）</span>
         </label>
+        <label class="single-strategy-opt">
+          <input
+            v-model="singleRunStrategy"
+            type="radio"
+            value="portfolio_equal_weight"
+            data-testid="single-run-strategy-portfolio-equal"
+          />
+          <span>组合回测（等权）</span>
+        </label>
+        <label class="single-strategy-opt">
+          <input
+            v-model="singleRunStrategy"
+            type="radio"
+            value="portfolio_value_weight"
+            data-testid="single-run-strategy-portfolio-value"
+          />
+          <span>组合回测（市值加权）</span>
+        </label>
       </div>
       <header class="hd">
         <div>
@@ -1680,7 +2119,9 @@ onMounted(() => {
                 ? "买入持有（日线）"
                 : singleRunStrategy === "limit_up_pullback"
                   ? "涨停回调（日线）"
-                  : "双均线（日线）"
+                  : isPortfolioStrategy
+                    ? "组合回测（多标的）"
+                    : "双均线（日线）"
             }}
           </h2>
           <p v-if="singleRunStrategy === 'buy_hold'" class="sub mono">
@@ -1692,6 +2133,10 @@ onMounted(() => {
             标的 {{ (code || "—").trim() }} · 涨停后回调买点触发建仓；回测与存档前试算走
             <span class="mono">POST /api/backtest/run</span>（<span class="mono">limit_up_pullback</span>）；与
             <span class="mono">GET …/limit-up-pullback</span> 同核。
+          </p>
+          <p v-else-if="isPortfolioStrategy" class="sub mono">
+            组合回测 · 多标的等权/市值加权配置 · 再平衡策略；回测与存档走
+            <span class="mono">POST /api/backtest/run</span>（<span class="mono">{{ singleRunStrategy }}</span>）。
           </p>
           <p v-else class="sub mono">
             标的 {{ (code || "—").trim() }} · 与行情看板当前代码联动；回测与存档前试算走
@@ -1740,12 +2185,13 @@ onMounted(() => {
             type="button"
             class="run"
             data-testid="backtest-run-submit"
-            :disabled="loading"
+            :disabled="loading || portfolioLoading"
             @click="runBacktest"
           >
-            {{ loading ? "计算中…" : "运行回测" }}
+            {{ loading || portfolioLoading ? "计算中…" : "运行回测" }}
           </button>
           <button
+            v-if="!isPortfolioStrategy"
             type="button"
             class="run secondary"
             data-testid="backtest-open-paper"
@@ -1756,39 +2202,102 @@ onMounted(() => {
           <button
             type="button"
             class="run secondary"
-            :disabled="!result"
+            :disabled="!result && !portfolioResult"
             @click="downloadSingleJson"
           >
             下载 JSON
+          </button>
+          <button
+            v-if="singleRunStrategy === 'limit_up_pullback'"
+            type="button"
+            class="run gold"
+            :class="{ active: showOptimizePanel }"
+            @click="showOptimizePanel = !showOptimizePanel"
+          >
+            {{ showOptimizePanel ? "关闭优化" : "参数优化" }}
           </button>
         </div>
       </header>
 
       <div class="form">
-        <label class="field">
-          <span class="lbl">快线</span>
-          <input
-            v-model.number="fast"
-            type="number"
-            min="1"
-            max="120"
-            class="inp mono"
-            :disabled="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback'"
-            :title="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback' ? '当前策略不使用快慢线' : ''"
-          />
-        </label>
-        <label class="field">
-          <span class="lbl">慢线</span>
-          <input
-            v-model.number="slow"
-            type="number"
-            min="2"
-            max="500"
-            class="inp mono"
-            :disabled="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback'"
-            :title="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback' ? '当前策略不使用快慢线' : ''"
-          />
-        </label>
+        <!-- 组合回测专用表单 -->
+        <template v-if="isPortfolioStrategy">
+          <label class="field wide">
+            <span class="lbl">信号策略</span>
+            <select v-model="portfolioSignalStrategy" class="inp mono">
+              <option value="ma_cross">双均线（ma_cross）</option>
+              <option value="buy_hold">买入持有（buy_hold）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="lbl">权重方案</span>
+            <select v-model="portfolioWeightsScheme" class="inp mono" :disabled="singleRunStrategy === 'portfolio_value_weight'">
+              <option value="equal">等权</option>
+              <option value="value">市值加权</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="lbl">再平衡频率</span>
+            <select v-model="portfolioRebalanceFreq" class="inp mono">
+              <option value="daily">日频</option>
+              <option value="weekly">周频</option>
+              <option value="monthly">月频</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="lbl">头寸方案</span>
+            <select v-model="portfolioPositionSizingMethod" class="inp mono">
+              <option value="equal">等权</option>
+              <option value="fixed_amount">固定金额每票</option>
+              <option value="volatility_target">目标波动率 10%</option>
+            </select>
+          </label>
+          <label v-if="portfolioPositionSizingMethod === 'fixed_amount'" class="field">
+            <span class="lbl">每票金额（元）</span>
+            <input v-model.number="portfolioPositionSizingAmount" type="number" min="1000" step="1000" class="inp mono" />
+          </label>
+          <template v-if="portfolioSignalStrategy === 'ma_cross'">
+            <label class="field">
+              <span class="lbl">快线</span>
+              <input v-model.number="fast" type="number" min="1" max="120" class="inp mono" />
+            </label>
+            <label class="field">
+              <span class="lbl">慢线</span>
+              <input v-model.number="slow" type="number" min="2" max="500" class="inp mono" />
+            </label>
+          </template>
+          <label class="field">
+            <span class="lbl">最大标的数</span>
+            <input v-model.number="portfolioMaxCodes" type="number" min="1" max="40" class="inp mono" />
+          </label>
+        </template>
+
+        <template v-else>
+          <label class="field">
+            <span class="lbl">快线</span>
+            <input
+              v-model.number="fast"
+              type="number"
+              min="1"
+              max="120"
+              class="inp mono"
+              :disabled="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback'"
+              :title="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback' ? '当前策略不使用快慢线' : ''"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">慢线</span>
+            <input
+              v-model.number="slow"
+              type="number"
+              min="2"
+              max="500"
+              class="inp mono"
+              :disabled="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback'"
+              :title="singleRunStrategy === 'buy_hold' || singleRunStrategy === 'limit_up_pullback' ? '当前策略不使用快慢线' : ''"
+            />
+          </label>
+        </template>
         <template v-if="singleRunStrategy === 'limit_up_pullback'">
           <label class="field">
             <span class="lbl">回调观察天数</span>
@@ -1818,6 +2327,57 @@ onMounted(() => {
               step="0.1"
               class="inp mono"
             />
+          </label>
+          <label class="field">
+            <span class="lbl">最大持仓天数</span>
+            <input
+              v-model.number="limitUpMaxHoldDays"
+              type="number"
+              min="0"
+              max="120"
+              class="inp mono"
+              title="0=不限制"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">时间止损(天)</span>
+            <input
+              v-model.number="limitUpTimeStopDays"
+              type="number"
+              min="0"
+              max="120"
+              class="inp mono"
+              title="0=不启用"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">时间止损阈值(%)</span>
+            <input
+              v-model.number="limitUpTimeStopPct"
+              type="number"
+              min="-50"
+              max="50"
+              step="1"
+              class="inp mono"
+              title="建仓N天后浮盈低于该值即清仓"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">大盘指数</span>
+            <input
+              v-model="limitUpMarketIndexCode"
+              type="text"
+              class="inp mono"
+              placeholder="sh.000001"
+            />
+          </label>
+          <label class="field" v-if="limitUpMarketIndexCode?.trim()">
+            <span class="lbl">
+              <input v-model="limitUpRequireMarketBull" type="checkbox" /> 要求大盘多头
+            </span>
+            <span class="lbl">
+              <input v-model="limitUpMarketStrict" type="checkbox" /> 严格(MA20斜率向上)
+            </span>
           </label>
         </template>
         <label class="field">
@@ -1850,7 +2410,385 @@ onMounted(() => {
         </label>
       </div>
 
+      <!-- 组合回测代码列表 -->
+      <template v-if="isPortfolioStrategy">
+        <div class="codes-toolbar">
+          <label class="block-label">代码列表（每行一个或逗号分隔）</label>
+          <div class="codes-toolbar-actions">
+            <button type="button" class="linkish" @click="fillPresetMajorsForPortfolio">填入主要指数</button>
+            <button type="button" class="linkish" @click="fillPortfolioFromWatchlist">填入自选（最多 {{ portfolioMaxCodes }}）</button>
+          </div>
+        </div>
+        <textarea v-model="portfolioCodesText" class="codes-ta mono" rows="5" spellcheck="false" />
+      </template>
+
+      <!-- 参数优化面板（涨停回调） -->
+      <div
+        v-if="singleRunStrategy === 'limit_up_pullback' && showOptimizePanel"
+        class="optimize-panel"
+      >
+        <div class="optimize-hd">
+          <h3 class="optimize-title">参数网格优化</h3>
+          <p class="optimize-sub mono">
+            POST /api/backtest/limit-up-pullback/optimize · 扫描多组参数，返回 Top-N 最优结果
+          </p>
+        </div>
+        <div class="optimize-form">
+          <label class="field">
+            <span class="lbl">回调天数范围</span>
+            <div class="range-row">
+              <input
+                v-model.number="optimizePullbackDaysMin"
+                type="number"
+                min="1"
+                max="60"
+                class="inp mono"
+                title="最小值"
+              />
+              <span class="range-sep">—</span>
+              <input
+                v-model.number="optimizePullbackDaysMax"
+                type="number"
+                min="1"
+                max="60"
+                class="inp mono"
+                title="最大值"
+              />
+              <span class="range-sep">步长</span>
+              <input
+                v-model.number="optimizePullbackDaysStep"
+                type="number"
+                min="1"
+                max="10"
+                class="inp mono"
+                title="步长"
+              />
+            </div>
+          </label>
+          <label class="field wide">
+            <span class="lbl">买点类型（多选）</span>
+            <span class="chk-group">
+              <label class="chk-opt">
+                <input v-model="optimizeEntryTypes" type="checkbox" value="aggressive" /> 激进
+              </label>
+              <label class="chk-opt">
+                <input v-model="optimizeEntryTypes" type="checkbox" value="neutral" /> 中性
+              </label>
+              <label class="chk-opt">
+                <input v-model="optimizeEntryTypes" type="checkbox" value="conservative" /> 保守
+              </label>
+            </span>
+          </label>
+          <label class="field">
+            <span class="lbl">缩量比例列表</span>
+            <input
+              v-model="optimizeVolumeShrinkRatios"
+              type="text"
+              class="inp mono"
+              placeholder="如 0.3,0.5,0.7"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">最大持仓天数列表</span>
+            <input
+              v-model="optimizeMaxHoldDaysList"
+              type="text"
+              class="inp mono"
+              placeholder="如 0,5,10"
+              title="0=不限制"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">时间止损天数列表</span>
+            <input
+              v-model="optimizeTimeStopDaysList"
+              type="text"
+              class="inp mono"
+              placeholder="如 0,3,5"
+              title="0=不启用"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">时间止损阈值列表(%)</span>
+            <input
+              v-model="optimizeTimeStopPcts"
+              type="text"
+              class="inp mono"
+              placeholder="如 -5,0,5"
+              title="建仓N天后浮盈低于该值即清仓"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">MA严格列表</span>
+            <input
+              v-model="optimizeMaStrictValues"
+              type="text"
+              class="inp mono"
+              placeholder="如 false,true"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">排序指标</span>
+            <select v-model="optimizeSortBy" class="inp mono">
+              <option value="sharpe">夏普比率</option>
+              <option value="total_return">总收益</option>
+              <option value="excess_return">超额收益</option>
+              <option value="sortino">Sortino</option>
+              <option value="calmar">Calmar</option>
+              <option value="win_rate">胜率</option>
+              <option value="max_drawdown">最大回撤（最小优先）</option>
+              <option value="trades_count">交易次数</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="lbl">Top N</span>
+            <input
+              v-model.number="optimizeTopN"
+              type="number"
+              min="1"
+              max="100"
+              class="inp mono"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">最大组合数</span>
+            <input
+              v-model.number="optimizeMaxCombinations"
+              type="number"
+              min="1"
+              max="500"
+              class="inp mono"
+              title="超出将均匀采样"
+            />
+          </label>
+        </div>
+        <div class="optimize-actions">
+          <button
+            type="button"
+            class="run"
+            :disabled="optimizeLoading"
+            @click="runLimitUpOptimize"
+          >
+            {{ optimizeLoading ? "优化中…" : "开始优化" }}
+          </button>
+          <button
+            type="button"
+            class="run secondary"
+            :disabled="!optimizeResult?.results?.length"
+            @click="downloadOptimizeJson"
+          >
+            下载 JSON
+          </button>
+        </div>
+        <div v-if="optimizeError" class="err">{{ optimizeError }}</div>
+
+        <!-- 优化结果 -->
+        <div v-if="optimizeResult?.results?.length" class="optimize-results">
+          <p class="optimize-results-meta mono">
+            标的 {{ optimizeResult.code }} · {{ optimizeResult.combinations_tested }} 组参数已测试 · K线
+            {{ optimizeResult.bars_used }} 根 · 按 {{ OPTIMIZE_SORT_BY_LABELS[optimizeResult.sort_by] || optimizeResult.sort_by }} 排序 · Top {{ optimizeResult.top_n }}
+          </p>
+          <div class="optimize-table-wrap">
+            <table class="optimize-table">
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>买点</th>
+                  <th>回调天</th>
+                  <th>缩量比</th>
+                  <th>持仓天</th>
+                  <th>止损天</th>
+                  <th>止损%</th>
+                  <th>MA严格</th>
+                  <th>收益%</th>
+                  <th>超额%</th>
+                  <th>回撤%</th>
+                  <th>夏普</th>
+                  <th>Sortino</th>
+                  <th>Calmar</th>
+                  <th>胜率%</th>
+                  <th>交易数</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(row, i) in optimizeResult.results"
+                  :key="i"
+                  class="optimize-row"
+                  @click="applyOptimizeRow(row)"
+                  title="点击应用此参数组合"
+                >
+                  <td class="mono">{{ i + 1 }}</td>
+                  <td class="mono">{{ row.params?.entry_type }}</td>
+                  <td class="mono">{{ row.params?.pullback_days }}</td>
+                  <td class="mono">{{ row.params?.volume_shrink_ratio }}</td>
+                  <td class="mono">{{ row.params?.max_hold_days }}</td>
+                  <td class="mono">{{ row.params?.time_stop_days }}</td>
+                  <td class="mono">{{ row.params?.time_stop_pct }}</td>
+                  <td class="mono">{{ row.params?.ma_strict ? "是" : "否" }}</td>
+                  <td
+                    class="mono"
+                    :class="{ up: row.total_return_pct > 0, down: row.total_return_pct < 0 }"
+                  >
+                    {{ row.total_return_pct?.toFixed?.(2) ?? "—" }}
+                  </td>
+                  <td
+                    class="mono"
+                    :class="{ up: row.excess_return_pct > 0, down: row.excess_return_pct < 0 }"
+                  >
+                    {{ row.excess_return_pct?.toFixed?.(2) ?? "—" }}
+                  </td>
+                  <td class="mono down">{{ row.max_drawdown_pct?.toFixed?.(2) ?? "—" }}</td>
+                  <td class="mono">{{ row.sharpe_ratio?.toFixed?.(3) ?? "—" }}</td>
+                  <td class="mono">{{ row.sortino_ratio?.toFixed?.(3) ?? "—" }}</td>
+                  <td class="mono">{{ row.calmar_ratio?.toFixed?.(3) ?? "—" }}</td>
+                  <td class="mono">{{ row.win_rate_pct?.toFixed?.(1) ?? "—" }}</td>
+                  <td class="mono">{{ row.long_trades_count ?? "—" }}</td>
+                  <td>
+                    <button
+                      type="button"
+                      class="ghost optimize-apply-btn"
+                      @click.stop="applyOptimizeRow(row)"
+                    >
+                      应用
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="optimize-hint">点击表格行或「应用」按钮将参数填入当前回测表单并关闭优化面板</p>
+        </div>
+      </div>
+
       <div v-if="error" class="err">{{ error }}</div>
+      <div v-if="portfolioError" class="err">{{ portfolioError }}</div>
+
+      <!-- 组合回测结果 -->
+      <template v-if="portfolioResult">
+        <p class="portfolio-note mono">
+          组合回测 · {{ portfolioResult.codes_count || portfolioResult.equity_curve?.length || "—" }} 只标的 ·
+          {{ singleRunStrategy === "portfolio_value_weight" ? "市值加权" : "等权" }} ·
+          {{ portfolioRebalanceFreq === "daily" ? "日频" : portfolioRebalanceFreq === "weekly" ? "周频" : "月频" }}再平衡
+          <template v-if="portfolioResult.positions_history?.length">
+            · 持仓记录 {{ portfolioResult.positions_history.length }} 条
+          </template>
+        </p>
+        <div class="metrics">
+          <div class="m">
+            <span class="mk">策略收益 %</span>
+            <span
+              class="mv mono"
+              :class="{ up: portfolioResult.total_return_pct > 0, down: portfolioResult.total_return_pct < 0 }"
+            >
+              {{ portfolioResult.total_return_pct?.toFixed?.(2) ?? "—" }}
+            </span>
+          </div>
+          <div class="m">
+            <span class="mk">买入持有 %</span>
+            <span class="mv mono">{{ portfolioResult.buy_hold_return_pct?.toFixed?.(2) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">超额 %（相对买入持有）</span>
+            <span
+              class="mv mono"
+              :class="{
+                up: portfolioResult.excess_return_pct > 0,
+                down: portfolioResult.excess_return_pct < 0,
+              }"
+            >
+              {{ portfolioResult.excess_return_pct?.toFixed?.(2) ?? "—" }}
+            </span>
+          </div>
+          <div class="m">
+            <span class="mk">最大回撤 %</span>
+            <span class="mv mono down">{{ portfolioResult.max_drawdown_pct?.toFixed?.(2) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">夏普</span>
+            <span class="mv mono">{{ portfolioResult.sharpe_ratio?.toFixed?.(3) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">Sortino</span>
+            <span class="mv mono">{{ portfolioResult.sortino_ratio?.toFixed?.(3) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">Calmar</span>
+            <span class="mv mono">{{ portfolioResult.calmar_ratio?.toFixed?.(3) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">年化收益 %</span>
+            <span
+              class="mv mono"
+              :class="{
+                up: portfolioResult.annualized_return_pct > 0,
+                down: portfolioResult.annualized_return_pct < 0,
+              }"
+            >
+              {{ portfolioResult.annualized_return_pct?.toFixed?.(2) ?? "—" }}
+            </span>
+          </div>
+          <div class="m">
+            <span class="mk">买入持有年化 %</span>
+            <span class="mv mono">{{ portfolioResult.buy_hold_annualized_return_pct?.toFixed?.(2) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">年化波动 %</span>
+            <span class="mv mono">{{ portfolioResult.annualized_volatility_pct?.toFixed?.(2) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">多头段数</span>
+            <span class="mv mono">{{ portfolioResult.long_trades_count ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">段胜率 %(额权)</span>
+            <span class="mv mono">{{ portfolioResult.win_rate_pct?.toFixed?.(1) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">段均收益 %</span>
+            <span
+              class="mv mono"
+              :class="{
+                up: portfolioResult.avg_holding_return_pct > 0,
+                down: portfolioResult.avg_holding_return_pct < 0,
+              }"
+            >
+              {{ portfolioResult.avg_holding_return_pct?.toFixed?.(2) ?? "—" }}
+            </span>
+          </div>
+          <div class="m">
+            <span class="mk">{{
+              portfolioResult.benchmark_code
+                ? `β（对 ${portfolioResult.benchmark_code}）`
+                : "β（对标的日收益）"
+            }}</span>
+            <span class="mv mono">{{ portfolioResult.underlying_beta?.toFixed?.(3) ?? "—" }}</span>
+          </div>
+          <div class="m">
+            <span class="mk">{{
+              portfolioResult.benchmark_code ? "α 年化 %（对基准，rf=0）" : "α 年化 %（对标的，rf=0）"
+            }}</span>
+            <span
+              class="mv mono"
+              :class="{
+                up: portfolioResult.underlying_alpha_ann_pct > 0,
+                down: portfolioResult.underlying_alpha_ann_pct < 0,
+              }"
+            >
+              {{ portfolioResult.underlying_alpha_ann_pct?.toFixed?.(2) ?? "—" }}
+            </span>
+          </div>
+          <div class="m">
+            <span class="mk">信号翻转</span>
+            <span class="mv mono">{{ portfolioResult.signal_changes ?? "—" }}</span>
+          </div>
+          <div class="m wide">
+            <span class="mk">区间</span>
+            <span class="mv mono sm">{{ portfolioResult.first_trade_date }} → {{ portfolioResult.last_trade_date }}</span>
+          </div>
+        </div>
+      </template>
 
       <div v-if="result" class="metrics">
         <div class="m">
@@ -1966,11 +2904,50 @@ onMounted(() => {
         </div>
       </div>
 
+      <!-- 交易明细（涨停回调策略） -->
+      <div v-if="singleRunStrategy === 'limit_up_pullback' && result?.trades?.length" class="trades-section">
+        <h3 class="trades-hd">交易明细（{{ result.trades.length }} 笔）</h3>
+        <div class="trades-wrap">
+          <table class="trades-table">
+            <thead>
+              <tr>
+                <th>买入日</th>
+                <th>买入价</th>
+                <th>卖出日</th>
+                <th>卖出价</th>
+                <th>持仓(天)</th>
+                <th>盈亏%</th>
+                <th>卖出原因</th>
+                <th>最大浮盈%</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(t, i) in result.trades" :key="i">
+                <td class="mono">{{ t.entry_date }}</td>
+                <td class="mono">{{ t.entry_price?.toFixed?.(2) }}</td>
+                <td class="mono">{{ t.exit_date }}</td>
+                <td class="mono">{{ t.exit_price?.toFixed?.(2) }}</td>
+                <td class="mono">{{ t.hold_days }}</td>
+                <td
+                  class="mono"
+                  :class="{ up: t.pnl_pct > 0, down: t.pnl_pct < 0 }"
+                >
+                  {{ t.pnl_pct?.toFixed?.(2) }}%
+                </td>
+                <td>{{ t.exit_reason }}</td>
+                <td class="mono up">{{ t.max_return_pct?.toFixed?.(2) }}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="chart-wrap">
         <VChart class="chart" :option="chartOption" autoresize />
       </div>
 
       <p v-if="result?.note" class="note">{{ result.note }}</p>
+      <p v-if="portfolioResult?.note" class="note">{{ portfolioResult.note }}</p>
     </template>
 
     <template v-else-if="innerTab === 'limit_up'">
@@ -2041,6 +3018,22 @@ onMounted(() => {
         <label class="field wide st-check">
           <input v-model="limitUpExcludeSt" type="checkbox" />
           <span>排除 ST 股票</span>
+        </label>
+        <label class="field wide">
+          <span class="lbl">大盘指数（可选）</span>
+          <input
+            v-model="limitUpMarketIndexCode"
+            type="text"
+            class="inp mono"
+            placeholder="sh.000001"
+            spellcheck="false"
+          />
+        </label>
+        <label class="field wide" v-if="limitUpMarketIndexCode?.trim()">
+          <span class="checkbox-row">
+            <label><input v-model="limitUpRequireMarketBull" type="checkbox" /> 要求大盘多头(close>MA20>MA60)</label>
+            <label><input v-model="limitUpMarketStrict" type="checkbox" /> 严格(MA20斜率向上)</label>
+          </span>
         </label>
       </div>
 
@@ -2186,6 +3179,57 @@ onMounted(() => {
               step="0.1"
               class="inp mono"
             />
+          </label>
+          <label class="field">
+            <span class="lbl">最大持仓天数</span>
+            <input
+              v-model.number="limitUpMaxHoldDays"
+              type="number"
+              min="0"
+              max="120"
+              class="inp mono"
+              title="0=不限制"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">时间止损(天)</span>
+            <input
+              v-model.number="limitUpTimeStopDays"
+              type="number"
+              min="0"
+              max="120"
+              class="inp mono"
+              title="0=不启用"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">时间止损阈值(%)</span>
+            <input
+              v-model.number="limitUpTimeStopPct"
+              type="number"
+              min="-50"
+              max="50"
+              step="1"
+              class="inp mono"
+              title="建仓N天后浮盈低于该值即清仓"
+            />
+          </label>
+          <label class="field">
+            <span class="lbl">大盘指数</span>
+            <input
+              v-model="limitUpMarketIndexCode"
+              type="text"
+              class="inp mono"
+              placeholder="sh.000001"
+            />
+          </label>
+          <label class="field" v-if="limitUpMarketIndexCode?.trim()">
+            <span class="lbl">
+              <input v-model="limitUpRequireMarketBull" type="checkbox" /> 要求大盘多头
+            </span>
+            <span class="lbl">
+              <input v-model="limitUpMarketStrict" type="checkbox" /> 严格(MA20斜率向上)
+            </span>
           </label>
         </template>
         <label class="field">
@@ -3058,6 +4102,13 @@ onMounted(() => {
   color: var(--mist-dim);
 }
 
+.portfolio-note {
+  margin: 0 0 14px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--gold-muted);
+}
+
 .codes-toolbar {
   display: flex;
   flex-direction: column;
@@ -3788,8 +4839,219 @@ onMounted(() => {
   gap: 12px;
 }
 
+/* 交易明细 */
+.trades-section {
+  margin-bottom: 18px;
+}
+.trades-hd {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--gold);
+}
+.trades-wrap {
+  overflow-x: auto;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.trades-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.74rem;
+}
+.trades-table th,
+.trades-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--rule-faint);
+  white-space: nowrap;
+}
+.trades-table th {
+  color: var(--gold-muted);
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.25);
+  position: sticky;
+  top: 0;
+}
+.trades-table td.up {
+  color: var(--jade);
+}
+.trades-table td.down {
+  color: var(--ember);
+}
+
+/* ── 参数优化面板 ── */
+.optimize-panel {
+  margin: 18px 0;
+  padding: 18px 20px 22px;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 197, 71, 0.18);
+  background: linear-gradient(165deg, rgba(24, 20, 8, 0.92) 0%, rgba(12, 10, 4, 0.88) 100%);
+}
+
+.optimize-hd {
+  margin-bottom: 14px;
+}
+
+.optimize-title {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.optimize-sub {
+  margin: 0;
+  font-size: 0.62rem;
+  color: var(--paper-muted);
+}
+
+.optimize-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.range-row .inp {
+  width: 60px;
+}
+
+.range-sep {
+  font-size: 0.65rem;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.chk-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+}
+
+.chk-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--mist);
+  cursor: pointer;
+}
+
+.chk-opt input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--gold);
+  cursor: pointer;
+}
+
+.optimize-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.optimize-results {
+  margin-top: 12px;
+}
+
+.optimize-results-meta {
+  margin: 0 0 8px;
+  font-size: 0.62rem;
+  color: var(--paper-muted);
+}
+
+.optimize-table-wrap {
+  overflow-x: auto;
+  max-height: 360px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--rule-faint);
+}
+
+.optimize-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.68rem;
+}
+
+.optimize-table th,
+.optimize-table td {
+  padding: 7px 9px;
+  text-align: left;
+  border-bottom: 1px solid var(--rule-faint);
+  white-space: nowrap;
+}
+
+.optimize-table th {
+  color: var(--gold-muted);
+  font-family: var(--font-display);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.35);
+  position: sticky;
+  top: 0;
+}
+
+.optimize-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.optimize-row:hover {
+  background: rgba(232, 197, 71, 0.08);
+}
+
+.optimize-table td.up {
+  color: var(--jade);
+}
+
+.optimize-table td.down {
+  color: var(--ember);
+}
+
+.optimize-apply-btn {
+  font-size: 0.6rem;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(62, 224, 255, 0.35);
+  background: rgba(10, 28, 36, 0.55);
+  color: #9aefff;
+  cursor: pointer;
+}
+
+.optimize-apply-btn:hover {
+  border-color: rgba(62, 224, 255, 0.6);
+  background: rgba(10, 28, 36, 0.75);
+  color: #c4f7ff;
+}
+
+.optimize-hint {
+  margin: 8px 0 0;
+  font-size: 0.62rem;
+  color: var(--mist-dim);
+  text-align: center;
+}
+
 @media (max-width: 1024px) {
   .run-compare-json {
+    grid-template-columns: 1fr;
+  }
+  .optimize-form {
     grid-template-columns: 1fr;
   }
 }

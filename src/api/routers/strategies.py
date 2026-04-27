@@ -48,6 +48,10 @@ class LimitUpPullbackScanRequest(BaseModel):
     sector_codes: list[str] | None = Field(None)
     require_policy: bool = Field(False)
     policy_lookback_days: int = Field(14, ge=1)
+    # 大盘环境
+    market_index_code: str | None = Field(None, description="大盘指数代码（如 sh.000001），传入后启用大盘过滤")
+    require_market_bull: bool = Field(False, description="是否要求大盘多头（close>MA20>MA60）")
+    market_strict: bool = Field(False, description="大盘严格模式：额外要求MA20斜率向上")
 
     @field_validator("codes")
     @classmethod
@@ -206,7 +210,7 @@ async def post_limit_up_pullback_scan(
 ):
     """
     涨停回调选股策略批量扫描。
-    按文档 v2.0 的五层过滤（当前实现第3~5层技术面，第1~2层通过可选参数控制）。
+    按文档 v2.0 的五层过滤（第1层大盘环境、第2层板块/政策、第3~5层技术面）。
     """
     parsed = _parse_codes(body.codes, body.max_codes)
     if not parsed:
@@ -228,6 +232,9 @@ async def post_limit_up_pullback_scan(
         sector_codes=body.sector_codes,
         require_policy=body.require_policy,
         policy_lookback_days=body.policy_lookback_days,
+        market_index_code=body.market_index_code,
+        require_market_bull=body.require_market_bull,
+        market_strict=body.market_strict,
     )
 
     try:

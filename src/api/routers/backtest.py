@@ -8,6 +8,7 @@ from datetime import date
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, Response
@@ -28,7 +29,16 @@ from src.backtest.runner import (
     limit_up_pullback_scan_items,
     parse_scan_codes,
 )
+from src.backtest.runner.portfolio_executor import (
+    STRATEGY_ID_PORTFOLIO_EQUAL,
+    STRATEGY_ID_PORTFOLIO_VALUE,
+    execute_portfolio_backtest,
+)
 from src.strategies import compute_ma_cross_signal
+from src.backtest.limit_up_pullback import (
+    LimitUpPullbackParamGrid,
+    run_limit_up_pullback_param_grid,
+)
 from src.backtest.scan import ma_cross_scan_csv_bytes, parse_scan_codes
 from src.backtest.async_job_backend import (
     JOB_CANCELLED_MSG,
@@ -46,7 +56,9 @@ from src.backtest.async_job_backend import (
     utc_now_iso_z,
 )
 from src.common.redis_client import get_redis_client
-from src.data.storage import get_database, get_session
+from src.data.models import StockType
+from src.data.storage import KlineRepository, StockRepository, get_database, get_session
+from src.api.dependencies import get_current_user
 from src.data.storage.backtest_run_repository import (
     BacktestRunRepository,
     assert_run_payload_size,
@@ -87,6 +99,7 @@ class MaCrossBacktestResponse(BaseModel):
     )
     note: str
     equity_curve: list[dict] = Field(default_factory=list)
+    trades: list[dict] = Field(default_factory=list, description="交易明细列表（涨停回调策略等支持）")
 
 
 class MaCrossScanRow(BaseModel):
@@ -201,6 +214,12 @@ class LimitUpPullbackRunParamsBody(BaseModel):
     pullback_days: int = Field(10, ge=1, le=60)
     entry_type: str = Field("neutral", min_length=1, max_length=32)
     volume_shrink_ratio: float = Field(0.5, ge=0.1, le=1.0)
+    max_hold_days: int = Field(0, ge=0, le=120, description="最大持仓天数（0=不限制）")
+    time_stop_days: int = Field(0, ge=0, le=120, description="时间止损天数（建仓后N天；0=不启用）")
+    time_stop_pct: float = Field(0.0, ge=-0.5, le=0.5, description="时间止损盈利阈值（如-0.02=-2%）")
+    market_index_code: str | None = Field(None, description="大盘指数代码（如 sh.000001），传入后启用大盘过滤")
+    require_market_bull: bool = Field(False, description="是否要求大盘多头（close>MA20>MA60）才允许建仓")
+    market_strict: bool = Field(False, description="大盘严格模式：额外要求MA20斜率向上")
 
     @model_validator(mode="after")
     def _check_entry_type(self) -> "LimitUpPullbackRunParamsBody":
@@ -226,11 +245,90 @@ class LimitUpPullbackScanRunParamsBody(BaseModel):
     pullback_days: int = Field(10, ge=1, le=60)
     entry_type: str = Field("neutral", min_length=1, max_length=32)
     volume_shrink_ratio: float = Field(0.5, ge=0.1, le=1.0)
+    max_hold_days: int = Field(0, ge=0, le=120, description="最大持仓天数（0=不限制）")
+    time_stop_days: int = Field(0, ge=0, le=120, description="时间止损天数（建仓后N天；0=不启用）")
+    time_stop_pct: float = Field(0.0, ge=-0.5, le=0.5, description="时间止损盈利阈值（如-0.02=-2%）")
+    market_index_code: str | None = Field(None, description="大盘指数代码（如 sh.000001），传入后启用大盘过滤")
+    require_market_bull: bool = Field(False, description="是否要求大盘多头（close>MA20>MA60）才允许建仓")
+    market_strict: bool = Field(False, description="大盘严格模式：额外要求MA20斜率向上")
 
     @model_validator(mode="after")
     def _check_entry_type(self) -> "LimitUpPullbackScanRunParamsBody":
         if self.entry_type not in {"aggressive", "neutral", "conservative"}:
             raise ValueError("entry_type 须为 aggressive / neutral / conservative 之一")
+        return self
+
+
+class LimitUpPullbackOptimizeParamsBody(BaseModel):
+    """POST /api/backtest/limit-up-pullback/optimize 请求体。"""
+
+    code: str = Field(..., description="标的代码，如 sh.600000")
+    limit: int = Field(500, ge=30, le=5000)
+    start_date: date | None = None
+    end_date: date | None = None
+    commission_rate: float = Field(0.0, ge=0.0, le=0.05)
+    slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
+    benchmark_code: str | None = None
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
+    # 参数网格
+    entry_types: list[str] = Field(default_factory=lambda: ["neutral"], description="买点类型列表")
+    pullback_days_min: int = Field(5, ge=1, le=60)
+    pullback_days_max: int = Field(15, ge=1, le=60)
+    pullback_days_step: int = Field(1, ge=1, le=10)
+    volume_shrink_ratios: list[float] = Field(default_factory=lambda: [0.5], description="缩量比例列表")
+    max_hold_days_list: list[int] = Field(default_factory=lambda: [0], description="最大持仓天数列表")
+    time_stop_days_list: list[int] = Field(default_factory=lambda: [0], description="时间止损天数列表")
+    time_stop_pcts: list[float] = Field(default_factory=lambda: [0.0], description="时间止损盈利阈值列表")
+    ma_strict_values: list[bool] = Field(default_factory=lambda: [False], description="均线严格多头排列开关列表")
+    max_combinations: int = Field(100, ge=1, le=500, description="最大参数组合数")
+    sort_by: str = Field("sharpe", description="排序指标：total_return/sharpe/sortino/calmar/win_rate/max_drawdown/trades_count")
+    top_n: int = Field(10, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def _check_ranges(self) -> "LimitUpPullbackOptimizeParamsBody":
+        for et in self.entry_types:
+            if et not in {"aggressive", "neutral", "conservative"}:
+                raise ValueError(f"entry_type 须为 aggressive / neutral / conservative 之一，got {et}")
+        if self.pullback_days_min > self.pullback_days_max:
+            raise ValueError("pullback_days_min 不能大于 pullback_days_max")
+        if self.commission_rate + self.slippage_rate > 0.08:
+            raise ValueError("commission_rate 与 slippage_rate 之和勿超过 0.08")
+        return self
+
+
+class PortfolioRunParamsBody(BaseModel):
+    """POST /api/backtest/run 在 strategy_id=portfolio_equal_weight/value_weight 时的 params 形状。"""
+
+    codes: str = Field(..., description="逗号或换行分隔的标的列表")
+    limit: int = Field(500, ge=30, le=5000)
+    start_date: date | None = None
+    end_date: date | None = None
+    commission_rate: float = Field(0.0, ge=0.0, le=0.05)
+    slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
+    max_codes: int = Field(25, ge=1, le=40)
+    benchmark_code: str | None = None
+    adjust_flag: str = Field("3", description="复权类型: 1=后复权 2=前复权 3=不复权")
+    strategy_for_signal: str = Field("ma_cross", description="生成信号的策略: ma_cross / buy_hold")
+    weights_scheme: str = Field("equal", description="权重方案: equal / value")
+    rebalance_freq: str = Field("monthly", description="再平衡频率: daily / weekly / monthly")
+    fast: int = Field(5, ge=1, le=120)
+    slow: int = Field(20, ge=2, le=500)
+    max_concurrent: int = Field(8, ge=1, le=20)
+    position_sizing_method: str = Field("equal", description="仓位算法: equal / fixed_amount / volatility_target")
+    position_sizing_params: dict[str, Any] = Field(default_factory=dict, description="仓位算法参数")
+
+    @model_validator(mode="after")
+    def _check_portfolio(self) -> "PortfolioRunParamsBody":
+        if self.strategy_for_signal not in {"ma_cross", "buy_hold"}:
+            raise ValueError("strategy_for_signal 须为 ma_cross / buy_hold 之一")
+        if self.weights_scheme not in {"equal", "value"}:
+            raise ValueError("weights_scheme 须为 equal / value 之一")
+        if self.rebalance_freq not in {"daily", "weekly", "monthly"}:
+            raise ValueError("rebalance_freq 须为 daily / weekly / monthly 之一")
+        if self.position_sizing_method not in {"equal", "fixed_amount", "volatility_target"}:
+            raise ValueError("position_sizing_method 须为 equal / fixed_amount / volatility_target 之一")
+        if self.commission_rate + self.slippage_rate > 0.08:
+            raise ValueError("commission_rate 与 slippage_rate 之和勿超过 0.08")
         return self
 
 
@@ -296,9 +394,9 @@ class BacktestRunMvpResponse(BaseModel):
         default_factory=list,
         description="与本次结果绑定的口径与数据假设，供审计与复现",
     )
-    result: MaCrossBacktestResponse | None = Field(
+    result: Any | None = Field(
         None,
-        description="strategy_id=ma_cross 或 buy_hold 时非空；与对应 GET /api/backtest/ma-cross|buy-hold 一致",
+        description="strategy_id=ma_cross/buy_hold 时为 MaCrossBacktestResponse；portfolio_* 时为 PortfolioBacktestResult；通用 dict",
     )
     scan_result: MaCrossScanResponse | None = Field(
         None,
@@ -435,6 +533,8 @@ def _validate_mvp_request(body: BacktestRunMvpRequest) -> None:
         STRATEGY_ID_MA_CROSS_SCAN,
         STRATEGY_ID_LIMIT_UP_PULLBACK,
         STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
+        STRATEGY_ID_PORTFOLIO_EQUAL,
+        STRATEGY_ID_PORTFOLIO_VALUE,
     )
     if body.strategy_id not in supported or body.strategy_version != "1":
         raise HTTPException(
@@ -448,25 +548,34 @@ def _validate_mvp_request(body: BacktestRunMvpRequest) -> None:
         try:
             MaCrossRunParamsBody.model_validate(body.params)
         except ValidationError as e:
-            raise HTTPException(status_code=422, detail=e.errors()) from e
+            raise HTTPException(status_code=422, detail=jsonable_encoder(e.errors())) from e
         return
     if body.strategy_id == STRATEGY_ID_BUY_HOLD:
         try:
             BuyHoldRunParamsBody.model_validate(body.params)
         except ValidationError as e:
-            raise HTTPException(status_code=422, detail=e.errors()) from e
+            raise HTTPException(status_code=422, detail=jsonable_encoder(e.errors())) from e
         return
     if body.strategy_id == STRATEGY_ID_LIMIT_UP_PULLBACK:
         try:
             LimitUpPullbackRunParamsBody.model_validate(body.params)
         except ValidationError as e:
-            raise HTTPException(status_code=422, detail=e.errors()) from e
+            raise HTTPException(status_code=422, detail=jsonable_encoder(e.errors())) from e
         return
     if body.strategy_id == STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN:
         try:
             p = LimitUpPullbackScanRunParamsBody.model_validate(body.params)
         except ValidationError as e:
-            raise HTTPException(status_code=422, detail=e.errors()) from e
+            raise HTTPException(status_code=422, detail=jsonable_encoder(e.errors())) from e
+        parsed = parse_scan_codes(p.codes, p.max_codes)
+        if not parsed:
+            raise HTTPException(status_code=400, detail="codes 解析后为空")
+        return
+    if body.strategy_id in (STRATEGY_ID_PORTFOLIO_EQUAL, STRATEGY_ID_PORTFOLIO_VALUE):
+        try:
+            p = PortfolioRunParamsBody.model_validate(body.params)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=jsonable_encoder(e.errors())) from e
         parsed = parse_scan_codes(p.codes, p.max_codes)
         if not parsed:
             raise HTTPException(status_code=400, detail="codes 解析后为空")
@@ -554,6 +663,12 @@ async def _execute_run_mvp(
                 pullback_days=p.pullback_days,
                 entry_type=p.entry_type,
                 volume_shrink_ratio=p.volume_shrink_ratio,
+                max_hold_days=p.max_hold_days,
+                time_stop_days=p.time_stop_days,
+                time_stop_pct=p.time_stop_pct,
+                market_index_code=p.market_index_code,
+                require_market_bull=p.require_market_bull,
+                market_strict=p.market_strict,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -585,6 +700,12 @@ async def _execute_run_mvp(
                 pullback_days=p.pullback_days,
                 entry_type=p.entry_type,
                 volume_shrink_ratio=p.volume_shrink_ratio,
+                max_hold_days=p.max_hold_days,
+                time_stop_days=p.time_stop_days,
+                time_stop_pct=p.time_stop_pct,
+                market_index_code=p.market_index_code,
+                require_market_bull=p.require_market_bull,
+                market_strict=p.market_strict,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -628,6 +749,40 @@ async def _execute_run_mvp(
             assumptions=assumptions,
             result=None,
             scan_result=scan,
+        )
+
+    if body.strategy_id in (STRATEGY_ID_PORTFOLIO_EQUAL, STRATEGY_ID_PORTFOLIO_VALUE):
+        p = PortfolioRunParamsBody.model_validate(body.params)
+        try:
+            payload, assumptions = await execute_portfolio_backtest(
+                session,
+                codes=p.codes,
+                strategy_for_signal=p.strategy_for_signal,
+                weights_scheme=p.weights_scheme,
+                rebalance_freq=p.rebalance_freq,
+                limit=p.limit,
+                start_date=p.start_date,
+                end_date=p.end_date,
+                commission_rate=p.commission_rate,
+                slippage_rate=p.slippage_rate,
+                benchmark_code=p.benchmark_code,
+                adjust_flag=p.adjust_flag,
+                fast=p.fast,
+                slow=p.slow,
+                max_codes=p.max_codes,
+                max_concurrent=p.max_concurrent,
+                position_sizing_method=p.position_sizing_method,
+                position_sizing_params=p.position_sizing_params,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return BacktestRunMvpResponse(
+            engine_version=ENGINE_VERSION,
+            strategy_id=body.strategy_id,
+            strategy_version=body.strategy_version,
+            assumptions=assumptions,
+            result=payload,
+            scan_result=None,
         )
 
     p = MaCrossScanRunParamsBody.model_validate(body.params)
@@ -807,6 +962,32 @@ def _backtest_engine_catalog_payload() -> BacktestEngineCatalogResponse:
                 response_shape="scan_result",
                 archive_kind="limit_up_pullback_scan",
                 get_equivalent_paths=["/api/backtest/limit-up-pullback/scan"],
+            ),
+            BacktestStrategyCatalogEntry(
+                strategy_id=STRATEGY_ID_PORTFOLIO_EQUAL,
+                strategy_version="1",
+                title="组合回测 · 等权",
+                description=(
+                    "多标的组合回测，等权分配，支持日/周/月频再平衡。"
+                    "params: codes, limit, start_date, end_date, commission_rate, slippage_rate, "
+                    "max_codes, benchmark_code, strategy_for_signal, weights_scheme, rebalance_freq, fast, slow。"
+                ),
+                response_shape="result",
+                archive_kind="portfolio_equal_weight",
+                get_equivalent_paths=[],
+            ),
+            BacktestStrategyCatalogEntry(
+                strategy_id=STRATEGY_ID_PORTFOLIO_VALUE,
+                strategy_version="1",
+                title="组合回测 · 市值加权",
+                description=(
+                    "多标的组合回测，市值加权分配，支持日/周/月频再平衡。"
+                    "params: codes, limit, start_date, end_date, commission_rate, slippage_rate, "
+                    "max_codes, benchmark_code, strategy_for_signal, weights_scheme, rebalance_freq, fast, slow。"
+                ),
+                response_shape="result",
+                archive_kind="portfolio_value_weight",
+                get_equivalent_paths=[],
             ),
         ],
     )
@@ -1102,6 +1283,12 @@ async def limit_up_pullback_backtest(
     pullback_days: int = Query(10, ge=1, le=60),
     entry_type: str = Query("neutral", min_length=1, max_length=32),
     volume_shrink_ratio: float = Query(0.5, ge=0.1, le=1.0),
+    max_hold_days: int = Query(0, ge=0, le=120, description="最大持仓天数（0=不限制）"),
+    time_stop_days: int = Query(0, ge=0, le=120, description="时间止损天数（建仓后N天；0=不启用）"),
+    time_stop_pct: float = Query(0.0, ge=-0.5, le=0.5, description="时间止损盈利阈值（如-0.02=-2%）"),
+    market_index_code: str | None = Query(None, description="大盘指数代码（如 sh.000001），传入后启用大盘过滤"),
+    require_market_bull: bool = Query(False, description="是否要求大盘多头（close>MA20>MA60）才允许建仓"),
+    market_strict: bool = Query(False, description="大盘严格模式：额外要求MA20斜率向上"),
     session: AsyncSession = Depends(get_session),
 ):
     if entry_type not in {"aggressive", "neutral", "conservative"}:
@@ -1125,6 +1312,12 @@ async def limit_up_pullback_backtest(
             pullback_days=pullback_days,
             entry_type=entry_type,
             volume_shrink_ratio=volume_shrink_ratio,
+            max_hold_days=max_hold_days,
+            time_stop_days=time_stop_days,
+            time_stop_pct=time_stop_pct,
+            market_index_code=market_index_code,
+            require_market_bull=require_market_bull,
+            market_strict=market_strict,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -1148,6 +1341,12 @@ async def limit_up_pullback_scan(
     pullback_days: int = Query(10, ge=1, le=60),
     entry_type: str = Query("neutral", min_length=1, max_length=32),
     volume_shrink_ratio: float = Query(0.5, ge=0.1, le=1.0),
+    max_hold_days: int = Query(0, ge=0, le=120, description="最大持仓天数（0=不限制）"),
+    time_stop_days: int = Query(0, ge=0, le=120, description="时间止损天数（建仓后N天；0=不启用）"),
+    time_stop_pct: float = Query(0.0, ge=-0.5, le=0.5, description="时间止损盈利阈值（如-0.02=-2%）"),
+    market_index_code: str | None = Query(None, description="大盘指数代码（如 sh.000001），传入后启用大盘过滤"),
+    require_market_bull: bool = Query(False, description="是否要求大盘多头（close>MA20>MA60）才允许建仓"),
+    market_strict: bool = Query(False, description="大盘严格模式：额外要求MA20斜率向上"),
     session: AsyncSession = Depends(get_session),
 ):
     if entry_type not in {"aggressive", "neutral", "conservative"}:
@@ -1179,6 +1378,12 @@ async def limit_up_pullback_scan(
             pullback_days=pullback_days,
             entry_type=entry_type,
             volume_shrink_ratio=volume_shrink_ratio,
+            max_hold_days=max_hold_days,
+            time_stop_days=time_stop_days,
+            time_stop_pct=time_stop_pct,
+            market_index_code=market_index_code,
+            require_market_bull=require_market_bull,
+            market_strict=market_strict,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -1221,6 +1426,82 @@ async def limit_up_pullback_scan(
         benchmark_code=bench_norm,
         items=rows,
     )
+
+
+@router.post("/limit-up-pullback/optimize")
+async def limit_up_pullback_optimize(
+    body: LimitUpPullbackOptimizeParamsBody,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    涨停回调策略参数网格优化：扫描多个参数组合，返回 Top-N 最优结果。
+    """
+    c = body.code.strip()
+    repo = KlineRepository(session)
+    klines = await repo.get_daily(
+        code=c,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        limit=body.limit,
+        adjust_flag=body.adjust_flag,
+    )
+    if len(klines) < 30:
+        raise HTTPException(
+            status_code=400,
+            detail=f"K 线不足：涨停回调策略至少需要 30 根，当前 {len(klines)}"
+        )
+
+    stock_repo = StockRepository(session)
+    stock_info = await stock_repo.get_by_code(c)
+    stock_type = stock_info.stock_type if stock_info else StockType.COMMON
+
+    bench_norm = (body.benchmark_code or "").strip().lower() or None
+    bench_klines = None
+    if bench_norm:
+        bench_klines = await repo.get_daily(
+            code=bench_norm,
+            start_date=body.start_date,
+            end_date=body.end_date,
+            limit=body.limit,
+            adjust_flag=body.adjust_flag,
+        )
+
+    grid = LimitUpPullbackParamGrid(
+        entry_types=body.entry_types,
+        pullback_days_list=list(
+            range(body.pullback_days_min, body.pullback_days_max + 1, body.pullback_days_step)
+        ),
+        volume_shrink_ratios=body.volume_shrink_ratios,
+        max_hold_days_list=body.max_hold_days_list,
+        time_stop_days_list=body.time_stop_days_list,
+        time_stop_pcts=body.time_stop_pcts,
+        ma_strict_values=body.ma_strict_values,
+        max_combinations=body.max_combinations,
+    )
+
+    try:
+        results = run_limit_up_pullback_param_grid(
+            klines,
+            stock_type=stock_type,
+            grid=grid,
+            commission_rate=body.commission_rate,
+            slippage_rate=body.slippage_rate,
+            benchmark_klines=bench_klines,
+            stock_info=stock_info,
+            sort_by=body.sort_by,
+            top_n=body.top_n,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return {
+        "code": c,
+        "bars_used": len(klines),
+        "combinations_tested": len(results),
+        "sort_by": body.sort_by,
+        "top_n": body.top_n,
+        "results": results,
+    }
 
 
 @router.post(
@@ -1338,6 +1619,9 @@ async def backtest_run_mvp(
     若 ``REDIS_ENABLED`` 且 ``BACKTEST_ASYNC_JOB_STORE`` 为 ``auto``（默认），任务入 **Redis 队列** 并持久化记录；
     否则为进程内表（重启清空）。``BACKTEST_ASYNC_JOB_STORE=redis`` 且 Redis 不可用时返回 **503**。
     """
+    from src.common.kill_switch import check_or_raise
+
+    await check_or_raise()
     _validate_mvp_request(body)
     if async_run:
         enforce_redis_job_store_or_503()
@@ -1362,6 +1646,8 @@ class BacktestRunCreate(BaseModel):
         "buy_hold_single",
         "limit_up_pullback_single",
         "limit_up_pullback_scan",
+        "portfolio_equal_weight",
+        "portfolio_value_weight",
     ]
     request_params: dict[str, Any] = Field(default_factory=dict)
     response_payload: dict[str, Any] = Field(default_factory=dict)
@@ -1390,10 +1676,17 @@ class BacktestRunDetailResponse(BaseModel):
     response_payload: dict[str, Any]
 
 
+def _user_id_or_system(current_user: dict) -> int | None:
+    """将系统用户（id=0）映射为 None，以便与 user_id=NULL 的旧数据兼容。"""
+    uid = current_user.get("id", 0)
+    return None if uid == 0 else uid
+
+
 @router.post("/runs", status_code=201)
 async def backtest_run_create(
     body: BacktestRunCreate,
     session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """保存一次单标的回测或批量扫描的完整请求/响应 JSON（供日后查阅）。"""
     if not isinstance(body.request_params, dict) or not isinstance(body.response_payload, dict):
@@ -1403,12 +1696,14 @@ async def backtest_run_create(
     except ValueError as e:
         raise HTTPException(status_code=413, detail=str(e)) from e
     summary = build_summary(body.kind, body.response_payload)
+    user_id = _user_id_or_system(current_user)
     repo = BacktestRunRepository(session)
     row = await repo.create(
         kind=body.kind,
         summary=summary,
         request_params=body.request_params,
         response_payload=body.response_payload,
+        user_id=user_id,
     )
     return {"id": row.id, "summary": row.summary}
 
@@ -1416,6 +1711,7 @@ async def backtest_run_create(
 @router.get("/runs", response_model=BacktestRunsListResponse)
 async def backtest_runs_list(
     session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
     kind: Literal[
@@ -1424,15 +1720,18 @@ async def backtest_runs_list(
         "buy_hold_single",
         "limit_up_pullback_single",
         "limit_up_pullback_scan",
+        "portfolio_equal_weight",
+        "portfolio_value_weight",
     ] | None = Query(
         None, description="仅列出该类型的存档；不传则全部"
     ),
     q: str | None = Query(None, max_length=120, description="摘要子串过滤（LIKE %q%）"),
 ) -> BacktestRunsListResponse:
     q_norm = (q.strip() if q else "") or None
+    user_id = _user_id_or_system(current_user)
     repo = BacktestRunRepository(session)
-    total = await repo.count_all(kind=kind, q=q_norm)
-    rows = await repo.list_recent(limit=limit, offset=offset, kind=kind, q=q_norm)
+    total = await repo.count_all(kind=kind, q=q_norm, user_id=user_id)
+    rows = await repo.list_recent(limit=limit, offset=offset, kind=kind, q=q_norm, user_id=user_id)
     items = [
         BacktestRunListItem(
             id=r.id,
@@ -1449,9 +1748,16 @@ async def backtest_runs_list(
 async def backtest_run_delete(
     run_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ) -> Response:
-    """删除一条存档（不可恢复）。"""
+    """删除一条存档（不可恢复）；只能删除自己的记录。"""
+    user_id = _user_id_or_system(current_user)
     repo = BacktestRunRepository(session)
+    row = await repo.get(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if row.user_id != user_id:
+        raise HTTPException(status_code=404, detail="记录不存在")
     if not await repo.delete_by_id(run_id):
         raise HTTPException(status_code=404, detail="记录不存在")
     return Response(status_code=204)
@@ -1461,10 +1767,14 @@ async def backtest_run_delete(
 async def backtest_run_detail(
     run_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ) -> BacktestRunDetailResponse:
+    user_id = _user_id_or_system(current_user)
     repo = BacktestRunRepository(session)
     row = await repo.get(run_id)
     if row is None:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if row.user_id != user_id:
         raise HTTPException(status_code=404, detail="记录不存在")
     return BacktestRunDetailResponse(
         id=row.id,
@@ -1473,4 +1783,147 @@ async def backtest_run_detail(
         created_at=row.created_at.isoformat() if row.created_at else "",
         request_params=dict(row.request_params or {}),
         response_payload=dict(row.response_payload or {}),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Walk-forward 分析
+# ---------------------------------------------------------------------------
+
+
+class WalkForwardRequest(BaseModel):
+    """Walk-forward 分析请求。"""
+
+    code: str = Field(..., description="标的代码")
+    strategy_id: str = Field("buy_hold", description="策略 ID：buy_hold / ma_cross")
+    fast: int = Field(5, ge=1, le=120, description="ma_cross 快线周期")
+    slow: int = Field(20, ge=2, le=500, description="ma_cross 慢线周期")
+    train_days: int = Field(252, ge=60, le=1000, description="训练期交易日数")
+    test_days: int = Field(63, ge=20, le=252, description="测试期交易日数")
+    step_days: int = Field(63, ge=20, le=252, description="滑动步长")
+    commission_rate: float = Field(0.0, ge=0.0, le=0.05)
+    slippage_rate: float = Field(0.0, ge=0.0, le=0.05)
+    adjust_flag: str = Field("3", description="复权类型")
+    limit: int = Field(5000, ge=100, le=5000, description="单期最多 K 线数")
+
+
+class WalkForwardFoldResult(BaseModel):
+    fold: int
+    train_start: str
+    train_end: str
+    test_start: str
+    test_end: str
+    test_total_return: float | None = None
+    test_sharpe: float | None = None
+    test_max_drawdown: float | None = None
+
+
+class WalkForwardResponse(BaseModel):
+    code: str
+    strategy_id: str
+    folds: list[WalkForwardFoldResult]
+    aggregated: dict[str, Any]
+
+
+@router.post("/walk-forward", response_model=WalkForwardResponse)
+async def backtest_walk_forward(
+    body: WalkForwardRequest,
+    session: AsyncSession = Depends(get_session),
+) -> WalkForwardResponse:
+    """Walk-forward 分析：滚动窗口训练+验证，防止过拟合。"""
+    from src.backtest.walk_forward import aggregate_results, generate_windows
+
+    # 获取数据时间范围
+    from src.data.storage import KlineRepository
+
+    repo = KlineRepository(session)
+    klines = await repo.get_daily(
+        code=body.code.strip(),
+        limit=body.limit * 3,
+        adjust_flag=body.adjust_flag,
+    )
+    if len(klines) < 100:
+        raise HTTPException(status_code=400, detail="K 线不足，无法生成 walk-forward 窗口")
+
+    data_start = klines[0].trade_date
+    data_end = klines[-1].trade_date
+
+    windows = generate_windows(
+        start_date=data_start,
+        end_date=data_end,
+        train_days=body.train_days,
+        test_days=body.test_days,
+        step_days=body.step_days,
+    )
+
+    if not windows:
+        raise HTTPException(status_code=400, detail="窗口参数与数据范围不匹配，无法生成窗口")
+
+    folds: list[WalkForwardFoldResult] = []
+    test_results: list[dict[str, Any]] = []
+
+    for w in windows:
+        # 构造回测参数
+        params = {
+            "code": body.code.strip(),
+            "limit": body.limit,
+            "start_date": w.test_start,
+            "end_date": w.test_end,
+            "commission_rate": body.commission_rate,
+            "slippage_rate": body.slippage_rate,
+            "adjust_flag": body.adjust_flag,
+            "benchmark_code": None,
+        }
+        if body.strategy_id == STRATEGY_ID_MA_CROSS:
+            params["fast"] = body.fast
+            params["slow"] = body.slow
+
+        try:
+            if body.strategy_id == STRATEGY_ID_BUY_HOLD:
+                payload, _ = await execute_buy_hold_single(session, **params)
+            elif body.strategy_id == STRATEGY_ID_MA_CROSS:
+                payload, _ = await execute_ma_cross_single(session, **params)
+            else:
+                raise HTTPException(status_code=400, detail=f"不支持的 strategy_id: {body.strategy_id}")
+
+            # payload 为回测结果 dict，字段名含 _pct 后缀
+            total_return = payload.get("total_return_pct")
+            sharpe = payload.get("sharpe_ratio")
+            max_dd = payload.get("max_drawdown_pct")
+
+            folds.append(WalkForwardFoldResult(
+                fold=w.fold,
+                train_start=w.train_start.isoformat(),
+                train_end=w.train_end.isoformat(),
+                test_start=w.test_start.isoformat(),
+                test_end=w.test_end.isoformat(),
+                test_total_return=total_return,
+                test_sharpe=sharpe,
+                test_max_drawdown=max_dd,
+            ))
+
+            test_results.append({
+                "total_return": total_return or 0,
+                "sharpe_ratio": sharpe,
+                "max_drawdown": max_dd,
+            })
+        except Exception as e:
+            import logging
+            logging.getLogger("walk_forward").warning("Fold %d failed: %s", w.fold, e)
+            folds.append(WalkForwardFoldResult(
+                fold=w.fold,
+                train_start=w.train_start.isoformat(),
+                train_end=w.train_end.isoformat(),
+                test_start=w.test_start.isoformat(),
+                test_end=w.test_end.isoformat(),
+            ))
+            test_results.append({"total_return": 0})
+
+    aggregated = aggregate_results(test_results)
+
+    return WalkForwardResponse(
+        code=body.code,
+        strategy_id=body.strategy_id,
+        folds=folds,
+        aggregated=aggregated,
     )

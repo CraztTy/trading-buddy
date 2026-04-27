@@ -133,6 +133,10 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
         STRATEGY_ID_MA_CROSS,
         STRATEGY_ID_MA_CROSS_SCAN,
     )
+    from src.backtest.runner.portfolio_executor import (
+        STRATEGY_ID_PORTFOLIO_EQUAL,
+        STRATEGY_ID_PORTFOLIO_VALUE,
+    )
 
     _expected_shape_paths: dict[str, tuple[str, list[str]]] = {
         STRATEGY_ID_MA_CROSS: ("result", ["/api/backtest/ma-cross"]),
@@ -140,6 +144,8 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
         STRATEGY_ID_BUY_HOLD: ("result", ["/api/backtest/buy-hold"]),
         STRATEGY_ID_LIMIT_UP_PULLBACK: ("result", ["/api/backtest/limit-up-pullback"]),
         STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN: ("scan_result", ["/api/backtest/limit-up-pullback/scan"]),
+        STRATEGY_ID_PORTFOLIO_EQUAL: ("result", []),
+        STRATEGY_ID_PORTFOLIO_VALUE: ("result", []),
     }
 
     if not isinstance(data, dict):
@@ -305,6 +311,8 @@ def _backtest_catalog_archive_kind_errors(data: object) -> str | None:
         STRATEGY_ID_BUY_HOLD,
         STRATEGY_ID_LIMIT_UP_PULLBACK,
         STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN,
+        STRATEGY_ID_PORTFOLIO_EQUAL,
+        STRATEGY_ID_PORTFOLIO_VALUE,
     })
     got_ids = frozenset(by_sid.keys())
     if got_ids != expected_ids:

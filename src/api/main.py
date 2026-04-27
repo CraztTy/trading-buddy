@@ -16,6 +16,7 @@ from src.backtest.async_job_backend import (
     start_backtest_async_job_consumer,
     stop_backtest_async_job_consumer,
 )
+from src.common.kill_switch import is_killed
 from src.common.redis_client import (
     close_redis_client,
     get_redis_client,
@@ -24,6 +25,7 @@ from src.common.redis_client import (
 from src.api.request_id_middleware import RequestIdMiddleware
 from src.data.storage import dispose_database, get_database
 from .routers import (
+    auth,
     stocks,
     klines,
     realtime,
@@ -34,6 +36,16 @@ from .routers import (
     strategies,
     factors,
     trade_calendar,
+    risk,
+    kill_switch,
+    audit,
+    api_keys,
+    metrics,
+    experiments,
+    stress,
+    broker,
+    websocket,
+    ml,
 )
 
 # 进程启动时刻（lifespan 进入时设置，供浅层 /health 展示 uptime，无 DB 开销）
@@ -50,10 +62,26 @@ async def lifespan(app: FastAPI):
     global _PROCESS_STARTED_MONO
     _PROCESS_STARTED_MONO = time.perf_counter()
 
+    # 设置 metrics 进程启动时间
+    from src.api.routers.metrics import set_process_start_time
+    set_process_start_time(_PROCESS_STARTED_MONO)
+
     settings = get_settings()
     print(f"Starting Trading Buddy API on {settings.api.host}:{settings.api.port}")
     print(f"Database mode: {settings.database.mode}, Redis enabled: {settings.redis.enabled}")
 
+    # JWT 默认密钥生产环境检测
+    _DEFAULT_JWT_SECRET = "trading-buddy-dev-secret-change-in-production"
+    if settings.auth.jwt_secret == _DEFAULT_JWT_SECRET:
+        import logging
+
+        logging.getLogger("uvicorn.error").error(
+            "SECURITY WARNING: JWT_SECRET is using the default dev value. "
+            "Set JWT_SECRET environment variable to a strong random secret before production deployment."
+        )
+
+    # 事件总线消费者（需 Redis）
+    app.state.event_consumers = []
     if settings.redis.enabled:
         redis = await init_redis_client(
             settings.redis.host,
@@ -65,7 +93,20 @@ async def lifespan(app: FastAPI):
         print(f"Redis connected: {settings.redis.host}:{settings.redis.port}")
         await start_backtest_async_job_consumer(app)
 
+        # 启动事件消费者
+        from src.events.consumers import AuditLogConsumer, RiskMonitorConsumer
+
+        consumers = [RiskMonitorConsumer(), AuditLogConsumer()]
+        for consumer in consumers:
+            await consumer.start()
+        app.state.event_consumers = consumers
+        print(f"Event consumers started: {len(consumers)}")
+
     yield
+
+    # 关闭事件消费者
+    for consumer in getattr(app.state, "event_consumers", []):
+        await consumer.stop()
 
     await stop_backtest_async_job_consumer(app)
     await close_redis_client()
@@ -107,10 +148,16 @@ if _api.access_log:
         AccessLogMiddleware, ignore_prefixes=_api.access_log_ignore_prefixes
     )
 
+# 审计日志中间件（记录交易操作）
+from src.api.audit_middleware import AuditLogMiddleware
+
+app.add_middleware(AuditLogMiddleware)
+
 # 最外层：为下游（含访问日志 / 慢请求 WARN）提供 request.state.request_id 与响应头 X-Request-ID
 app.add_middleware(RequestIdMiddleware)
 
 # 注册路由
+app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(stocks.router, prefix="/api/stocks", tags=["股票"])
 app.include_router(klines.router, prefix="/api/klines", tags=["K线"])
 app.include_router(realtime.router, prefix="/api/realtime", tags=["实时行情"])
@@ -121,6 +168,16 @@ app.include_router(watchlist.router, prefix="/api/watchlist", tags=["自选"])
 app.include_router(strategies.router, prefix="/api/strategies", tags=["策略"])
 app.include_router(factors.router, prefix="/api/factors", tags=["因子"])
 app.include_router(trade_calendar.router, prefix="/api/data", tags=["数据"])
+app.include_router(risk.router, prefix="/api/risk", tags=["风控"])
+app.include_router(kill_switch.router, prefix="/api/kill-switch", tags=["紧急停止"])
+app.include_router(audit.router, prefix="/api/audit", tags=["审计日志"])
+app.include_router(api_keys.router, prefix="/api/api-keys", tags=["API密钥"])
+app.include_router(metrics.router, prefix="", tags=["指标"])
+app.include_router(experiments.router, prefix="/api/experiments", tags=["实验追踪"])
+app.include_router(stress.router, prefix="/api/stress", tags=["压力测试"])
+app.include_router(broker.router, prefix="/api/broker", tags=["交易接口"])
+app.include_router(ml.router, prefix="/api/ml", tags=["ML / 因子挖掘"])
+app.include_router(websocket.router, prefix="/ws", tags=["WebSocket"])
 
 
 @app.get("/")
@@ -140,14 +197,21 @@ async def health_check():
     uptime_sec = None
     if _PROCESS_STARTED_MONO is not None:
         uptime_sec = round(time.perf_counter() - _PROCESS_STARTED_MONO, 3)
-    return {
+    killed = await is_killed()
+    body = {
         "status": "healthy",
         "app_version": __version__,
         "database_mode": settings.database.mode,
         "redis_enabled": settings.redis.enabled,
         "pid": os.getpid(),
         "uptime_sec": uptime_sec,
+        "kill_switch": "killed" if killed else "normal",
     }
+    # JWT 默认密钥警告
+    _DEFAULT_JWT_SECRET = "trading-buddy-dev-secret-change-in-production"
+    if settings.auth.jwt_secret == _DEFAULT_JWT_SECRET:
+        body["warning"] = "JWT_SECRET uses default dev value — change before production"
+    return body
 
 
 @app.get("/health/ready")
@@ -180,6 +244,43 @@ async def health_ready(request: Request):
                 redis_state = "error"
                 redis_detail = str(e)[:300]
 
+    # 数据 freshness 检查
+    data_freshness: dict = {}
+    if db_state == "ok":
+        try:
+            from datetime import date, timedelta
+
+            from sqlalchemy import func, select
+
+            from src.data.storage.models import DailyKlineModel, StockInfoModel
+
+            db = get_database()
+            async with db.session() as session:
+                # daily_kline 最新日期
+                result = await session.execute(
+                    select(func.max(DailyKlineModel.trade_date))
+                )
+                latest_kline = result.scalar_one()
+                if latest_kline:
+                    days_old = (date.today() - latest_kline).days
+                    data_freshness["daily_kline_latest"] = latest_kline.isoformat()
+                    data_freshness["daily_kline_days_old"] = days_old
+                    # 超过 3 天视为 stale
+                    if days_old > 3:
+                        data_freshness["daily_kline_stale"] = True
+                        data_freshness["daily_kline_warning"] = f"日 K 数据已 {days_old} 天未更新"
+                else:
+                    data_freshness["daily_kline_warning"] = "日 K 表无数据"
+
+                # stock_info 记录数
+                result = await session.execute(select(func.count()).select_from(StockInfoModel))
+                stock_count = result.scalar_one()
+                data_freshness["stock_info_count"] = stock_count
+                if stock_count == 0:
+                    data_freshness["stock_info_warning"] = "stock_info 表无数据"
+        except Exception as e:
+            data_freshness["error"] = str(e)[:200]
+
     ok = db_state == "ok" and (
         not settings.redis.enabled or redis_state == "ok"
     )
@@ -189,6 +290,7 @@ async def health_ready(request: Request):
         "database": db_state,
         "redis": redis_state,
         "probe_ms": probe_ms,
+        "data_freshness": data_freshness,
     }
     if db_detail:
         body["database_error"] = db_detail

@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import { fetchJson } from "../composables/api.js";
+import { fetchJson, apiUrl } from "../composables/api.js";
 import { writeClipboardText } from "../composables/clipboardWrite.js";
 import { showToast } from "../composables/useToast.js";
 
@@ -11,9 +11,16 @@ const props = defineProps({
 const indices = ref([]);
 const loading = ref(true);
 const error = ref("");
-/** 最近一次成功的 GET /api/dashboard/overview 相对路径 */
 const lastOverviewApiPath = ref("");
 let timer;
+
+// WebSocket 状态
+const wsConnected = ref(false);
+const wsError = ref("");
+let ws = null;
+let reconnectTimer = null;
+let reconnectCount = 0;
+const MAX_RECONNECT = 5;
 
 async function load() {
   error.value = "";
@@ -25,10 +32,91 @@ async function load() {
     lastOverviewApiPath.value = `/api/dashboard/overview?${qs}`;
   } catch (e) {
     error.value = e?.message || "API 未就绪或网络错误";
-    indices.value = [];
+    if (!wsConnected.value) indices.value = [];
     lastOverviewApiPath.value = "";
   } finally {
     loading.value = false;
+  }
+}
+
+function buildWsUrl() {
+  const apiBase = apiUrl("").replace(/^http/, "ws").replace(/\/api\/?$/, "");
+  return `${apiBase}/ws/quotes`;
+}
+
+function connectWebSocket() {
+  if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+
+  const url = buildWsUrl();
+  try {
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      wsConnected.value = true;
+      wsError.value = "";
+      reconnectCount = 0;
+      // 订阅主要指数
+      const codes = ["sh.000001", "sz.399001", "sz.399006", "sh.000300"];
+      ws.send(JSON.stringify({ action: "subscribe", codes }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "quote") {
+          updateIndex(msg);
+        } else if (msg.type === "error") {
+          wsError.value = msg.message;
+        }
+      } catch {
+        // ignore non-JSON
+      }
+    };
+
+    ws.onclose = () => {
+      wsConnected.value = false;
+      ws = null;
+      scheduleReconnect();
+    };
+
+    ws.onerror = (e) => {
+      wsError.value = "WebSocket 连接失败";
+      ws?.close();
+    };
+  } catch (e) {
+    wsError.value = "WebSocket 初始化失败";
+    scheduleReconnect();
+  }
+}
+
+function scheduleReconnect() {
+  if (reconnectCount >= MAX_RECONNECT) return;
+  reconnectCount++;
+  const delay = Math.min(1000 * Math.pow(2, reconnectCount), 30000);
+  reconnectTimer = setTimeout(() => connectWebSocket(), delay);
+}
+
+function disconnectWebSocket() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+  wsConnected.value = false;
+}
+
+function updateIndex(quote) {
+  const idx = indices.value.findIndex((i) => i.code === quote.code);
+  if (idx >= 0) {
+    indices.value[idx] = {
+      ...indices.value[idx],
+      price: quote.price,
+      change: quote.change,
+      pct_change: quote.change_pct,
+    };
   }
 }
 
@@ -68,8 +156,12 @@ async function copyIndicesCodes() {
 onMounted(() => {
   load();
   timer = setInterval(load, 30_000);
+  connectWebSocket();
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+  clearInterval(timer);
+  disconnectWebSocket();
+});
 </script>
 
 <template>
@@ -90,6 +182,8 @@ onUnmounted(() => clearInterval(timer));
             <option value="1">后复权</option>
           </select>
         </label>
+        <span v-if="wsConnected" class="ws-badge ws-on" title="WebSocket 实时推送已连接">WS</span>
+        <span v-else-if="wsError" class="ws-badge ws-err" title="WebSocket 断开，使用 HTTP 轮询">HTTP</span>
         <button
           type="button"
           class="copy-idx"
@@ -242,6 +336,27 @@ onUnmounted(() => clearInterval(timer));
 .adjust-select:focus-visible {
   outline: 2px solid var(--meridian);
   outline-offset: 2px;
+}
+
+.ws-badge {
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 3px 7px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+.ws-on {
+  border-color: rgba(46, 230, 168, 0.4);
+  background: rgba(46, 230, 168, 0.12);
+  color: #2ee6a8;
+}
+
+.ws-err {
+  border-color: rgba(255, 150, 80, 0.4);
+  background: rgba(255, 150, 80, 0.12);
+  color: #ff9650;
 }
 
 .sec-head .eyebrow {

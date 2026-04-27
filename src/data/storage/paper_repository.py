@@ -26,20 +26,49 @@ class PaperRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get_or_create_default_account(self) -> PaperAccountModel:
-        stmt = select(PaperAccountModel).where(PaperAccountModel.label == DEFAULT_ACCOUNT_LABEL)
+    async def get_or_create_account(
+        self, user_id: int | None = None, label: str = DEFAULT_ACCOUNT_LABEL
+    ) -> PaperAccountModel:
+        """按 (user_id, label) 查找或创建账户。
+
+        - user_id 为 None 时查找 user_id IS NULL 的记录（兼容旧数据）。
+        """
+        if user_id is not None:
+            stmt = select(PaperAccountModel).where(
+                PaperAccountModel.user_id == user_id,
+                PaperAccountModel.label == label,
+            )
+        else:
+            stmt = select(PaperAccountModel).where(
+                PaperAccountModel.user_id.is_(None),
+                PaperAccountModel.label == label,
+            )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row:
             return row
         acc = PaperAccountModel(
-            label=DEFAULT_ACCOUNT_LABEL,
+            user_id=user_id,
+            label=label,
             cash=DEFAULT_INITIAL_CASH,
             initial_cash=DEFAULT_INITIAL_CASH,
         )
         self._session.add(acc)
         await self._session.flush()
-        logger.info("paper account created label=%s id=%s", acc.label, acc.id)
+        logger.info("paper account created user_id=%s label=%s id=%s", user_id, acc.label, acc.id)
         return acc
+
+    async def get_or_create_default_account(self) -> PaperAccountModel:
+        """向后兼容：无 user_id 时查找/创建 label='default' 且 user_id=NULL 的账户。"""
+        return await self.get_or_create_account(user_id=None, label=DEFAULT_ACCOUNT_LABEL)
+
+    async def list_accounts(self, user_id: int | None) -> list[PaperAccountModel]:
+        """列出某用户的所有账户；user_id=None 时列出系统账户。"""
+        if user_id is not None:
+            stmt = select(PaperAccountModel).where(PaperAccountModel.user_id == user_id)
+        else:
+            stmt = select(PaperAccountModel).where(PaperAccountModel.user_id.is_(None))
+        r = await self._session.execute(stmt)
+        return list(r.scalars().all())
 
     async def list_positions(self, account_id: int) -> list[PaperPositionModel]:
         stmt = select(PaperPositionModel).where(PaperPositionModel.account_id == account_id)

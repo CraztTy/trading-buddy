@@ -294,6 +294,35 @@ class APISettings(BaseSettings):
         super().__init__(**data)
 
 
+class AuthSettings(BaseSettings):
+    """认证配置（JWT、AUTH_REQUIRED）"""
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    auth_required: bool = False
+    jwt_secret: str = "trading-buddy-dev-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
+
+    def __init__(self, **data):
+        if "auth_required" not in data:
+            v = (os.environ.get("AUTH_REQUIRED", "false") or "").strip().lower()
+            data["auth_required"] = v in ("1", "true", "yes", "on")
+        if "jwt_secret" not in data:
+            secret = os.environ.get("JWT_SECRET")
+            if secret:
+                data["jwt_secret"] = secret
+        if "jwt_algorithm" not in data:
+            algo = os.environ.get("JWT_ALGORITHM")
+            if algo:
+                data["jwt_algorithm"] = algo
+        if "jwt_access_token_expire_minutes" not in data:
+            raw = os.environ.get("JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
+            if raw:
+                data["jwt_access_token_expire_minutes"] = int(raw)
+        super().__init__(**data)
+
+
 class LogSettings(BaseSettings):
     """日志（LOG_LEVEL、LOG_JSON）"""
 
@@ -315,6 +344,84 @@ class LogSettings(BaseSettings):
         if "json_logs" not in data:
             v = (os.environ.get("LOG_JSON", "false") or "").strip().lower()
             data["json_logs"] = v in ("1", "true", "yes", "on")
+        super().__init__(**data)
+
+
+class BrokerSettings(BaseSettings):
+    """券商/交易适配器配置。
+
+    - ``BROKER_ADAPTER``: 默认适配器类型，可选 ``paper`` / ``xtquant``
+    - ``XTQUANT_QMT_PATH``: miniQMT userdata 路径（Windows），如 ``C:\\国金QMT交易端\\userdata_mini``
+    - ``XTQUANT_ACCOUNT_ID``: 资金账号
+    - ``XTQUANT_SESSION_ID``: 会话 ID（须唯一）
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    adapter: str = "paper"
+    xtquant_qmt_path: str = ""
+    xtquant_account_id: str = ""
+    xtquant_session_id: int = 123456
+
+    def __init__(self, **data):
+        if "adapter" not in data:
+            v = os.environ.get("BROKER_ADAPTER")
+            if v is not None:
+                data["adapter"] = str(v).strip().lower()
+        if "xtquant_qmt_path" not in data:
+            v = os.environ.get("XTQUANT_QMT_PATH")
+            if v is not None:
+                data["xtquant_qmt_path"] = str(v).strip()
+        if "xtquant_account_id" not in data:
+            v = os.environ.get("XTQUANT_ACCOUNT_ID")
+            if v is not None:
+                data["xtquant_account_id"] = str(v).strip()
+        if "xtquant_session_id" not in data:
+            v = os.environ.get("XTQUANT_SESSION_ID")
+            if v is not None and str(v).strip():
+                try:
+                    data["xtquant_session_id"] = int(str(v).strip())
+                except ValueError:
+                    pass
+        super().__init__(**data)
+
+
+class ClickHouseSettings(BaseSettings):
+    """ClickHouse 时序数据库配置。
+
+    - ``CLICKHOUSE_ENABLED``: 是否启用 ClickHouse
+    - ``CLICKHOUSE_HOST``: 主机地址
+    - ``CLICKHOUSE_PORT``: HTTP 端口（默认 8123）
+    - ``CLICKHOUSE_USER``: 用户名
+    - ``CLICKHOUSE_PASSWORD``: 密码
+    - ``CLICKHOUSE_DATABASE``: 数据库名（默认 trading）
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 8123
+    user: str = "default"
+    password: str = ""
+    database: str = "trading"
+
+    def __init__(self, **data):
+        if "enabled" not in data:
+            v = os.environ.get("CLICKHOUSE_ENABLED", "").strip().lower()
+            data["enabled"] = v in ("1", "true", "yes", "on")
+        if "host" not in data:
+            data["host"] = os.environ.get("CLICKHOUSE_HOST", "localhost")
+        if "port" not in data:
+            p = os.environ.get("CLICKHOUSE_PORT", "")
+            if p:
+                data["port"] = int(p)
+        if "user" not in data:
+            data["user"] = os.environ.get("CLICKHOUSE_USER", "default")
+        if "password" not in data:
+            data["password"] = os.environ.get("CLICKHOUSE_PASSWORD", "")
+        if "database" not in data:
+            data["database"] = os.environ.get("CLICKHOUSE_DATABASE", "trading")
         super().__init__(**data)
 
 
@@ -388,7 +495,10 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     data_source: DataSourceSettings = Field(default_factory=DataSourceSettings)
     api: APISettings = Field(default_factory=APISettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
     log: LogSettings = Field(default_factory=LogSettings)
+    broker: BrokerSettings = Field(default_factory=BrokerSettings)
+    clickhouse: ClickHouseSettings = Field(default_factory=ClickHouseSettings)
     trade_calendar: TradeCalendarSettings = Field(default_factory=TradeCalendarSettings)
 
     # 项目根目录

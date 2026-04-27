@@ -9,10 +9,14 @@ import StockListPanel from "./components/StockListPanel.vue";
 import PaperTradingPanel from "./components/PaperTradingPanel.vue";
 import WatchlistPanel from "./components/WatchlistPanel.vue";
 import FactorPreviewPanel from "./components/FactorPreviewPanel.vue";
+import RiskPanel from "./components/RiskPanel.vue";
+import KillSwitchPill from "./components/KillSwitchPill.vue";
 import ApiHealthPill from "./components/ApiHealthPill.vue";
 import ToastStack from "./components/ToastStack.vue";
+import LoginModal from "./components/LoginModal.vue";
 import { writeClipboardText } from "./composables/clipboardWrite.js";
 import { showToast } from "./composables/useToast.js";
+import { useAuth } from "./composables/useAuth.js";
 
 const SS_MAIN = "tb_mainView";
 const SS_CODE = "tb_currentCode";
@@ -20,14 +24,17 @@ const SS_RANK = "tb_rankTab";
 const SS_DASHBOARD_ADJUST = "tb_dashboardAdjust";
 const CODE_RE = /^(sh|sz|bj)\.[\w.-]+$/i;
 
-const VIEW_KEY_CODES = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6"];
-const VIEW_IDS = ["market", "stocks", "watchlist", "factors", "backtest", "paper"];
+const VIEW_KEY_CODES = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7"];
+const VIEW_IDS = ["market", "stocks", "watchlist", "factors", "backtest", "paper", "risk"];
+
+const { isLoggedIn, username, logout } = useAuth();
 
 const mainView = ref("market");
 const currentCode = ref("sh.000001");
 const rankTab = ref("gainers");
 const dashboardAdjustFlag = ref("3");
 const clock = ref("");
+const showLoginModal = ref(false);
 /** 从回测带入纸单的代码与股数 */
 const paperDraft = ref(null);
 
@@ -45,7 +52,8 @@ function restoreSessionPrefs() {
       mv === "watchlist" ||
       mv === "factors" ||
       mv === "backtest" ||
-      mv === "paper"
+      mv === "paper" ||
+      mv === "risk"
     )
       mainView.value = mv;
     const cc = sessionStorage.getItem(SS_CODE);
@@ -182,6 +190,7 @@ async function copyCurrentCode() {
           <span class="rule-line" />
         </div>
         <ApiHealthPill />
+        <KillSwitchPill />
       </div>
 
       <div class="status mono">
@@ -196,6 +205,22 @@ async function copyCurrentCode() {
         </button>
         <span class="time">{{ clock }}</span>
         <span class="tz">CST</span>
+        <button
+          v-if="isLoggedIn"
+          type="button"
+          class="auth-btn"
+          @click="logout"
+        >
+          {{ username }} · 登出
+        </button>
+        <button
+          v-else
+          type="button"
+          class="auth-btn"
+          @click="showLoginModal = true"
+        >
+          登录
+        </button>
       </div>
     </header>
 
@@ -272,6 +297,16 @@ async function copyCurrentCode() {
         >
           纸交易
         </button>
+        <button
+          type="button"
+          class="view-tab"
+          data-testid="main-nav-risk"
+          :class="{ active: mainView === 'risk' }"
+          title="Alt+7"
+          @click="mainView = 'risk'"
+        >
+          风控
+        </button>
       </nav>
 
       <div v-if="mainView === 'market'" class="split enter-stagger">
@@ -325,8 +360,13 @@ async function copyCurrentCode() {
         :adjust-flag="dashboardAdjustFlag"
         @navigate-backtest="onPaperNavigateBacktest"
       />
+      <RiskPanel
+        v-else-if="mainView === 'risk'"
+        class="block enter-stagger"
+      />
     </main>
     <ToastStack />
+    <LoginModal v-if="showLoginModal" @close="showLoginModal = false" @success="showLoginModal = false" />
   </div>
 </template>
 
@@ -635,6 +675,25 @@ async function copyCurrentCode() {
   .split {
     grid-template-columns: 1fr;
   }
+}
+
+.auth-btn {
+  margin-left: 10px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(62, 224, 255, 0.25);
+  background: rgba(10, 28, 36, 0.45);
+  color: #9aefff;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.auth-btn:hover {
+  border-color: rgba(62, 224, 255, 0.5);
+  background: rgba(10, 28, 36, 0.65);
+  color: #c4f7ff;
 }
 
 .col {

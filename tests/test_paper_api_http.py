@@ -61,8 +61,12 @@ async def test_paper_buy_then_next_day_sell(http_test_client, empty_sqlite_db):
         json={"code": code, "side": "sell", "quantity": 100},
     )
     assert r_sell.status_code == 200
-    # 买入 100×10，卖出按新 K 线收盘 11 撮合：1_000_000 - 1000 + 1100
-    assert r_sell.json()["cash_after"] == 1_000_100.0
+    sell_body = r_sell.json()
+    # 买入 100×10，卖出按新 K 线收盘 11 撮合：
+    # 印花税 = 1100 * 0.0005 = 0.55；净收入 = 1099.45
+    # 1_000_000 - 1000 + 1099.45 = 1_000_099.45
+    assert sell_body["cash_after"] == 1_000_099.45
+    assert sell_body["stamp_tax"] == 0.55
     st3 = http_test_client.get("/api/paper/state").json()
     assert st3["positions"] == []
 
@@ -170,7 +174,7 @@ async def test_paper_reset(http_test_client, empty_sqlite_db):
     async with empty_sqlite_db.session() as session:
         await KlineRepository(session).bulk_insert(rows)
     http_test_client.post("/api/paper/orders", json={"code": code, "side": "buy", "quantity": 200})
-    r = http_test_client.post("/api/paper/account/reset")
+    r = http_test_client.post("/api/paper/account/reset", json={"account_label": "default"})
     assert r.status_code == 200
     assert r.json()["cash"] == 1_000_000.0
     st = http_test_client.get("/api/paper/state").json()
@@ -205,3 +209,100 @@ async def test_paper_state_and_order_respect_adjust_flag(http_test_client, empty
     pos = st2["positions"][0]
     assert pos["last_close"] == 10.0
     assert pos["market_value"] == 1000.0
+
+
+def _bar_with_preclose(code: str, d: date, close: float, pre_close: float) -> KLine:
+    o = close - 0.1
+    return KLine(
+        code=code,
+        trade_date=d,
+        open=o,
+        high=close + 0.2,
+        low=o - 0.1,
+        close=close,
+        pre_close=pre_close,
+        volume=1000,
+        amount=close * 1000,
+        turnover_rate=None,
+        pct_change=None,
+    )
+
+
+async def test_paper_buy_limit_up_blocked(http_test_client, empty_sqlite_db):
+    """涨停时不可买入。"""
+    code = "sh.limitup"
+    base = date(2025, 6, 1)
+    # pre_close=10.0, close=11.0 = +10% 涨停
+    rows = [_bar_with_preclose(code, base + timedelta(days=i), 11.0, 10.0) for i in range(3)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+    r = http_test_client.post(
+        "/api/paper/orders",
+        json={"code": code, "side": "buy", "quantity": 100},
+    )
+    assert r.status_code == 400
+    assert "涨停" in r.json().get("detail", "")
+
+
+async def test_paper_sell_limit_down_blocked(http_test_client, empty_sqlite_db):
+    """跌停时不可卖出。"""
+    code = "sh.limitdown"
+    base = date(2025, 6, 1)
+    # pre_close=10.0, close=9.0 = -10% 跌停
+    rows = [_bar_with_preclose(code, base + timedelta(days=i), 9.0, 10.0) for i in range(3)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+    # 先买入
+    assert http_test_client.post(
+        "/api/paper/orders",
+        json={"code": code, "side": "buy", "quantity": 100},
+    ).status_code == 200
+
+    # 次日跌停不可卖出
+    rows2 = [_bar_with_preclose(code, base + timedelta(days=3), 8.1, 9.0)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows2)
+
+    r = http_test_client.post(
+        "/api/paper/orders",
+        json={"code": code, "side": "sell", "quantity": 100},
+    )
+    assert r.status_code == 400
+    assert "跌停" in r.json().get("detail", "")
+
+
+async def test_paper_buy_no_limit_up_ok(http_test_client, empty_sqlite_db):
+    """未涨停时可以正常买入。"""
+    code = "sh.nolimit"
+    base = date(2025, 6, 1)
+    # pre_close=10.0, close=10.5 = +5% 未涨停
+    rows = [_bar_with_preclose(code, base + timedelta(days=i), 10.5, 10.0) for i in range(3)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+    r = http_test_client.post(
+        "/api/paper/orders",
+        json={"code": code, "side": "buy", "quantity": 100},
+    )
+    assert r.status_code == 200
+    assert r.json()["fill_price"] == 10.5
+
+
+async def test_paper_stamp_tax_buy_is_zero(http_test_client, empty_sqlite_db):
+    """买入时印花税为 0。"""
+    code = "sh.taxbuy"
+    base = date(2025, 6, 1)
+    rows = [_bar(code, base + timedelta(days=i), 10.0) for i in range(3)]
+    async with empty_sqlite_db.session() as session:
+        await KlineRepository(session).bulk_insert(rows)
+
+    r = http_test_client.post(
+        "/api/paper/orders",
+        json={"code": code, "side": "buy", "quantity": 100},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["stamp_tax"] == 0.0
+    assert body["cash_after"] == 1_000_000.0 - 1000.0

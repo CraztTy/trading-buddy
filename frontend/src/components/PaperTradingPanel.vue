@@ -26,6 +26,24 @@ const orderQty = ref(100);
 const wlItems = ref([]);
 const wlLoadErr = ref("");
 
+/** 账户切换 */
+const accounts = ref([]);
+const currentAccountLabel = ref("default");
+const accountsLoading = ref(false);
+
+/** 创建账户 */
+const showCreateAccount = ref(false);
+const newAccountLabel = ref("");
+const newAccountCash = ref(1_000_000);
+const creatingAccount = ref(false);
+
+/** 从回测导入 */
+const importDialogOpen = ref(false);
+const backtestRuns = ref([]);
+const backtestRunsLoading = ref(false);
+const selectedRunId = ref(null);
+const importing = ref(false);
+
 watch(
   () => props.draft,
   (d) => {
@@ -54,6 +72,7 @@ function ordersQuery(reset) {
   const p = new URLSearchParams({
     limit: String(ORDER_PAGE),
     offset: String(off),
+    account_label: currentAccountLabel.value,
   });
   const c = ordersFilterCode.value.trim().toLowerCase();
   if (c) p.set("code", c);
@@ -91,6 +110,60 @@ async function loadWatchlist() {
   }
 }
 
+async function loadAccounts() {
+  accountsLoading.value = true;
+  try {
+    const data = await fetchJson("paper/accounts", { toast: false });
+    accounts.value = data.items || [];
+    // Ensure current label exists in list
+    const labels = accounts.value.map((a) => a.label);
+    if (labels.length && !labels.includes(currentAccountLabel.value)) {
+      currentAccountLabel.value = labels[0];
+    }
+  } catch (e) {
+    accounts.value = [];
+  } finally {
+    accountsLoading.value = false;
+  }
+}
+
+async function switchAccount(label) {
+  if (label === currentAccountLabel.value) return;
+  currentAccountLabel.value = label;
+  await loadState();
+}
+
+async function createAccount() {
+  const label = (newAccountLabel.value || "").trim();
+  if (!label) {
+    error.value = "请输入账户标签";
+    return;
+  }
+  creatingAccount.value = true;
+  error.value = "";
+  try {
+    await fetchJson("paper/account/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label,
+        initial_cash: Math.max(0, Number(newAccountCash.value) || 1_000_000),
+      }),
+      toast: false,
+    });
+    tip.value = `账户「${label}」创建成功`;
+    showCreateAccount.value = false;
+    newAccountLabel.value = "";
+    newAccountCash.value = 1_000_000;
+    await loadAccounts();
+    await switchAccount(label);
+  } catch (e) {
+    error.value = e?.message || "创建账户失败";
+  } finally {
+    creatingAccount.value = false;
+  }
+}
+
 function pickWlCode(code) {
   const c = String(code || "").trim().toLowerCase();
   if (c) orderCode.value = c;
@@ -102,7 +175,10 @@ async function loadState() {
   lastPaperStateApiPath.value = "";
   lastPaperOrdersApiPath.value = "";
   try {
-    const qs = new URLSearchParams({ adjust_flag: props.adjustFlag });
+    const qs = new URLSearchParams({
+      adjust_flag: props.adjustFlag,
+      account_label: currentAccountLabel.value,
+    });
     state.value = await fetchJson(`paper/state?${qs}`, { toast: false });
     lastPaperStateApiPath.value = `/api/paper/state?${qs}`;
   } catch (e) {
@@ -137,6 +213,7 @@ function normalizedOrderPayload() {
     side: orderSide.value,
     quantity: qty,
     adjust_flag: props.adjustFlag,
+    account_label: currentAccountLabel.value,
   };
 }
 
@@ -169,7 +246,8 @@ async function submitOrder() {
       body: JSON.stringify(payload),
       toast: false,
     });
-    tip.value = `已成交 ${body.side} ${body.quantity} @ ${body.fill_price}，现金 ${body.cash_after}`;
+    const taxInfo = body.stamp_tax ? `，印花税 ${body.stamp_tax}` : "";
+    tip.value = `已成交 ${body.side} ${body.quantity} @ ${body.fill_price}，现金 ${body.cash_after}${taxInfo}`;
     try {
       state.value = await fetchJson("paper/state", { toast: false });
     } catch (e) {
@@ -269,12 +347,18 @@ async function copyOrdersCodes() {
 }
 
 async function resetAccount() {
-  if (!window.confirm("清空纸单与持仓，现金恢复为初始 100 万？")) return;
+  const label = currentAccountLabel.value || "default";
+  if (!window.confirm(`清空账户「${label}」的纸单与持仓，现金恢复为初始值？`)) return;
   resetting.value = true;
   error.value = "";
   try {
-    await fetchJson("paper/account/reset", { method: "POST", toast: false });
-    tip.value = "已重置纸账户";
+    await fetchJson("paper/account/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_label: label }),
+      toast: false,
+    });
+    tip.value = `已重置账户「${label}」`;
     await loadState();
   } catch (e) {
     error.value = e?.message || "重置失败";
@@ -283,7 +367,79 @@ async function resetAccount() {
   }
 }
 
-onMounted(loadState);
+/** 打开回测导入对话框 */
+async function openImportDialog() {
+  importDialogOpen.value = true;
+  selectedRunId.value = null;
+  backtestRuns.value = [];
+  await loadBacktestRuns();
+}
+
+function closeImportDialog() {
+  importDialogOpen.value = false;
+  selectedRunId.value = null;
+}
+
+/** 加载回测存档列表 */
+async function loadBacktestRuns() {
+  backtestRunsLoading.value = true;
+  try {
+    // Load portfolio backtest runs
+    const data = await fetchJson(
+      "backtest/runs?kind=portfolio_equal_weight&limit=20",
+      { toast: false }
+    );
+    const data2 = await fetchJson(
+      "backtest/runs?kind=portfolio_value_weight&limit=20",
+      { toast: false }
+    );
+    const items = [
+      ...(data.items || []),
+      ...(data2.items || []),
+    ];
+    // Sort by id desc (newest first)
+    items.sort((a, b) => b.id - a.id);
+    backtestRuns.value = items;
+  } catch (e) {
+    backtestRuns.value = [];
+    showToast(e?.message || "加载回测存档失败", { type: "error" });
+  } finally {
+    backtestRunsLoading.value = false;
+  }
+}
+
+/** 执行从回测导入 */
+async function doImportFromBacktest() {
+  if (!selectedRunId.value) {
+    showToast("请选择回测存档", { type: "error" });
+    return;
+  }
+  importing.value = true;
+  error.value = "";
+  try {
+    const body = await fetchJson("paper/orders/from-backtest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_id: Number(selectedRunId.value),
+        account_label: currentAccountLabel.value,
+      }),
+      toast: false,
+    });
+    tip.value = `已从回测导入 ${body.orders?.length || 0} 笔订单，合计 ${body.total_value?.toLocaleString?.() || body.total_value}`;
+    closeImportDialog();
+    await loadState();
+  } catch (e) {
+    error.value = e?.message || "导入失败";
+  } finally {
+    importing.value = false;
+  }
+}
+
+onMounted(async () => {
+  await loadAccounts();
+  await loadState();
+});
 </script>
 
 <template>
@@ -293,7 +449,7 @@ onMounted(loadState);
         <p class="eyebrow">闭环</p>
         <h2 class="h2">纸交易</h2>
         <p class="sub">
-          研究 / 回测后在此下<strong>模拟单</strong>：市价按标的<strong>最近一根日 K 收盘价</strong>撮合（无滑点与手续费 MVP）。股数须为
+          研究 / 回测后在此下<strong>模拟单</strong>：市价按标的<strong>最近一根日 K 收盘价</strong>撮合（无滑点；含<strong>涨跌停限制</strong>与卖出<strong>印花税 0.05%</strong>）。股数须为
           <strong>100 的整数倍</strong>；<strong>卖出 T+1</strong>（买入日须早于当前定价日 K 线交易日，FIFO 批）。与真实交易无关。
         </p>
       </div>
@@ -339,11 +495,69 @@ onMounted(loadState);
           清账 POST
         </button>
         <button type="button" class="ghost" :disabled="loading" @click="loadState">刷新</button>
+        <button type="button" class="ghost import-btn" :disabled="loading" @click="openImportDialog">
+          从回测导入
+        </button>
         <button type="button" class="ghost danger" :disabled="resetting || loading" @click="resetAccount">
           重置账户
         </button>
       </div>
     </header>
+
+    <!-- 账户选择器 -->
+    <div class="account-bar">
+      <span class="account-label">账户</span>
+      <select
+        :value="currentAccountLabel"
+        class="inp mono inp--sm account-select"
+        :disabled="accountsLoading"
+        @change="(e) => switchAccount(e.target.value)"
+      >
+        <option v-for="acc in accounts" :key="acc.label" :value="acc.label">
+          {{ acc.label }} (现金 {{ acc.cash?.toLocaleString?.() ?? acc.cash }})
+        </option>
+      </select>
+      <button
+        type="button"
+        class="ghost ghost--sm"
+        :disabled="accountsLoading"
+        @click="showCreateAccount = !showCreateAccount"
+      >
+        {{ showCreateAccount ? "取消" : "新建" }}
+      </button>
+    </div>
+
+    <!-- 创建账户表单 -->
+    <div v-if="showCreateAccount" class="create-account-form">
+      <label class="field field--inline">
+        <span class="lbl">标签</span>
+        <input
+          v-model="newAccountLabel"
+          type="text"
+          class="inp mono inp--sm"
+          placeholder="如 demo"
+          spellcheck="false"
+        />
+      </label>
+      <label class="field field--inline">
+        <span class="lbl">初始资金</span>
+        <input
+          v-model.number="newAccountCash"
+          type="number"
+          min="0"
+          step="10000"
+          class="inp mono inp--sm"
+        />
+      </label>
+      <button
+        type="button"
+        class="run run--sm"
+        :disabled="creatingAccount || !newAccountLabel.trim()"
+        @click="createAccount"
+      >
+        {{ creatingAccount ? "创建中…" : "创建" }}
+      </button>
+    </div>
 
     <p v-if="tip" class="tip mono" role="status">{{ tip }}</p>
     <p v-if="error" class="err">{{ error }}</p>
@@ -474,6 +688,51 @@ onMounted(loadState);
         {{ ordersLoading ? "加载中…" : "加载更多" }}
       </button>
     </div>
+
+    <!-- 从回测导入对话框 -->
+    <div v-if="importDialogOpen" class="dialog-overlay" @click.self="closeImportDialog">
+      <div class="dialog">
+        <div class="dialog-hd">
+          <h3>从回测导入持仓</h3>
+          <button type="button" class="dialog-close" @click="closeImportDialog">&times;</button>
+        </div>
+        <div class="dialog-body">
+          <p class="dialog-sub">选择组合回测存档，将其最终持仓导入当前纸交易账户。</p>
+          <div v-if="backtestRunsLoading" class="dialog-loading">加载中…</div>
+          <div v-else-if="!backtestRuns.length" class="dialog-empty">暂无组合回测存档</div>
+          <div v-else class="run-list">
+            <label
+              v-for="run in backtestRuns"
+              :key="run.id"
+              class="run-item"
+              :class="{ active: selectedRunId == run.id }"
+            >
+              <input
+                v-model="selectedRunId"
+                type="radio"
+                :value="run.id"
+                name="backtest-run"
+              />
+              <span class="run-id">#{{ run.id }}</span>
+              <span class="run-kind">{{ run.kind }}</span>
+              <span class="run-summary">{{ run.summary }}</span>
+              <span class="run-date">{{ fmtShort(run.created_at) }}</span>
+            </label>
+          </div>
+        </div>
+        <div class="dialog-ft">
+          <button type="button" class="ghost" @click="closeImportDialog">取消</button>
+          <button
+            type="button"
+            class="run"
+            :disabled="!selectedRunId || importing || backtestRunsLoading"
+            @click="doImportFromBacktest"
+          >
+            {{ importing ? "导入中…" : "确认导入" }}
+          </button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -539,6 +798,11 @@ onMounted(loadState);
 .ghost.danger {
   border-color: rgba(255, 120, 120, 0.35);
   color: #ff9a9a;
+}
+
+.ghost.import-btn {
+  border-color: rgba(62, 224, 255, 0.35);
+  color: var(--meridian);
 }
 
 .tip {
@@ -732,5 +996,196 @@ onMounted(loadState);
 
 .wl-chip:hover {
   border-color: rgba(62, 224, 255, 0.45);
+}
+
+/* 账户选择栏 */
+.account-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--rule-faint);
+  border-radius: 8px;
+  background: rgba(8, 8, 12, 0.35);
+}
+
+.account-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: var(--mist-dim);
+  font-weight: 700;
+}
+
+.account-select {
+  margin-bottom: 0;
+  min-width: 200px;
+}
+
+/* 对话框 */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.dialog {
+  background: linear-gradient(180deg, #1a1a24 0%, #12121a 100%);
+  border: 1px solid var(--rule-faint);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog-hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--rule-faint);
+}
+
+.dialog-hd h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: var(--mist);
+}
+
+.dialog-close {
+  background: none;
+  border: none;
+  color: var(--mist-dim);
+  font-size: 1.4rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.dialog-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.dialog-sub {
+  margin: 0 0 12px;
+  font-size: 0.75rem;
+  color: var(--mist-dim);
+}
+
+.dialog-loading,
+.dialog-empty {
+  text-align: center;
+  padding: 24px;
+  font-size: 0.8rem;
+  color: var(--mist-dim);
+}
+
+.run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.run-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--rule-faint);
+  background: rgba(8, 8, 12, 0.45);
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--mist);
+  transition: border-color 0.15s;
+}
+
+.run-item:hover {
+  border-color: rgba(62, 224, 255, 0.3);
+}
+
+.run-item.active {
+  border-color: rgba(62, 224, 255, 0.5);
+  background: rgba(62, 224, 255, 0.08);
+}
+
+.run-item input[type="radio"] {
+  flex-shrink: 0;
+}
+
+.run-id {
+  font-weight: 700;
+  color: var(--meridian);
+  flex-shrink: 0;
+}
+
+.run-kind {
+  font-size: 0.65rem;
+  color: var(--mist-dim);
+  background: rgba(8, 8, 12, 0.6);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.run-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-date {
+  font-size: 0.65rem;
+  color: var(--mist-dim);
+  flex-shrink: 0;
+}
+
+.dialog-ft {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--rule-faint);
+}
+
+/* 创建账户表单 */
+.create-account-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-faint);
+  border-radius: 8px;
+  background: rgba(8, 8, 12, 0.35);
+}
+
+.ghost--sm {
+  font-size: 0.58rem;
+  padding: 6px 10px;
+}
+
+.run--sm {
+  font-size: 0.6rem;
+  padding: 8px 12px;
+}
+
+.field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0;
 }
 </style>

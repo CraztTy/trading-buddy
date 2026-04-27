@@ -55,7 +55,7 @@
 
 **目标**：回测在统计与工程上经得起质疑。
 
-- **通用回测引擎**：多策略、多标的、组合权重、再平衡频率；与现有双均线回测**渐进迁移**而非一次性推翻。
+- **通用回测引擎**：多策略、多标的、组合权重、再平衡频率；与现有双均线回测**渐进迁移**而非一次性推翻。**组合回测已落地**：`portfolio_equal_weight` / `portfolio_value_weight`（等权/市值加权、日/周/月频再平衡、风控前置检查），见 `src/backtest/portfolio/`、`src/backtest/runner/portfolio_executor.py`。
 - **交易成本模型**：滑点、冲击（参数化起步）、涨跌停不可成交、停牌；与 A 股规则（T+1、整手等）一致化（与纸交易共享规则引擎）。
 - **验证方法论**：样本外、滚动窗口、走步分析（walk-forward）；防前视、防幸存者偏差的 checklist。
 
@@ -67,11 +67,11 @@
 
 **目标**：从单票思维到组合思维。
 
-- **组合状态机**：目标权重、约束（单票上限、行业暴露、现金比例等）。
+- **组合状态机**：目标权重、约束（单票上限、行业暴露、现金比例等）。**风控引擎已落地**：`src/risk/engine.py` + `src/risk/rules/`（max_drawdown、single_position_limit、sector_exposure_limit、daily_loss_limit、cash_ratio_min），默认规则集 `src/risk/defaults.py`。
 - **风险指标**：回撤、波动、集中度；压力场景（指数大跌、流动性枯竭参数化）。
-- **事前 / 事中风控**：下单前检查、拒单原因可解释；与审计日志打通。
+- **事前 / 事中风控**：下单前检查、拒单原因可解释；与审计日志打通。**已集成**：组合回测执行前调用 `RiskEngine.check_all_passed()` 拦截违规配置；纸交易 `POST /api/paper/orders` 下单前风控检查。
 
-**产出物**：风控规则配置格式、拒单与告警事件模型。
+**产出物**：风控规则配置格式、拒单与告警事件模型。`tests/test_risk_engine.py`、`tests/test_portfolio_backtest_api_http.py`。
 
 ---
 
@@ -124,7 +124,7 @@
 | 1 | 门禁固定 | **已完成** | `.github/workflows/ci.yml`：`python -m pytest -q` 全量 + `frontend` 下 `npm run build` 与 **Playwright**（`npm run test:e2e`）；新 API 须有 `tests/test_*_api_http.py` 类单测；**`tests/test_cli_fetch.py`** 含 **`feed_dashboard --dry-run`** 步骤链契约。本地流程见根目录 `README.md`「测试」。 |
 | 2 | 数据质量 | **已完成（MVP）** | 脚本 + 库内报告 + **`docs/DATA_AND_ADJUSTMENT.md`**（含 **stock_info 中尚无日 K 的标的数**）；按交易日历的「空洞率」、全市场缺失率等为增强项，另排期。 |
 | 3 | 策略契约 | **已完成（MVP）** | Catalog 含 **`backtest_run`**（与 **`POST /api/backtest/run`** 的 `params_schema` / **`archive_kind`** 对齐）、**`signal_params`**、**`backtest_archive_kinds`**；**`backtest_run.archive_kind`** 与 **`GET /api/backtest/catalog`** 逐条一致（**`tests/test_strategies_api_http.py`**）；统一信号 **`POST /api/strategies/signal`** 已接 HTTP 测（含 **`ma_cross_scan`** **400**）。开发者说明与双 Catalog 表见 **`docs/STRATEGY_CONTRACT.md`**；看板 **策略回测** 顶栏 **策略目录 / 试算信号** 已加。 |
-| 4 | 通用回测 | **进行中（MVP+）** | **`docs/GENERIC_BACKTEST_DRAFT.md`**（含 **API 契约：异步 job**、**新策略接入检查清单**）；**`POST /api/backtest/run`**（`ma_cross` / **`buy_hold`** / `ma_cross_scan`）+ **`?async=1`**、**`GET /api/backtest/jobs/{job_id}`**、**`POST …/jobs/{id}/cancel`**（**`pending`**）、**`BACKTEST_ASYNC_JOB_STUCK_SEC`** 下 **GET 回收陈旧 `running`→`failed`**；**Redis 启用**时默认 **Redis 列表队列 + JSON 任务记录**（**`BACKTEST_ASYNC_JOB_STORE`** / **`BACKTEST_ASYNC_JOB_TTL_SEC`**）；请求体**前向占位**；**`GET /api/backtest/catalog`** 含 **`async_*`** 与 **`async_job_persistence`**；**`src/backtest/runner/`**、**`async_job_backend.py`**；Vue **策略回测**（单标的策略与存档 **`buy_hold_single`**）；**`scripts/verify_stack.py`**（含 cancel 404 冒烟）；**`tests/test_openapi_contract.py`** 断言 **OpenAPI** 含 **`POST …/jobs/{job_id}/cancel`**。 |
+| 4 | 通用回测 | **已完成（MVP+）** | **`docs/GENERIC_BACKTEST_DRAFT.md`**（含 **API 契约：异步 job**、**新策略接入检查清单**）；**`POST /api/backtest/run`**（`ma_cross` / **`buy_hold`** / `ma_cross_scan` / **`portfolio_equal_weight`** / **`portfolio_value_weight`**）+ **`?async=1`**、**`GET /api/backtest/jobs/{job_id}`**、**`POST …/jobs/{id}/cancel`**（**`pending`**）、**`BACKTEST_ASYNC_JOB_STUCK_SEC`** 下 **GET 回收陈旧 `running`→`failed`**；**Redis 启用**时默认 **Redis 列表队列 + JSON 任务记录**（**`BACKTEST_ASYNC_JOB_STORE`** / **`BACKTEST_ASYNC_JOB_TTL_SEC`**）；请求体**前向占位**；**`GET /api/backtest/catalog`** 含 **`async_*`** 与 **`async_job_persistence`**；**`src/backtest/runner/`**、**`async_job_backend.py`**；Vue **策略回测**（单标的策略与存档 **`buy_hold_single`**、**组合回测 tab**）；**`scripts/verify_stack.py`**（含 cancel 404 冒烟）；**`tests/test_openapi_contract.py`** 断言 **OpenAPI** 含 **`POST …/jobs/{job_id}/cancel`**。 |
 
 ### 当前进度（随迭代更新）
 
@@ -134,6 +134,10 @@
 | 2 数据质量 | `scripts/check_daily_kline_quality.py`；`src/data/quality/daily_kline.py`（重复键、orphan、`codes_with_single_bar`、**`stock_info_codes_without_kline`**、最新交易日覆盖等）；**`docs/DATA_AND_ADJUSTMENT.md`** |
 | 3 策略契约（MVP） | **`docs/STRATEGY_CONTRACT.md`**（含双 Catalog **`archive_kind`** 表）；`BacktestPanel.vue` 顶 **策略目录 / 试算信号**；`GET /api/strategies/catalog` 与 **`GET /api/backtest/catalog`** **`archive_kind`** 对齐单测；`POST /api/strategies/signal` + HTTP 测 |
 | 4 通用回测（MVP+） | **`docs/GENERIC_BACKTEST_DRAFT.md`**；**`POST /api/backtest/run`**（同步 / **`?async=1`** + **`GET …/jobs/{id}`** + **`POST …/cancel`** + **`BACKTEST_ASYNC_JOB_STUCK_SEC`** 回收）；**`src/backtest/async_job_backend.py`**（Redis 队列 **`tb:backtest:job:queue`** + 记录 **`tb:backtest:job:{id}`**；**`BACKTEST_ASYNC_JOB_STORE`** / **`BACKTEST_ASYNC_JOB_TTL_SEC`**）；**`BacktestRunMvpRequest`** 前向占位；**`GET /api/backtest/catalog`**（**`async_job_persistence`** 等）；**`src/backtest/runner/`**；Vue；E2E **`backtest-catalog.json`** / **`installApiMocks`** 异步 pending 窗口；**`scripts/verify_stack.py`**；固件 **`export_backtest_catalog_fixture.py`** |
+| 4+ 组合回测 | `src/backtest/portfolio/`（engine/metrics/rebalance/weights）、`src/backtest/runner/portfolio_executor.py`；`POST /api/backtest/run` 支持 `portfolio_equal_weight`/`portfolio_value_weight`；`BacktestPanel.vue` 组合 tab；`tests/test_portfolio_backtest_api_http.py`、`tests/test_portfolio_engine.py`、`tests/test_portfolio_performance.py` |
+| 5+ 风控引擎 | `src/risk/engine.py`、`src/risk/rules/`（max_drawdown/position_limit/sector_exposure/daily_loss/cash_ratio）、`src/risk/defaults.py`；组合回测执行前 `RiskEngine.check_all_passed()` 拦截、纸交易下单前风控检查；`tests/test_risk_engine.py` |
+| 7+ 头寸管理 | `src/backtest/position_sizing.py`（equal/fixed_amount/volatility_target）；组合回测支持 `position_sizing_method`/`position_sizing_params`；`BacktestPanel.vue` 头寸方案选择器；`tests/test_position_sizing.py` |
+| 7+ 纸交易增强 | 纸交易 API `account_label` 参数（state/orders/reset）；`PaperTradingPanel.vue` 账户切换与多账户支持 |
 | B 因子（起步） | **`src/factors/`**（**`rolling_*`** / **`rolling_zscore`** / **`ema`** / **`macd_dif_dea_hist`** / **`kdj_k_d_j`** / **`cci`** / **`williams_r`** / **`mfi`** / **`roc`** / **`trix`** / **`obv`** / **`dmi_adx_wilder`** / **`aroon`** / **`donchian`** / **`vwap_cumulative`** / **`vwap_rolling`** / **`true_range`** / **`rsi_wilder`** / **`atr_wilder`** / **`bollinger_bands`** + **`kline_true_range`** / `pct_change_*` / **`diff_n`**；**`kline_float_series`**）；**`GET /api/factors/catalog`**（算子发现）；**`docs/FACTORS.md`**；**`tests/test_factors_*.py`** |
 
 ---
@@ -151,3 +155,5 @@
 
 - **2026-04-13**：阶段 A「产出物」补充 **[SLOW_QUERY_AND_INDEXES.md](SLOW_QUERY_AND_INDEXES.md)**（`daily_kline` 索引与热点查询清单）。
 - **2026-04-13**：阶段 B 链 **[PHASE_B_GAP_AND_NEXT.md](PHASE_B_GAP_AND_NEXT.md)**；并行轨增加 **舆情/叙事** 行；新增 **[NARRATIVE_TRACK.md](NARRATIVE_TRACK.md)**。
+- **2026-04-22**：阶段 C 标注组合回测已落地（`portfolio_equal_weight` / `portfolio_value_weight`）；阶段 D 标注风控引擎已落地（`src/risk/engine.py` + 规则集 + 集成）。新增 `tests/test_portfolio_backtest_api_http.py`、`tests/test_portfolio_performance.py`。
+- **2026-04-23**：Phase 1 迭代 7–8 完成。头寸管理（`position_sizing.py`：equal/fixed_amount/volatility_target）+ 纸交易多账户（`account_label`）+ 组合回测风控预检查修复 + `pytest` 640 全绿 + `npm run build` 通过 + OpenAPI 更新。

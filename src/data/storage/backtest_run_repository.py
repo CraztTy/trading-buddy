@@ -10,7 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import BacktestRunModel
 
-ALLOWED_KINDS = frozenset({"ma_cross_single", "ma_cross_scan", "buy_hold_single"})
+ALLOWED_KINDS = frozenset({
+    "ma_cross_single",
+    "ma_cross_scan",
+    "buy_hold_single",
+    "limit_up_pullback_single",
+    "limit_up_pullback_scan",
+    "portfolio_equal_weight",
+    "portfolio_value_weight",
+})
 # request_params + response_payload 序列化后合计上限（避免撑爆 DB）
 MAX_BACKTEST_RUN_TOTAL_BYTES = 2 * 1024 * 1024
 
@@ -59,8 +67,10 @@ class BacktestRunRepository:
         summary: str,
         request_params: dict[str, Any],
         response_payload: dict[str, Any],
+        user_id: int | None = None,
     ) -> BacktestRunModel:
         row = BacktestRunModel(
+            user_id=user_id,
             kind=kind,
             summary=summary[:512],
             request_params=request_params,
@@ -73,22 +83,38 @@ class BacktestRunRepository:
     async def get(self, run_id: int) -> BacktestRunModel | None:
         return await self._session.get(BacktestRunModel, run_id)
 
-    async def count_all(self, *, kind: str | None = None, q: str | None = None) -> int:
+    async def count_all(
+        self, *, kind: str | None = None, q: str | None = None, user_id: int | None = None
+    ) -> int:
         stmt = select(func.count()).select_from(BacktestRunModel)
         if kind is not None:
             stmt = stmt.where(BacktestRunModel.kind == kind)
         if q:
             stmt = stmt.where(BacktestRunModel.summary.contains(q))
+        if user_id is not None:
+            stmt = stmt.where(BacktestRunModel.user_id == user_id)
+        else:
+            stmt = stmt.where(BacktestRunModel.user_id.is_(None))
         return int((await self._session.execute(stmt)).scalar_one())
 
     async def list_recent(
-        self, limit: int, offset: int, *, kind: str | None = None, q: str | None = None
+        self,
+        limit: int,
+        offset: int,
+        *,
+        kind: str | None = None,
+        q: str | None = None,
+        user_id: int | None = None,
     ) -> list[BacktestRunModel]:
         stmt = select(BacktestRunModel).order_by(desc(BacktestRunModel.created_at), desc(BacktestRunModel.id))
         if kind is not None:
             stmt = stmt.where(BacktestRunModel.kind == kind)
         if q:
             stmt = stmt.where(BacktestRunModel.summary.contains(q))
+        if user_id is not None:
+            stmt = stmt.where(BacktestRunModel.user_id == user_id)
+        else:
+            stmt = stmt.where(BacktestRunModel.user_id.is_(None))
         stmt = stmt.offset(offset).limit(limit)
         r = await self._session.execute(stmt)
         return list(r.scalars().all())

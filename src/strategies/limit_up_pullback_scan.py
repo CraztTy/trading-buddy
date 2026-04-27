@@ -6,6 +6,9 @@
 - 第4层：技术形态（涨停时间、历史波动、底部横盘、突破量能、调整模式、均线状态、趋势支撑）
 - 第5层：买点定位（激进/中性/保守）
 - 第1、2层（大盘/板块/政策）由调用方通过可选参数控制。
+
+公共过滤函数（``check_filters_at_idx``）同时供选股引擎与回测引擎复用，
+确保两者对"符合策略条件"的定义完全一致。
 """
 
 from __future__ import annotations
@@ -21,7 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.data.models import KLine, StockInfo, StockType
 from src.data.storage import KlineRepository, PolicyRepository, SectorRepository, StockRepository
 from src.strategies.limit_up_utils import find_limit_up_days, is_limit_up
+from src.strategies.market_env import evaluate_market_condition
 
+
+# ---------------------------------------------------------------------------
+# 参数与结果类型
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class LimitUpPullbackScanParams:
@@ -48,10 +56,14 @@ class LimitUpPullbackScanParams:
     ma_strict: bool = False
     # 第5层
     buy_point_types: tuple[str, ...] = ("neutral",)
-    # 板块/政策
+    # 第2层：板块/政策
     sector_codes: list[str] | None = field(default=None)
     require_policy: bool = False
     policy_lookback_days: int = 14
+    # 第1层：大盘环境
+    market_index_code: str | None = None  # 如 "sh.000001"
+    require_market_bull: bool = False
+    market_strict: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +98,27 @@ class LimitUpPullbackMatch:
         }
 
 
+@dataclass(frozen=True)
+class FilterResult:
+    """选股过滤检查结果，供选股引擎与回测引擎共用。"""
+
+    passed: bool
+    matched_rules: list[str]
+    limit_up_idx: int | None = None
+    limit_up_date: date | None = None
+    limit_up_open: float = 0.0
+    limit_up_close: float = 0.0
+    limit_up_low: float = 0.0
+    limit_up_volume: int = 0
+    buy_point_type: str = ""
+    buy_point_price: float = 0.0
+    stop_loss_price: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# DataFrame 转换
+# ---------------------------------------------------------------------------
+
 def _to_df(klines: list[KLine]) -> pd.DataFrame:
     """将 KLine 列表转为升序 DataFrame。"""
     if not klines:
@@ -106,39 +139,9 @@ def _to_df(klines: list[KLine]) -> pd.DataFrame:
     return df
 
 
-def _find_recent_limit_up(df: pd.DataFrame, stock_type: StockType, lookback_min: int, lookback_max: int) -> int | None:
-    """
-    从 DataFrame 末尾往前，找到落在 [lookback_min, lookback_max] 交易日范围内的涨停日索引。
-    返回最近的一个涨停日索引；若无则返回 None。
-    """
-    n = len(df)
-    if n < lookback_max + 1:
-        return None
-    # 只检查最后 lookback_max 根（不含当前日；n-1 为当前日，n-2 距离为1）
-    limit_ups = []
-    for i in range(n - lookback_max - 1, n):
-        if i < 0:
-            continue
-        k = KLine(
-            code="",
-            trade_date=df.at[i, "trade_date"],
-            open=df.at[i, "open"],
-            high=df.at[i, "high"],
-            low=df.at[i, "low"],
-            close=df.at[i, "close"],
-            pre_close=df.at[i, "pre_close"] if pd.notna(df.at[i, "pre_close"]) else None,
-            volume=df.at[i, "volume"],
-            amount=0.0,
-            pct_change=None,
-        )
-        if is_limit_up(k, stock_type):
-            distance = n - 1 - i
-            if lookback_min <= distance <= lookback_max:
-                limit_ups.append(i)
-    if not limit_ups:
-        return None
-    return limit_ups[-1]  # 最近的一个
-
+# ---------------------------------------------------------------------------
+# 底层工具函数（供选股与回测共用）
+# ---------------------------------------------------------------------------
 
 def _count_limit_up_in_range(df: pd.DataFrame, stock_type: StockType, start_idx: int, end_idx: int) -> int:
     """统计闭区间 [start_idx, end_idx] 内的涨停次数。"""
@@ -200,6 +203,45 @@ def _has_consecutive_big_drops(df: pd.DataFrame, start_idx: int, end_idx: int, d
     return False
 
 
+def _find_recent_limit_up(
+    df: pd.DataFrame, stock_type: StockType, lookback_min: int, lookback_max: int, current_idx: int | None = None
+) -> int | None:
+    """
+    从 DataFrame 指定位置往前，找到落在 [lookback_min, lookback_max] 交易日范围内的涨停日索引。
+    current_idx 为 None 时取最后一根。返回最近的一个涨停日索引；若无则返回 None。
+    """
+    n = len(df)
+    if n < lookback_max + 1:
+        return None
+    end = n - 1 if current_idx is None else current_idx
+    if end < lookback_max:
+        return None
+
+    limit_ups = []
+    for i in range(end - lookback_max, end + 1):
+        if i < 0:
+            continue
+        k = KLine(
+            code="",
+            trade_date=df.at[i, "trade_date"],
+            open=df.at[i, "open"],
+            high=df.at[i, "high"],
+            low=df.at[i, "low"],
+            close=df.at[i, "close"],
+            pre_close=df.at[i, "pre_close"] if pd.notna(df.at[i, "pre_close"]) else None,
+            volume=df.at[i, "volume"],
+            amount=0.0,
+            pct_change=None,
+        )
+        if is_limit_up(k, stock_type):
+            distance = end - i
+            if lookback_min <= distance <= lookback_max:
+                limit_ups.append(i)
+    if not limit_ups:
+        return None
+    return limit_ups[-1]  # 最近的一个
+
+
 def _check_buy_point(
     current_close: float,
     limit_up_open: float,
@@ -228,11 +270,214 @@ def _check_buy_point(
     if "conservative" in buy_types:
         dev = abs(current_close - limit_up_open) / limit_up_open if limit_up_open > 0 else float("inf")
         if dev <= 0.02:
-            # 止损位：涨停日前一日收盘价；若拿不到则用涨停日开盘价下方 2%
             stop = limit_up_open * 0.98
             return "conservative", limit_up_open, stop
     return None
 
+
+# ---------------------------------------------------------------------------
+# 核心过滤函数（选股与回测共用）
+# ---------------------------------------------------------------------------
+
+def check_filters_at_idx(
+    df: pd.DataFrame,
+    stock_info: StockInfo | None,
+    stock_type: StockType,
+    params: LimitUpPullbackScanParams,
+    current_idx: int | None = None,
+) -> FilterResult:
+    """
+    在给定索引位置检查全部五层过滤条件。
+
+    Args:
+        df: 升序 DataFrame（须包含 open/high/low/close/pre_close/volume 列）
+        stock_info: 股票信息（用于市值/ST筛选），为 None 时跳过市值检查
+        stock_type: 股票类型（用于涨停阈值）
+        params: 选股参数
+        current_idx: 检查的日期索引，None 表示最后一天
+
+    Returns:
+        FilterResult 对象，passed=True 表示全部通过
+    """
+    n = len(df)
+    if n < 80:
+        return FilterResult(passed=False, matched_rules=[])
+
+    end = n - 1 if current_idx is None else current_idx
+    if end < 0 or end >= n:
+        return FilterResult(passed=False, matched_rules=[])
+
+    rules: list[str] = []
+
+    # ========== 第3层：个股基础筛选 ==========
+    if params.exclude_st and stock_type == StockType.ST:
+        return FilterResult(passed=False, matched_rules=[])
+
+    if stock_info is not None:
+        if params.min_market_cap is not None or params.max_market_cap is not None:
+            cap = stock_info.market_cap
+            if cap is not None:
+                if params.min_market_cap is not None and cap < params.min_market_cap:
+                    return FilterResult(passed=False, matched_rules=[])
+                if params.max_market_cap is not None and cap > params.max_market_cap:
+                    return FilterResult(passed=False, matched_rules=[])
+
+    # 近3个月涨停次数（约60个交易日）
+    start_3m = max(0, end - 60)
+    limit_up_3m = _count_limit_up_in_range(df, stock_type, start_3m, end)
+    if not (params.min_limit_up_3m <= limit_up_3m <= params.max_limit_up_3m):
+        return FilterResult(passed=False, matched_rules=[])
+    rules.append(f"近3月涨停{limit_up_3m}次")
+
+    # ========== 第4层：技术形态 ==========
+    # 4.1 近5~10交易日内有涨停
+    lu_idx = _find_recent_limit_up(df, stock_type, params.limit_up_lookback_min, params.limit_up_lookback_max, end)
+    if lu_idx is None:
+        return FilterResult(passed=False, matched_rules=[])
+    limit_up_date = df.at[lu_idx, "trade_date"]
+    limit_up_open = float(df.at[lu_idx, "open"])
+    limit_up_close = float(df.at[lu_idx, "close"])
+    limit_up_low = float(df.at[lu_idx, "low"])
+    limit_up_volume = int(df.at[lu_idx, "volume"])
+    rules.append(f"涨停日{limit_up_date}")
+
+    # 4.2 历史稳定性（涨停前波动幅度）
+    days_1m = max(0, lu_idx - 20)
+    if lu_idx > days_1m:
+        range_1m = df["high"].iloc[days_1m:lu_idx].max() / df["low"].iloc[days_1m:lu_idx].min() - 1.0
+        if range_1m > params.pre_1m_volatility_max:
+            return FilterResult(passed=False, matched_rules=[])
+    else:
+        range_1m = 0.0
+
+    days_2m = max(0, lu_idx - 40)
+    if lu_idx > days_2m:
+        range_2m = df["high"].iloc[days_2m:lu_idx].max() / df["low"].iloc[days_2m:lu_idx].min() - 1.0
+        if range_2m > params.pre_2m_volatility_max:
+            return FilterResult(passed=False, matched_rules=[])
+    else:
+        range_2m = 0.0
+    rules.append(f"涨停前波动1M={range_1m:.2%} 2M={range_2m:.2%}")
+
+    # 4.3 底部形态（涨停前2个月横盘，无连板）
+    consolidation_days = int(params.bottom_consolidation_months * 20)
+    bottom_start = max(0, lu_idx - consolidation_days)
+    if lu_idx > bottom_start:
+        close_range = (
+            df["close"].iloc[bottom_start:lu_idx].max() / df["close"].iloc[bottom_start:lu_idx].min() - 1.0
+        )
+        if close_range > params.bottom_consolidation_range_max:
+            return FilterResult(passed=False, matched_rules=[])
+        max_consec = _max_consecutive_limit_ups(df, stock_type, bottom_start, lu_idx - 1)
+        if max_consec >= 2:
+            return FilterResult(passed=False, matched_rules=[])
+    rules.append("底部横盘合格")
+
+    # 突破量能（倍量起涨）
+    if lu_idx > 0:
+        pre_volume = int(df.at[lu_idx - 1, "volume"])
+        if pre_volume > 0 and limit_up_volume / pre_volume < params.breakout_volume_ratio_min:
+            return FilterResult(passed=False, matched_rules=[])
+        rules.append(f"倍量起涨{limit_up_volume/pre_volume:.1f}")
+    else:
+        return FilterResult(passed=False, matched_rules=[])
+
+    # 4.4 调整模式（涨停后）
+    adj_start = lu_idx + 1
+    adj_end = end
+    adj_days = adj_end - adj_start + 1
+    if adj_days < params.adjustment_days_min:
+        return FilterResult(passed=False, matched_rules=[])
+
+    if adj_days > 0:
+        adj_avg_vol = df["volume"].iloc[adj_start:adj_end + 1].mean()
+        if limit_up_volume > 0 and adj_avg_vol / limit_up_volume > params.adjustment_volume_ratio_max:
+            return FilterResult(passed=False, matched_rules=[])
+        adj_amplitude = (
+            (df["high"] - df["low"]) / df["low"]
+        ).iloc[adj_start:adj_end + 1].mean()
+        if adj_amplitude > params.adjustment_amplitude_max:
+            return FilterResult(passed=False, matched_rules=[])
+        if _has_consecutive_big_drops(df, adj_start, adj_end, drop_pct=-5.0):
+            return FilterResult(passed=False, matched_rules=[])
+    rules.append(f"调整{adj_days}天 缩量合格")
+
+    # 4.5 均线状态
+    close = df["close"].astype(float)
+    ma5 = close.rolling(5, min_periods=5).mean()
+    ma10 = close.rolling(10, min_periods=10).mean()
+    ma20 = close.rolling(20, min_periods=20).mean()
+    ma60 = close.rolling(60, min_periods=60).mean()
+
+    if params.ma_strict:
+        ok = True
+        for offset in range(1, 4):
+            if end - offset < 0:
+                ok = False
+                break
+            i = end - offset
+            if not (ma5.iloc[i] > ma10.iloc[i] > ma20.iloc[i]):
+                ok = False
+                break
+        if not ok:
+            return FilterResult(passed=False, matched_rules=[])
+        rules.append("均线严格多头")
+    else:
+        ok = True
+        for offset in range(1, 4):
+            i = end - offset
+            if i < 0 or close.iloc[i] <= ma10.iloc[i]:
+                ok = False
+                break
+        if not ok:
+            return FilterResult(passed=False, matched_rules=[])
+        rules.append("站稳10日线")
+
+    # 4.6 趋势与K线形态（20/60日线支撑 + 调整期无大阴线）
+    current_close = float(close.iloc[end])
+    if current_close <= ma20.iloc[end]:
+        return FilterResult(passed=False, matched_rules=[])
+    if current_close <= ma60.iloc[end]:
+        return FilterResult(passed=False, matched_rules=[])
+    for i in range(adj_start, adj_end + 1):
+        if i < 1:
+            continue
+        pct = (close.iloc[i] / close.iloc[i - 1] - 1.0) * 100.0
+        if pct <= -7.0:
+            return FilterResult(passed=False, matched_rules=[])
+    rules.append("20/60日线支撑有效")
+
+    # ========== 第5层：买点定位 ==========
+    buy = _check_buy_point(current_close, limit_up_open, limit_up_close, limit_up_low, params.buy_point_types)
+    if buy is None:
+        return FilterResult(passed=False, matched_rules=[])
+    buy_type, buy_price, stop_loss = buy
+    rules.append(f"买点:{buy_type}")
+
+    # 保守型止损：优先使用涨停日前一日收盘价
+    if buy_type == "conservative" and lu_idx > 0:
+        pre_close_val = df.at[lu_idx, "pre_close"]
+        if pd.notna(pre_close_val) and pre_close_val > 0:
+            stop_loss = float(pre_close_val)
+
+    return FilterResult(
+        passed=True,
+        matched_rules=rules,
+        limit_up_idx=lu_idx,
+        limit_up_date=limit_up_date,
+        limit_up_open=limit_up_open,
+        limit_up_close=limit_up_close,
+        limit_up_low=limit_up_low,
+        limit_up_volume=limit_up_volume,
+        buy_point_type=buy_type,
+        buy_point_price=buy_price,
+        stop_loss_price=stop_loss,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 选股引擎（基于公共过滤函数）
+# ---------------------------------------------------------------------------
 
 def evaluate_stock(
     klines: list[KLine],
@@ -246,212 +491,42 @@ def evaluate_stock(
     code = stock_info.code
     name = stock_info.name or code
     stock_type = stock_info.stock_type
-    rules: list[str] = []
 
     df = _to_df(klines)
     if df.empty:
-        print("DEBUG REJECT: df empty")
         return None
 
     # 确保 as_of_date 在数据中
     if df["trade_date"].iloc[-1] != params.as_of_date:
         mask = df["trade_date"] == params.as_of_date
         if not mask.any():
-            print("DEBUG REJECT: as_of_date not found")
             return None
         idx = int(mask.idxmax())
         df = df.iloc[: idx + 1].reset_index(drop=True)
 
-    n = len(df)
-    if n < 80:
-        print("DEBUG REJECT: n < 80")
+    result = check_filters_at_idx(df, stock_info, stock_type, params)
+    if not result.passed:
         return None
-
-    # ========== 第3层：个股基础筛选 ==========
-    if params.exclude_st and stock_type == StockType.ST:
-        print("DEBUG REJECT: ST")
-        return None
-
-    if params.min_market_cap is not None or params.max_market_cap is not None:
-        cap = stock_info.market_cap
-        if cap is not None:
-            if params.min_market_cap is not None and cap < params.min_market_cap:
-                print("DEBUG REJECT: cap too low")
-                return None
-            if params.max_market_cap is not None and cap > params.max_market_cap:
-                print("DEBUG REJECT: cap too high")
-                return None
-
-    # 近3个月涨停次数（约60个交易日）
-    start_3m = max(0, n - 60)
-    limit_up_3m = _count_limit_up_in_range(df, stock_type, start_3m, n - 1)
-    if not (params.min_limit_up_3m <= limit_up_3m <= params.max_limit_up_3m):
-        print(f"DEBUG REJECT: limit_up_3m={limit_up_3m}")
-        return None
-    rules.append(f"近3月涨停{limit_up_3m}次")
-
-    # ========== 第4层：技术形态 ==========
-    # 4.1 近5~10交易日内有涨停
-    lu_idx = _find_recent_limit_up(df, stock_type, params.limit_up_lookback_min, params.limit_up_lookback_max)
-    if lu_idx is None:
-        print("DEBUG REJECT: no recent limit up")
-        return None
-    limit_up_date = df.at[lu_idx, "trade_date"]
-    limit_up_open = float(df.at[lu_idx, "open"])
-    limit_up_close = float(df.at[lu_idx, "close"])
-    limit_up_low = float(df.at[lu_idx, "low"])
-    limit_up_volume = int(df.at[lu_idx, "volume"])
-    rules.append(f"涨停日{limit_up_date}")
-
-    # 4.2 历史稳定性（涨停前波动幅度）
-    days_1m = max(0, lu_idx - 20)
-    if lu_idx > days_1m:
-        range_1m = df["high"].iloc[days_1m:lu_idx].max() / df["low"].iloc[days_1m:lu_idx].min() - 1.0
-        if range_1m > params.pre_1m_volatility_max:
-            print(f"DEBUG REJECT: range_1m={range_1m}")
-            return None
-    else:
-        range_1m = 0.0
-
-    days_2m = max(0, lu_idx - 40)
-    if lu_idx > days_2m:
-        range_2m = df["high"].iloc[days_2m:lu_idx].max() / df["low"].iloc[days_2m:lu_idx].min() - 1.0
-        if range_2m > params.pre_2m_volatility_max:
-            print(f"DEBUG REJECT: range_2m={range_2m}")
-            return None
-    else:
-        range_2m = 0.0
-    rules.append(f"涨停前波动1M={range_1m:.2%} 2M={range_2m:.2%}")
-
-    # 4.3 底部形态（涨停前2个月横盘，无连板）
-    consolidation_days = int(params.bottom_consolidation_months * 20)
-    bottom_start = max(0, lu_idx - consolidation_days)
-    if lu_idx > bottom_start:
-        close_range = (
-            df["close"].iloc[bottom_start:lu_idx].max() / df["close"].iloc[bottom_start:lu_idx].min() - 1.0
-        )
-        if close_range > params.bottom_consolidation_range_max:
-            print(f"DEBUG REJECT: bottom_range={close_range}")
-            return None
-        max_consec = _max_consecutive_limit_ups(df, stock_type, bottom_start, lu_idx - 1)
-        if max_consec >= 2:
-            print(f"DEBUG REJECT: max_consec={max_consec}")
-            return None
-    rules.append("底部横盘合格")
-
-    # 突破量能（倍量起涨）
-    if lu_idx > 0:
-        pre_volume = int(df.at[lu_idx - 1, "volume"])
-        if pre_volume > 0 and limit_up_volume / pre_volume < params.breakout_volume_ratio_min:
-            print(f"DEBUG REJECT: breakout ratio={limit_up_volume/pre_volume}")
-            return None
-        rules.append(f"倍量起涨{limit_up_volume/pre_volume:.1f}")
-    else:
-        print("DEBUG REJECT: lu_idx=0")
-        return None
-
-    # 4.4 调整模式（涨停后）
-    adj_start = lu_idx + 1
-    adj_end = n - 1
-    adj_days = adj_end - adj_start + 1
-    if adj_days < params.adjustment_days_min:
-        print(f"DEBUG REJECT: adj_days={adj_days}")
-        return None
-
-    if adj_days > 0:
-        adj_avg_vol = df["volume"].iloc[adj_start:adj_end + 1].mean()
-        if limit_up_volume > 0 and adj_avg_vol / limit_up_volume > params.adjustment_volume_ratio_max:
-            print(f"DEBUG REJECT: adj_vol_ratio={adj_avg_vol/limit_up_volume}")
-            return None
-        adj_amplitude = (
-            (df["high"] - df["low"]) / df["low"]
-        ).iloc[adj_start:adj_end + 1].mean()
-        if adj_amplitude > params.adjustment_amplitude_max:
-            print(f"DEBUG REJECT: adj_amplitude={adj_amplitude}")
-            return None
-        if _has_consecutive_big_drops(df, adj_start, adj_end, drop_pct=-5.0):
-            print("DEBUG REJECT: consecutive big drops")
-            return None
-    rules.append(f"调整{adj_days}天 缩量合格")
-
-    # 4.5 均线状态
-    close = df["close"].astype(float)
-    ma5 = close.rolling(5, min_periods=5).mean()
-    ma10 = close.rolling(10, min_periods=10).mean()
-    ma20 = close.rolling(20, min_periods=20).mean()
-    ma60 = close.rolling(60, min_periods=60).mean()
-
-    if params.ma_strict:
-        ok = True
-        for offset in range(1, 4):
-            if n - offset < 0:
-                ok = False
-                break
-            i = n - offset
-            if not (ma5.iloc[i] > ma10.iloc[i] > ma20.iloc[i]):
-                ok = False
-                break
-        if not ok:
-            print("DEBUG REJECT: ma strict")
-            return None
-        rules.append("均线严格多头")
-    else:
-        ok = True
-        for offset in range(1, 4):
-            i = n - offset
-            if i < 0 or close.iloc[i] <= ma10.iloc[i]:
-                ok = False
-                break
-        if not ok:
-            print("DEBUG REJECT: ma loose")
-            return None
-        rules.append("站稳10日线")
-
-    # 4.6 趋势与K线形态（20/60日线支撑）
-    current_close = float(close.iloc[-1])
-    if current_close <= ma20.iloc[-1]:
-        print("DEBUG REJECT: below ma20")
-        return None
-    if current_close <= ma60.iloc[-1]:
-        print("DEBUG REJECT: below ma60")
-        return None
-    # 检查调整期间无高位放量大阴线（简化：无单日跌幅 > 7%）
-    for i in range(adj_start, adj_end + 1):
-        pct = (close.iloc[i] / close.iloc[i - 1] - 1.0) * 100.0
-        if pct <= -7.0:
-            print(f"DEBUG REJECT: big drop day {i} pct={pct}")
-            return None
-    rules.append("20/60日线支撑有效")
-
-    # ========== 第5层：买点定位 ==========
-    buy = _check_buy_point(current_close, limit_up_open, limit_up_close, limit_up_low, params.buy_point_types)
-    if buy is None:
-        print("DEBUG REJECT: no buy point")
-        return None
-    buy_type, buy_price, stop_loss = buy
-    rules.append(f"买点:{buy_type}")
-
-    # 前一日收盘价用于保守型止损（若可用）
-    if buy_type == "conservative" and lu_idx > 0:
-        pre_close_val = df.at[lu_idx, "pre_close"]
-        if pd.notna(pre_close_val) and pre_close_val > 0:
-            stop_loss = float(pre_close_val)
 
     return LimitUpPullbackMatch(
         code=code,
         name=name,
-        buy_point_type=buy_type,
-        buy_point_price=buy_price,
-        stop_loss_price=stop_loss,
-        limit_up_date=limit_up_date,
-        limit_up_close=limit_up_close,
-        limit_up_open=limit_up_open,
-        limit_up_low=limit_up_low,
-        current_close=current_close,
-        matched_rules=rules,
+        buy_point_type=result.buy_point_type,
+        buy_point_price=result.buy_point_price,
+        stop_loss_price=result.stop_loss_price,
+        limit_up_date=result.limit_up_date,
+        limit_up_close=result.limit_up_close,
+        limit_up_open=result.limit_up_open,
+        limit_up_low=result.limit_up_low,
+        current_close=float(df["close"].iloc[-1]),
+        matched_rules=result.matched_rules,
         note="符合涨停回调选股策略 v2.0 技术条件",
     )
 
+
+# ---------------------------------------------------------------------------
+# 异步批量扫描
+# ---------------------------------------------------------------------------
 
 async def scan_stocks(
     session: AsyncSession,
@@ -466,7 +541,31 @@ async def scan_stocks(
     sector_repo = SectorRepository(session)
     policy_repo = PolicyRepository(session)
 
-    # 可选：板块/政策预过滤
+    # 可选：第1层 大盘环境预过滤
+    market_ok = True
+    market_rules: list[str] = []
+    if params.require_market_bull and params.market_index_code:
+        market_klines = await kline_repo.get_daily(
+            code=params.market_index_code,
+            end_date=params.as_of_date,
+            limit=80,
+            adjust_flag="3",
+        )
+        if market_klines:
+            market_result = evaluate_market_condition(
+                market_klines,
+                market_index_code=params.market_index_code,
+                strict=params.market_strict,
+            )
+            market_ok = market_result.passed
+            market_rules = market_result.rules
+        else:
+            market_ok = False
+            market_rules = ["大盘K线缺失"]
+        if not market_ok:
+            return []
+
+    # 可选：第2层 板块/政策预过滤
     if params.sector_codes:
         sector_stocks = await sector_repo.get_stocks_by_sectors(params.sector_codes)
         sector_set = set(sector_stocks)
@@ -503,6 +602,22 @@ async def scan_stocks(
             continue
         match = evaluate_stock(klines, info, params)
         if match:
+            # 将大盘信息附加到 note
+            if market_rules:
+                match = LimitUpPullbackMatch(
+                    code=match.code,
+                    name=match.name,
+                    buy_point_type=match.buy_point_type,
+                    buy_point_price=match.buy_point_price,
+                    stop_loss_price=match.stop_loss_price,
+                    limit_up_date=match.limit_up_date,
+                    limit_up_close=match.limit_up_close,
+                    limit_up_open=match.limit_up_open,
+                    limit_up_low=match.limit_up_low,
+                    current_close=match.current_close,
+                    matched_rules=match.matched_rules + market_rules,
+                    note=match.note + "; " + "; ".join(market_rules),
+                )
             results.append(match)
 
     return results

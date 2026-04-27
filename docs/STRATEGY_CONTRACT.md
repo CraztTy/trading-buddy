@@ -29,6 +29,8 @@ GET /api/strategies/catalog
 | `ma_cross` | `ma_cross` | `ma_cross` |
 | `ma_cross_scan` | —（无批量 signal） | `ma_cross_scan` |
 | `buy_hold` | —（无买入持有 signal） | `buy_hold` |
+| `portfolio_equal_weight` | —（无组合 signal） | `portfolio_equal_weight` |
+| `portfolio_value_weight` | —（无组合 signal） | `portfolio_value_weight` |
 
 ## 统一信号（JSON 模板）
 
@@ -67,7 +69,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/strategies/signal" \
 
 ## 与存档的关系
 
-- 单标的回测成功后存档 **`kind=ma_cross_single`**；买入持有单标的 **`kind=buy_hold_single`**；批量扫描 **`kind=ma_cross_scan`**。  
+- 单标的回测成功后存档 **`kind=ma_cross_single`**；买入持有单标的 **`kind=buy_hold_single`**；批量扫描 **`kind=ma_cross_scan`**；组合等权 **`kind=portfolio_equal_weight`**；组合市值加权 **`kind=portfolio_value_weight`**。  
 - Catalog 中 **`ma_cross`** 的 **`backtest_archive_kinds`** 列出上述两种，便于工具链把「策略 id」映射到历史存档筛选。
 
 ### `GET /api/backtest/catalog` 与 **`archive_kind`**
@@ -81,6 +83,10 @@ curl -sS -X POST "http://127.0.0.1:8000/api/strategies/signal" \
 | **`ma_cross`** | `ma_cross` | **`ma_cross_single`** | `ma_cross` · **`ma_cross_single`** |
 | **`ma_cross_scan`** | `ma_cross_scan` | **`ma_cross_scan`** | `ma_cross_scan` · **`ma_cross_scan`** |
 | **`buy_hold`** | `buy_hold` | **`buy_hold_single`** | `buy_hold` · **`buy_hold_single`** |
+| **`limit_up_pullback`** | `limit_up_pullback` | **`limit_up_pullback_single`** | `limit_up_pullback` · **`limit_up_pullback_single`** |
+| **`limit_up_pullback_scan`** | `limit_up_pullback_scan` | **`limit_up_pullback_scan`** | `limit_up_pullback_scan` · **`limit_up_pullback_scan`** |
+| **`portfolio_equal_weight`** | `portfolio_equal_weight` | **`portfolio_equal_weight`** | `portfolio_equal_weight` · **`portfolio_equal_weight`** |
+| **`portfolio_value_weight`** | `portfolio_value_weight` | **`portfolio_value_weight`** | `portfolio_value_weight` · **`portfolio_value_weight`** |
 
 **不变量**：对 **`backtest/catalog`** 中每一行 **`strategy_id`**，在 **`strategies/catalog`** 中恰有一条 **`backtest_run.strategy_id`** 相同且 **`backtest_run.archive_kind`** 与 **`backtest/catalog.strategies[].archive_kind`** 相等。仓库用例 **`tests/test_strategies_api_http.py::test_strategies_catalog_archive_kind_matches_backtest_engine_catalog`** 与栈脚本 **`scripts/verify_stack.py`**（策略 vs 回测 **`archive_kind`** 段）共同防止漂移。
 
@@ -164,6 +170,7 @@ Content-Type: application/json
 | 2026-04 | 第二策略 **`buy_hold`** / **`buy_hold_single`**；**`GET /api/backtest/buy-hold`** 与 **`POST /run`** 对齐。 |
 | 2026-04 | 发布 **1.1.1**：契约与 OpenAPI 无行为变更，仅版本号与文档/CI 小步。 |
 | 2026-04 | 发布 **1.2.0**：因子截面 API/脚本/看板/栈探测与 **CHANGELOG**；契约与 OpenAPI 随 **`__version__`** 对齐。 |
+| 2026-04 | 组合策略 **`portfolio_equal_weight`** / **`portfolio_value_weight`** 入 catalog；双 Catalog 表扩展 7 行；`tests/test_portfolio_backtest_api_http.py` 覆盖组合回测 HTTP 契约。 |
 
 ## 修订
 

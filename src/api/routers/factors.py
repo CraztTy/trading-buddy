@@ -620,4 +620,156 @@ async def factor_preview(
     return body
 
 
+# ---------------------------------------------------------------------------
+# 因子截面快照（持久化）
+# ---------------------------------------------------------------------------
+
+
+class FactorSnapshotItem(BaseModel):
+    """单条因子快照记录。"""
+
+    trade_date: str
+    code: str
+    close: float | None = None
+    volume: float | None = None
+    amount: float | None = None
+    turnover_rate: float | None = None
+    pct_change: float | None = None
+    ret_5d: float | None = None
+    ret_20d: float | None = None
+    ret_60d: float | None = None
+    ma_5: float | None = None
+    ma_20: float | None = None
+    ma_60: float | None = None
+    rsi_14: float | None = None
+    macd_dif: float | None = None
+    macd_dea: float | None = None
+    macd_hist: float | None = None
+    kdj_k: float | None = None
+    kdj_d: float | None = None
+    kdj_j: float | None = None
+    atr_14: float | None = None
+    boll_upper: float | None = None
+    boll_lower: float | None = None
+    meta_bars: int | None = None
+
+
+class FactorSnapshotListResponse(BaseModel):
+    items: list[FactorSnapshotItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class FactorSnapshotDatesResponse(BaseModel):
+    dates: list[str]
+
+
+@router.get("/snapshot/{trade_date}", response_model=FactorSnapshotListResponse)
+async def get_factor_snapshot_by_date(
+    trade_date: date,
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+) -> FactorSnapshotListResponse:
+    """查询指定日期的因子截面快照。"""
+    from src.data.storage.factor_snapshot_repository import FactorSnapshotRepository
+
+    repo = FactorSnapshotRepository(session)
+    rows = await repo.get_by_date(trade_date, limit=limit, offset=offset)
+    total = await repo.count_by_date(trade_date)
+
+    items = [
+        FactorSnapshotItem(
+            trade_date=r.trade_date.isoformat() if r.trade_date else "",
+            code=r.code,
+            close=r.close,
+            volume=r.volume,
+            amount=r.amount,
+            turnover_rate=r.turnover_rate,
+            pct_change=r.pct_change,
+            ret_5d=r.ret_5d,
+            ret_20d=r.ret_20d,
+            ret_60d=r.ret_60d,
+            ma_5=r.ma_5,
+            ma_20=r.ma_20,
+            ma_60=r.ma_60,
+            rsi_14=r.rsi_14,
+            macd_dif=r.macd_dif,
+            macd_dea=r.macd_dea,
+            macd_hist=r.macd_hist,
+            kdj_k=r.kdj_k,
+            kdj_d=r.kdj_d,
+            kdj_j=r.kdj_j,
+            atr_14=r.atr_14,
+            boll_upper=r.boll_upper,
+            boll_lower=r.boll_lower,
+            meta_bars=r.meta_bars,
+        )
+        for r in rows
+    ]
+
+    return FactorSnapshotListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/snapshot/dates", response_model=FactorSnapshotDatesResponse)
+async def get_factor_snapshot_dates(
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(30, ge=1, le=365),
+) -> FactorSnapshotDatesResponse:
+    """列出有因子快照数据的交易日。"""
+    from src.data.storage.factor_snapshot_repository import FactorSnapshotRepository
+
+    repo = FactorSnapshotRepository(session)
+    dates = await repo.list_available_dates(limit=limit)
+    return FactorSnapshotDatesResponse(dates=[d.isoformat() for d in dates])
+
+
+@router.get("/snapshot/code/{code}", response_model=FactorSnapshotListResponse)
+async def get_factor_snapshot_by_code(
+    code: str,
+    session: AsyncSession = Depends(get_session),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+) -> FactorSnapshotListResponse:
+    """查询指定标的一段时间内的因子快照（时间序列）。"""
+    from src.data.storage.factor_snapshot_repository import FactorSnapshotRepository
+
+    repo = FactorSnapshotRepository(session)
+    rows = await repo.get_by_code(code, start_date=start_date, end_date=end_date, limit=limit)
+
+    items = [
+        FactorSnapshotItem(
+            trade_date=r.trade_date.isoformat() if r.trade_date else "",
+            code=r.code,
+            close=r.close,
+            volume=r.volume,
+            amount=r.amount,
+            turnover_rate=r.turnover_rate,
+            pct_change=r.pct_change,
+            ret_5d=r.ret_5d,
+            ret_20d=r.ret_20d,
+            ret_60d=r.ret_60d,
+            ma_5=r.ma_5,
+            ma_20=r.ma_20,
+            ma_60=r.ma_60,
+            rsi_14=r.rsi_14,
+            macd_dif=r.macd_dif,
+            macd_dea=r.macd_dea,
+            macd_hist=r.macd_hist,
+            kdj_k=r.kdj_k,
+            kdj_d=r.kdj_d,
+            kdj_j=r.kdj_j,
+            atr_14=r.atr_14,
+            boll_upper=r.boll_upper,
+            boll_lower=r.boll_lower,
+            meta_bars=r.meta_bars,
+        )
+        for r in rows
+    ]
+
+    return FactorSnapshotListResponse(items=items, total=len(items), limit=limit, offset=0)
+
+
 __all__ = ["router"]

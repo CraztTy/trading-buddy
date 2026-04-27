@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import get_current_user
 from src.data.storage import get_session
 from src.data.storage.watchlist_repository import WatchlistRepository
 
@@ -40,10 +41,20 @@ def _norm_code(raw: str) -> str:
     return c
 
 
+def _user_id_or_system(current_user: dict) -> int | None:
+    """将系统用户（id=0）映射为 None，以便与 user_id=NULL 的旧数据兼容。"""
+    uid = current_user.get("id", 0)
+    return None if uid == 0 else uid
+
+
 @router.get("/items", response_model=WatchlistItemsResponse)
-async def watchlist_items(session: AsyncSession = Depends(get_session)) -> WatchlistItemsResponse:
+async def watchlist_items(
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+) -> WatchlistItemsResponse:
     repo = WatchlistRepository(session)
-    wl = await repo.get_or_create_default_watchlist()
+    user_id = _user_id_or_system(current_user)
+    wl = await repo.get_or_create_watchlist(user_id=user_id, label="default")
     rows = await repo.list_items(wl.id)
     items = [
         WatchlistItemOut(
@@ -60,10 +71,12 @@ async def watchlist_items(session: AsyncSession = Depends(get_session)) -> Watch
 async def watchlist_add_item(
     body: WatchlistAddRequest,
     session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ) -> dict:
     code = _norm_code(body.code)
     repo = WatchlistRepository(session)
-    wl = await repo.get_or_create_default_watchlist()
+    user_id = _user_id_or_system(current_user)
+    wl = await repo.get_or_create_watchlist(user_id=user_id, label="default")
     try:
         await repo.add_item(wl.id, code)
     except ValueError as e:
@@ -78,10 +91,12 @@ async def watchlist_add_item(
 async def watchlist_remove_item(
     code: str,
     session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ) -> dict:
     c = _norm_code(code)
     repo = WatchlistRepository(session)
-    wl = await repo.get_or_create_default_watchlist()
+    user_id = _user_id_or_system(current_user)
+    wl = await repo.get_or_create_watchlist(user_id=user_id, label="default")
     n = await repo.remove_item(wl.id, c)
     if n == 0:
         raise HTTPException(status_code=404, detail="自选无此代码")

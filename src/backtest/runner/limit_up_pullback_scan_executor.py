@@ -23,20 +23,22 @@ from src.data.storage import KlineRepository, StockRepository, get_database
 STRATEGY_ID_LIMIT_UP_PULLBACK_SCAN = "limit_up_pullback_scan"
 
 
-async def _fetch_stock_type_map(
+async def _fetch_stock_info_map(
     session: AsyncSession, codes: list[str]
-) -> dict[str, StockType]:
+) -> dict[str, Any]:
+    """批量拉取股票完整信息，返回 code -> stock_info 映射。"""
     repo = StockRepository(session)
-    out: dict[str, StockType] = {}
+    out: dict[str, Any] = {}
     for c in codes:
         info = await repo.get_by_code(c)
-        out[c] = info.stock_type if info else StockType.COMMON
+        if info:
+            out[c] = info
     return out
 
 
 async def limit_up_pullback_scan_items(
     codes: list[str],
-    stock_type_map: dict[str, StockType],
+    stock_info_map: dict[str, Any],
     *,
     pullback_days: int,
     entry_type: str,
@@ -50,6 +52,12 @@ async def limit_up_pullback_scan_items(
     max_concurrent: int = 8,
     benchmark_klines: list[KLine] | None = None,
     adjust_flag: str = "3",
+    max_hold_days: int = 0,
+    time_stop_days: int = 0,
+    time_stop_pct: float = 0.0,
+    market_index_klines: list[KLine] | None = None,
+    require_market_bull: bool = False,
+    market_strict: bool = False,
 ) -> list[dict[str, Any]]:
     """
     并发拉取各标的日 K，再逐只运行涨停回调回测并排序。
@@ -116,9 +124,11 @@ async def limit_up_pullback_scan_items(
             )
             continue
         try:
-            res, _ = run_limit_up_pullback_backtest(
+            info = stock_info_map.get(c)
+            stock_type = info.stock_type if info else StockType.COMMON
+            res, _, _ = run_limit_up_pullback_backtest(
                 klines,
-                stock_type=stock_type_map.get(c, StockType.COMMON),
+                stock_type=stock_type,
                 pullback_days=pullback_days,
                 entry_type=entry_type,
                 volume_shrink_ratio=volume_shrink_ratio,
@@ -126,6 +136,13 @@ async def limit_up_pullback_scan_items(
                 slippage_rate=slippage_rate,
                 include_equity_curve=False,
                 benchmark_klines=benchmark_klines,
+                stock_info=info,
+                max_hold_days=max_hold_days,
+                time_stop_days=time_stop_days,
+                time_stop_pct=time_stop_pct,
+                market_index_klines=market_index_klines,
+                require_market_bull=require_market_bull,
+                market_strict=market_strict,
             )
         except ValueError as e:
             rows.append(
@@ -199,6 +216,12 @@ async def execute_limit_up_pullback_scan(
     pullback_days: int = 10,
     entry_type: str = "neutral",
     volume_shrink_ratio: float = 0.5,
+    max_hold_days: int = 0,
+    time_stop_days: int = 0,
+    time_stop_pct: float = 0.0,
+    market_index_code: str | None = None,
+    require_market_bull: bool = False,
+    market_strict: bool = False,
 ) -> tuple[list[dict[str, Any]], str, str]:
     """
     含基准 K 拉取、sort_by 校验与 stock_type 批量查询；失败抛出 ValueError（供 HTTP 400）。
@@ -226,11 +249,23 @@ async def execute_limit_up_pullback_scan(
         if not bench_klines:
             raise ValueError(f"基准 {bench_norm} 无可用日 K")
 
-    stock_type_map = await _fetch_stock_type_map(session, codes)
+    # 可选：拉取大盘K线（第1层过滤）
+    market_index_klines = None
+    if require_market_bull and market_index_code:
+        repo = KlineRepository(session)
+        market_index_klines = await repo.get_daily(
+            code=market_index_code.strip(),
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            adjust_flag=adjust_flag,
+        )
+
+    stock_info_map = await _fetch_stock_info_map(session, codes)
 
     items = await limit_up_pullback_scan_items(
         codes,
-        stock_type_map,
+        stock_info_map,
         pullback_days=pullback_days,
         entry_type=entry_type,
         volume_shrink_ratio=volume_shrink_ratio,
@@ -243,5 +278,11 @@ async def execute_limit_up_pullback_scan(
         max_concurrent=max_concurrent,
         benchmark_klines=bench_klines,
         adjust_flag=adjust_flag,
+        max_hold_days=max_hold_days,
+        time_stop_days=time_stop_days,
+        time_stop_pct=time_stop_pct,
+        market_index_klines=market_index_klines,
+        require_market_bull=require_market_bull,
+        market_strict=market_strict,
     )
     return items, sort_norm, bench_norm
