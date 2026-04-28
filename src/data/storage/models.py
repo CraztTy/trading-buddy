@@ -114,6 +114,14 @@ class PolicyEventModel(Base):
 class MinuteKlineModel(Base):
     """分钟K线表"""
     __tablename__ = "minute_kline"
+    __table_args__ = (
+        # 按标的+日期+周期查询
+        Index("ix_minute_kline_code_date_period", "code", "trade_date", "period"),
+        # 按日期+周期查询（用于当日行情）
+        Index("ix_minute_kline_date_period", "trade_date", "period"),
+        # 唯一约束：同一标的同一时间同一周期只存一条
+        UniqueConstraint("code", "trade_time", "period", name="uq_minute_kline_code_time_period"),
+    )
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -124,7 +132,7 @@ class MinuteKlineModel(Base):
     high: Mapped[float] = mapped_column(Float, nullable=False)
     low: Mapped[float] = mapped_column(Float, nullable=False)
     close: Mapped[float] = mapped_column(Float, nullable=False)
-    volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
@@ -145,16 +153,22 @@ class SectorInfoModel(Base):
 class IndexDataModel(Base):
     """指数数据表"""
     __tablename__ = "index_data"
+    __table_args__ = (
+        # 唯一约束：同一指数同一日期只存一条
+        UniqueConstraint("code", "trade_date", name="uq_index_data_code_date"),
+        # 按日期查询（用于获取某日所有指数）
+        Index("ix_index_data_trade_date", "trade_date"),
+    )
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(50), nullable=False)
-    trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
     open: Mapped[float] = mapped_column(Float, nullable=False)
     high: Mapped[float] = mapped_column(Float, nullable=False)
     low: Mapped[float] = mapped_column(Float, nullable=False)
     close: Mapped[float] = mapped_column(Float, nullable=False)
-    volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     change: Mapped[float | None] = mapped_column(Float, nullable=True)
     pct_change: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -365,12 +379,20 @@ class RiskEventModel(Base):
 class FactorSnapshotModel(Base):
     """因子截面数据表 — 每日各标的因子值快照"""
     __tablename__ = "factor_snapshot"
+    __table_args__ = (
+        # 唯一约束：同一标的同一日期只存一条
+        UniqueConstraint("trade_date", "code", name="uq_factor_snapshot_date_code"),
+        # 按日期+因子值排序查询（用于因子选股）
+        Index("ix_factor_snapshot_date_rsi", "trade_date", "rsi_14"),
+        Index("ix_factor_snapshot_date_macd", "trade_date", "macd_hist"),
+        Index("ix_factor_snapshot_date_ret", "trade_date", "ret_20d"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     close: Mapped[float | None] = mapped_column(Float, nullable=True)
-    volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume: Mapped[float | None] = mapped_column(BigInteger, nullable=True)
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     turnover_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     pct_change: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -398,6 +420,14 @@ class FactorSnapshotModel(Base):
 class AuditLogModel(Base):
     """审计日志表 — 记录交易操作、风控变更、系统管理事件"""
     __tablename__ = "audit_log"
+    __table_args__ = (
+        # 按用户+时间查询（用于用户操作历史）
+        Index("ix_audit_log_user_time", "user_id", "created_at"),
+        # 按操作类型+时间查询（用于统计特定操作）
+        Index("ix_audit_log_action_time", "action", "created_at"),
+        # 按资源类型+时间查询
+        Index("ix_audit_log_resource_time", "resource_type", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
@@ -415,6 +445,12 @@ class AuditLogModel(Base):
 class ExperimentModel(Base):
     """实验定义表 — 策略实验的元信息"""
     __tablename__ = "experiment"
+    __table_args__ = (
+        # 按用户+状态查询
+        Index("ix_experiment_user_status", "user_id", "status"),
+        # 按策略类型查询
+        Index("ix_experiment_strategy", "strategy_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
@@ -431,6 +467,12 @@ class ExperimentModel(Base):
 class ExperimentRunModel(Base):
     """实验运行记录表 — 单次运行的参数与结果"""
     __tablename__ = "experiment_run"
+    __table_args__ = (
+        # 按实验+时间查询（用于获取实验的所有运行记录）
+        Index("ix_experiment_run_exp_time", "experiment_id", "created_at"),
+        # 按状态+时间查询（用于统计运行状态）
+        Index("ix_experiment_run_status_time", "status", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     experiment_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -446,6 +488,12 @@ class ExperimentRunModel(Base):
 class StressScenarioModel(Base):
     """压力测试场景定义表"""
     __tablename__ = "stress_scenario"
+    __table_args__ = (
+        # 按内置/自定义查询
+        Index("ix_stress_scenario_builtin", "is_builtin"),
+        # 按日期范围查询
+        Index("ix_stress_scenario_date", "start_date", "end_date"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -461,6 +509,14 @@ class StressScenarioModel(Base):
 class StressTestResultModel(Base):
     """压力测试运行结果表"""
     __tablename__ = "stress_test_result"
+    __table_args__ = (
+        # 按场景+用户查询
+        Index("ix_stress_result_scenario_user", "scenario_id", "user_id"),
+        # 按策略类型查询
+        Index("ix_stress_result_strategy", "strategy_id"),
+        # 按标的查询
+        Index("ix_stress_result_code", "code"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     scenario_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -478,6 +534,12 @@ class StressTestResultModel(Base):
 class SyncLogModel(Base):
     """数据同步日志表"""
     __tablename__ = "sync_log"
+    __table_args__ = (
+        # 按来源+数据类型查询
+        Index("ix_sync_log_source_type", "source", "data_type"),
+        # 按状态查询
+        Index("ix_sync_log_status", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
