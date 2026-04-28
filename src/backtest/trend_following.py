@@ -1,0 +1,326 @@
+"""
+趋势跟踪策略（Trend Following）
+
+基于移动平均线和ATR的趋势跟踪策略。
+当价格突破移动平均线且ATR波动率较高时开仓，
+当价格跌破移动平均线或ATR波动率下降时平仓。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from src.data.models import KLine
+
+
+@dataclass(frozen=True)
+class TrendFollowingBacktestResult:
+    """趋势跟踪策略回测结果"""
+    code: str
+    ma_period: int
+    atr_period: int
+    atr_multiplier: float
+    bars_used: int
+    first_trade_date: date | None
+    last_trade_date: date | None
+    total_return_pct: float
+    buy_hold_return_pct: float
+    excess_return_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    signal_changes: int
+    annualized_return_pct: float
+    buy_hold_annualized_return_pct: float
+    annualized_volatility_pct: float
+    sortino_ratio: float
+    calmar_ratio: float
+    long_trades_count: int
+    win_rate_pct: float
+    avg_holding_return_pct: float
+    underlying_beta: float
+    underlying_alpha_ann_pct: float
+    benchmark_code: str | None = None
+    commission_rate: float = 0.0
+    slippage_rate: float = 0.0
+
+    def to_api_dict(self, equity_sample_max: int = 120) -> dict[str, Any]:
+        note = (
+            "趋势跟踪策略：基于移动平均线和ATR波动率。"
+            " 当价格突破MA且ATR高于阈值时开多仓。"
+            " 当价格跌破MA或ATR下降时平仓。"
+            " Sharpe / Sortino 按 252 交易日年化。"
+            " Calmar=年化收益÷|最大回撤|。"
+        )
+        if self.commission_rate > 0:
+            note += (
+                f" 单边手续费按调仓日扣减（费率={self.commission_rate:.6f}）。"
+            )
+        if self.slippage_rate > 0:
+            note += (
+                f" 滑点按调仓日扣减（费率={self.slippage_rate:.6f}）。"
+            )
+        d: dict[str, Any] = {
+            "code": self.code,
+            "ma_period": self.ma_period,
+            "atr_period": self.atr_period,
+            "atr_multiplier": round(self.atr_multiplier, 2),
+            "bars_used": self.bars_used,
+            "commission_rate": round(self.commission_rate, 8),
+            "slippage_rate": round(self.slippage_rate, 8),
+            "first_trade_date": self.first_trade_date.isoformat()
+            if self.first_trade_date
+            else None,
+            "last_trade_date": self.last_trade_date.isoformat()
+            if self.last_trade_date
+            else None,
+            "total_return_pct": round(self.total_return_pct, 4),
+            "buy_hold_return_pct": round(self.buy_hold_return_pct, 4),
+            "excess_return_pct": round(self.excess_return_pct, 4),
+            "max_drawdown_pct": round(self.max_drawdown_pct, 4),
+            "sharpe_ratio": round(self.sharpe_ratio, 4),
+            "signal_changes": self.signal_changes,
+            "annualized_return_pct": round(self.annualized_return_pct, 4),
+            "buy_hold_annualized_return_pct": round(
+                self.buy_hold_annualized_return_pct, 4
+            ),
+            "annualized_volatility_pct": round(self.annualized_volatility_pct, 4),
+            "sortino_ratio": round(self.sortino_ratio, 4),
+            "calmar_ratio": round(self.calmar_ratio, 4),
+            "long_trades_count": self.long_trades_count,
+            "win_rate_pct": round(self.win_rate_pct, 4),
+            "avg_holding_return_pct": round(self.avg_holding_return_pct, 4),
+            "underlying_beta": round(self.underlying_beta, 4),
+            "underlying_alpha_ann_pct": round(self.underlying_alpha_ann_pct, 4),
+            "benchmark_code": self.benchmark_code,
+            "note": note,
+        }
+        return d
+
+
+def calculate_atr(df: pd.DataFrame, period: int) -> pd.Series:
+    """计算ATR指标"""
+    high = df['high']
+    low = df['low']
+    close = df['close']
+    
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=period).mean()
+    return atr
+
+
+def trend_following_backtest(
+    df: pd.DataFrame,
+    *,
+    code: str,
+    ma_period: int = 50,
+    atr_period: int = 14,
+    atr_multiplier: float = 1.5,
+    commission_rate: float = 0.0,
+    slippage_rate: float = 0.0,
+    benchmark_klines: list[KLine] | None = None,
+) -> tuple[TrendFollowingBacktestResult, pd.Series, pd.Series]:
+    """
+    趋势跟踪策略回测。
+    
+    策略规则：
+    1. 计算N日移动平均线(MA)
+    2. 计算ATR波动率指标
+    3. 当收盘价 > MA + ATR * multiplier 且前一日未持仓时，开多仓
+    4. 当收盘价 < MA - ATR * multiplier 且前一日持仓时，平仓
+    
+    df 须含列 trade_date, open, high, low, close；按时间升序。
+    """
+    if ma_period < 10:
+        raise ValueError("ma_period 须 >= 10")
+    if atr_period < 5:
+        raise ValueError("atr_period 须 >= 5")
+    if atr_multiplier <= 0:
+        raise ValueError("atr_multiplier 须 > 0")
+    
+    d = df.copy().reset_index(drop=True)
+    n = len(d)
+    if n < ma_period + atr_period:
+        raise ValueError(f"数据量不足（需要至少 {ma_period + atr_period} 根K线）")
+    
+    # 计算指标
+    d['ma'] = d['close'].rolling(window=ma_period).mean()
+    d['atr'] = calculate_atr(d, atr_period)
+    d['atr_threshold'] = d['atr'] * atr_multiplier
+    
+    # 计算日收益率
+    d['ret'] = d['close'].pct_change()
+    d['ret'].iloc[0] = 0.0
+    
+    # 生成信号：1=持有多仓，0=空仓
+    d['signal'] = 0
+    in_position = False
+    
+    for i in range(ma_period + atr_period, n):
+        if not in_position:
+            # 突破上轨开仓
+            if d['close'].iloc[i] > d['ma'].iloc[i] + d['atr_threshold'].iloc[i]:
+                d['signal'].iloc[i] = 1
+                in_position = True
+        else:
+            # 跌破下轨平仓
+            if d['close'].iloc[i] < d['ma'].iloc[i] - d['atr_threshold'].iloc[i]:
+                d['signal'].iloc[i] = 0
+                in_position = False
+            else:
+                d['signal'].iloc[i] = 1
+    
+    # 滞后一日执行，避免前视偏差
+    d['hold'] = d['signal'].shift(1).fillna(0)
+    d['hold'].iloc[0] = 0.0
+    
+    # 计算策略收益（滞后一日）
+    d['strat_ret'] = d['hold'] * d['ret']
+    
+    # 计算手续费和滑点（仅在仓位翻转时扣减）
+    d['position_change'] = d['hold'].diff().abs()
+    cost_rate = commission_rate + slippage_rate
+    d['cost'] = d['position_change'] * cost_rate
+    d['strat_ret_after_cost'] = d['strat_ret'] - d['cost']
+    
+    # 计算权益曲线
+    d['equity'] = (1.0 + d['strat_ret_after_cost']).cumprod()
+    d['buy_hold_equity'] = (1.0 + d['ret']).cumprod()
+    
+    # 计算统计指标
+    total_return = float(d['equity'].iloc[-1] - 1.0) * 100.0
+    buy_hold_return = float(d['buy_hold_equity'].iloc[-1] - 1.0) * 100.0
+    excess_return = total_return - buy_hold_return
+    
+    # 最大回撤
+    running_max = d['equity'].cummax()
+    drawdown = (d['equity'] - running_max) / running_max
+    max_drawdown = float(drawdown.min()) * 100.0
+    
+    # 年化指标
+    daily_returns = d['strat_ret_after_cost'].dropna()
+    n_days = len(daily_returns)
+    if n_days > 0:
+        annualized_return = (1.0 + total_return / 100.0) ** (252.0 / n_days) - 1.0
+        annualized_return_pct = annualized_return * 100.0
+        
+        buy_hold_annualized_return = (1.0 + buy_hold_return / 100.0) ** (252.0 / n_days) - 1.0
+        buy_hold_annualized_return_pct = buy_hold_annualized_return * 100.0
+        
+        volatility = daily_returns.std() * np.sqrt(252)
+        annualized_volatility_pct = volatility * 100.0
+        
+        # Sharpe Ratio (rf=0)
+        sharpe_ratio = annualized_return / volatility if volatility > 1e-12 else 0.0
+        
+        # Sortino Ratio
+        downside_returns = daily_returns[daily_returns < 0]
+        if len(downside_returns) > 0:
+            downside_deviation = downside_returns.std() * np.sqrt(252)
+            sortino_ratio = annualized_return / downside_deviation if downside_deviation > 1e-12 else 0.0
+        else:
+            sortino_ratio = 0.0
+        
+        # Calmar Ratio
+        calmar_ratio = -annualized_return / (max_drawdown / 100.0) if abs(max_drawdown) > 1e-12 else 0.0
+    else:
+        annualized_return_pct = 0.0
+        buy_hold_annualized_return_pct = 0.0
+        annualized_volatility_pct = 0.0
+        sharpe_ratio = 0.0
+        sortino_ratio = 0.0
+        calmar_ratio = 0.0
+    
+    # 信号变化次数
+    signal_changes = int(d['position_change'].sum())
+    
+    # 多头持仓段统计
+    hold_arr = d['hold'].to_numpy()
+    segments = []
+    i = 0
+    while i < n:
+        if hold_arr[i] < 0.5:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and hold_arr[j + 1] >= 0.5:
+            j += 1
+        segment_ret = float((1.0 + d['strat_ret_after_cost'].iloc[i:j+1]).prod() - 1.0) * 100.0
+        segments.append((i, segment_ret))
+        i = j + 1
+    
+    long_trades_count = len(segments)
+    if segments:
+        win_rate_pct = 100.0 * sum(1 for _, ret in segments if ret > 0) / len(segments)
+        avg_holding_return_pct = sum(ret for _, ret in segments) / len(segments)
+    else:
+        win_rate_pct = 0.0
+        avg_holding_return_pct = 0.0
+    
+    # Beta 和 Alpha（对自身收益回归）
+    if benchmark_klines:
+        from src.backtest.ma_cross import benchmark_close_on_primary_dates
+        bench_ser = benchmark_close_on_primary_dates(d, benchmark_klines)
+        bench_ret = bench_ser.pct_change().fillna(0)
+        y = d['strat_ret_after_cost']
+        x = bench_ret
+    else:
+        y = d['strat_ret_after_cost']
+        x = d['ret']
+    
+    valid_mask = ~y.isna() & ~x.isna()
+    y_valid = y[valid_mask]
+    x_valid = x[valid_mask]
+    
+    if len(y_valid) >= 2:
+        cov_matrix = np.cov(x_valid, y_valid)
+        if cov_matrix[0, 0] > 1e-12:
+            beta = cov_matrix[0, 1] / cov_matrix[0, 0]
+        else:
+            beta = 0.0
+        alpha = float(y_valid.mean() - beta * x_valid.mean()) * 252 * 100.0
+    else:
+        beta = 0.0
+        alpha = 0.0
+    
+    first_date = d['trade_date'].iloc[0]
+    last_date = d['trade_date'].iloc[-1]
+    
+    result = TrendFollowingBacktestResult(
+        code=code,
+        ma_period=ma_period,
+        atr_period=atr_period,
+        atr_multiplier=atr_multiplier,
+        bars_used=n,
+        first_trade_date=first_date if isinstance(first_date, date) else pd.Timestamp(first_date).date(),
+        last_trade_date=last_date if isinstance(last_date, date) else pd.Timestamp(last_date).date(),
+        total_return_pct=total_return,
+        buy_hold_return_pct=buy_hold_return,
+        excess_return_pct=excess_return,
+        max_drawdown_pct=max_drawdown,
+        sharpe_ratio=sharpe_ratio,
+        signal_changes=signal_changes,
+        annualized_return_pct=annualized_return_pct,
+        buy_hold_annualized_return_pct=buy_hold_annualized_return_pct,
+        annualized_volatility_pct=annualized_volatility_pct,
+        sortino_ratio=sortino_ratio,
+        calmar_ratio=calmar_ratio,
+        long_trades_count=long_trades_count,
+        win_rate_pct=win_rate_pct,
+        avg_holding_return_pct=avg_holding_return_pct,
+        underlying_beta=beta,
+        underlying_alpha_ann_pct=alpha,
+        benchmark_code=benchmark_klines[0].code if benchmark_klines else None,
+        commission_rate=commission_rate,
+        slippage_rate=slippage_rate,
+    )
+    
+    return result, d['equity'], d['strat_ret_after_cost']

@@ -40,6 +40,8 @@ from src.backtest.limit_up_pullback import (
     run_limit_up_pullback_param_grid,
 )
 from src.backtest.scan import ma_cross_scan_csv_bytes, parse_scan_codes
+from src.backtest.trend_following import trend_following_backtest
+from src.backtest.mean_reversion import mean_reversion_backtest
 from src.backtest.async_job_backend import (
     JOB_CANCELLED_MSG,
     QUEUE_KEY,
@@ -1927,3 +1929,176 @@ async def backtest_walk_forward(
         folds=folds,
         aggregated=aggregated,
     )
+
+
+@router.get("/trend-following", response_model=MaCrossBacktestResponse)
+async def trend_following_backtest_endpoint(
+    code: str = Query(..., description="标的代码，如 sh.000001"),
+    ma_period: int = Query(50, ge=10, le=200, description="移动平均线周期"),
+    atr_period: int = Query(14, ge=5, le=50, description="ATR周期"),
+    atr_multiplier: float = Query(1.5, ge=0.5, le=3.0, description="ATR乘数"),
+    start_date: date | None = Query(None, description="起始日（含）"),
+    end_date: date | None = Query(None, description="结束日（含）"),
+    limit: int = Query(500, ge=30, le=5000, description="最多使用多少根日 K（从新到旧取，再按时间正序回测）"),
+    commission_rate: float = Query(
+        0.0,
+        ge=0.0,
+        le=0.05,
+        description="单边手续费率（如万1.5填0.00015）；在持仓翻转日各扣一次",
+    ),
+    slippage_rate: float = Query(
+        0.0,
+        ge=0.0,
+        le=0.05,
+        description="滑点率（与手续费同口径，在调仓翻转日扣减）",
+    ),
+    benchmark_code: str | None = Query(
+        None,
+        description=(
+            "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS。"
+            "不传则对标的自身日收益。"
+        ),
+    ),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
+    session: AsyncSession = Depends(get_session),
+):
+    """趋势跟踪策略回测：基于移动平均线和ATR波动率。"""
+    if commission_rate + slippage_rate > 0.08:
+        raise HTTPException(
+            status_code=400,
+            detail="commission_rate 与 slippage_rate 之和勿超过 0.08",
+        )
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+
+    repo = KlineRepository(session)
+    klines = await repo.get_daily(
+        code=code.strip(),
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date,
+        adjust_flag=adjust_flag,
+    )
+    
+    if len(klines) < ma_period + atr_period:
+        raise HTTPException(
+            status_code=400,
+            detail=f"K 线不足，需要至少 {ma_period + atr_period} 根"
+        )
+
+    df = pd.DataFrame([
+        {
+            "trade_date": k.trade_date,
+            "open": k.open,
+            "high": k.high,
+            "low": k.low,
+            "close": k.close,
+        }
+        for k in klines
+    ])
+    
+    try:
+        result, equity, _ = trend_following_backtest(
+            df,
+            code=code.strip(),
+            ma_period=ma_period,
+            atr_period=atr_period,
+            atr_multiplier=atr_multiplier,
+            commission_rate=commission_rate,
+            slippage_rate=slippage_rate,
+            benchmark_klines=None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    body = result.to_api_dict()
+    body["equity_curve"] = [
+        {"date": str(df["trade_date"].iloc[i]), "equity": float(equity.iloc[i])}
+        for i in range(len(df))
+    ]
+    
+    return MaCrossBacktestResponse(**body)
+
+
+@router.get("/mean-reversion", response_model=MaCrossBacktestResponse)
+async def mean_reversion_backtest_endpoint(
+    code: str = Query(..., description="标的代码，如 sh.000001"),
+    bb_period: int = Query(20, ge=10, le=100, description="布林带周期"),
+    bb_std: float = Query(2.0, ge=0.5, le=3.0, description="标准差倍数"),
+    start_date: date | None = Query(None, description="起始日（含）"),
+    end_date: date | None = Query(None, description="结束日（含）"),
+    limit: int = Query(500, ge=30, le=5000, description="最多使用多少根日 K（从新到旧取，再按时间正序回测）"),
+    commission_rate: float = Query(
+        0.0,
+        ge=0.0,
+        le=0.05,
+        description="单边手续费率（如万1.5填0.00015）；在持仓翻转日各扣一次",
+    ),
+    slippage_rate: float = Query(
+        0.0,
+        ge=0.0,
+        le=0.05,
+        description="滑点率（与手续费同口径，在调仓翻转日扣减）",
+    ),
+    benchmark_code: str | None = Query(
+        None,
+        description=(
+            "可选，如 sh.000300；β/α 为策略日收益对基准日收益的 OLS。"
+            "不传则对标的自身日收益。"
+        ),
+    ),
+    adjust_flag: Literal["1", "2", "3"] = Query("3", description="复权类型: 1=后复权 2=前复权 3=不复权"),
+    session: AsyncSession = Depends(get_session),
+):
+    """均值回归策略回测：基于布林带指标。"""
+    if commission_rate + slippage_rate > 0.08:
+        raise HTTPException(
+            status_code=400,
+            detail="commission_rate 与 slippage_rate 之和勿超过 0.08",
+        )
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+
+    repo = KlineRepository(session)
+    klines = await repo.get_daily(
+        code=code.strip(),
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date,
+        adjust_flag=adjust_flag,
+    )
+    
+    if len(klines) < bb_period:
+        raise HTTPException(
+            status_code=400,
+            detail=f"K 线不足，需要至少 {bb_period} 根"
+        )
+
+    df = pd.DataFrame([
+        {
+            "trade_date": k.trade_date,
+            "close": k.close,
+        }
+        for k in klines
+    ])
+    
+    try:
+        result, equity, _ = mean_reversion_backtest(
+            df,
+            code=code.strip(),
+            bb_period=bb_period,
+            bb_std=bb_std,
+            commission_rate=commission_rate,
+            slippage_rate=slippage_rate,
+            benchmark_klines=None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    body = result.to_api_dict()
+    body["equity_curve"] = [
+        {"date": str(df["trade_date"].iloc[i]), "equity": float(equity.iloc[i])}
+        for i in range(len(df))
+    ]
+    
+    return MaCrossBacktestResponse(**body)
