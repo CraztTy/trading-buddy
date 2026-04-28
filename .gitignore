@@ -1,21 +1,105 @@
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Python virtual environments
 .venv/
 venv/
+venv311/
+env/
+.env*
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
 .pytest_cache/
 .mypy_cache/
-*.log
-logs/
-backup_*.sql
-*.db
-.DS_Store
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
-# 趋势 v0 束 D 本地回测导出（diff / 存档素材）
-artifacts/trend_v0/
+# OS
+.DS_Store
+Thumbs.db
 
-# 研究实验目录下本地导出（截面 CSV 等，见 experiments/README.md）
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Backups
+backup_*.sql
+*.bak
+
+# Node (frontend build)
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.development
+frontend/.env.production
+
+# Build artifacts
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Research exports
+artifacts/
 experiments/**/outputs/
+experiments/**/artifacts/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+._*
+
+# Confidential/credentials
+*.pem
+*.key
+credentials.json
+secrets.json
