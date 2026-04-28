@@ -5,6 +5,7 @@
 - 定期 VaR / CVaR 计算（每小时或每隔 N 个事件）
 - 压力场景监控（大盘大跌、持仓个股暴跌）
 - 实时风控状态缓存（供 API 查询）
+- 集成风控规则引擎（支持数据库配置规则）
 
 用法:
     consumer = RiskMonitorConsumer()
@@ -15,13 +16,21 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.common import get_logger
+from src.data.storage.database import get_database
+from src.data.storage.models import RiskRuleModel
 from src.events.consumer import EventConsumer
 from src.events.models import BaseEvent, EventType, RiskEvent
 from src.events.publisher import EventPublisher
+from src.risk.defaults import DEFAULT_RULE_CONFIGS, build_engine_from_configs
+from src.risk.engine import RiskEngine
+from src.risk.models import PortfolioState
 from src.risk.var_calculator import calculate_var_historical
 
 logger = get_logger("risk_monitor_consumer")
@@ -37,11 +46,15 @@ _VAR_CALC_INTERVAL = 300  # 5 分钟
 _STRESS_INDEX_DROP_PCT = -0.03
 _STRESS_SINGLE_DROP_PCT = -0.07
 
+# 风控规则刷新间隔（秒）- 从数据库重新加载规则
+_RULE_REFRESH_INTERVAL = 3600  # 1 小时
+
 
 class RiskMonitorConsumer(EventConsumer):
     """实时风控监控消费者。
 
     订阅 market_data_change 事件，检查持仓风险。
+    集成风控规则引擎，支持从数据库动态加载规则配置。
     """
 
     def __init__(self):
@@ -53,7 +66,7 @@ class RiskMonitorConsumer(EventConsumer):
         )
         self._publisher = EventPublisher()
 
-        # 持仓缓存: code -> {"avg_cost": float, "quantity": int, "max_price": float}
+        # 持仓缓存: code -> {"avg_cost": float, "quantity": int, "max_price": float, "sector": str}
         self._positions: dict[str, dict[str, Any]] = {}
 
         # 实时风控状态（供 API 查询）
@@ -64,6 +77,8 @@ class RiskMonitorConsumer(EventConsumer):
             "var_result": None,
             "stress_active": False,
             "alerts": [],
+            "engine_enabled": True,
+            "last_rule_refresh": None,
         }
 
         # 市场快照: code -> {"price": float, "change_pct": float, "pre_close": float}
@@ -71,6 +86,15 @@ class RiskMonitorConsumer(EventConsumer):
 
         # VaR 计算上次时间
         self._last_var_calc = 0.0
+
+        # 规则刷新上次时间
+        self._last_rule_refresh = 0.0
+
+        # 风控引擎（延迟初始化）
+        self._engine: RiskEngine | None = None
+
+        # 最大告警保留数量
+        self._max_alerts = 100
 
     # ------------------------------------------------------------------
     # 事件处理
@@ -98,11 +122,17 @@ class RiskMonitorConsumer(EventConsumer):
             "timestamp": time.time(),
         }
 
+        # 定期刷新风控规则
+        await self._refresh_rules_if_needed()
+
         # 检查持仓风险
         position = self._positions.get(code)
         if position is not None:
             await self._check_drawdown(code, price, position)
             await self._check_daily_loss(code, price, position, change_pct)
+
+            # 使用风控引擎进行全面检查
+            await self._check_with_engine(code, price, position)
 
         # 检查压力场景（大盘/个股暴跌）
         await self._check_stress_scenario(code, change_pct)
@@ -117,6 +147,98 @@ class RiskMonitorConsumer(EventConsumer):
         self._risk_state["last_update"] = time.time()
 
     # ------------------------------------------------------------------
+    # 规则刷新
+    # ------------------------------------------------------------------
+
+    async def _refresh_rules_if_needed(self) -> None:
+        """定期从数据库刷新风控规则配置。"""
+        now = time.time()
+        if now - self._last_rule_refresh >= _RULE_REFRESH_INTERVAL:
+            await self._load_rules_from_db()
+            self._last_rule_refresh = now
+            self._risk_state["last_rule_refresh"] = now
+            logger.info("risk rules refreshed from database")
+
+    async def _load_rules_from_db(self) -> None:
+        """从数据库加载风控规则配置。"""
+        try:
+            db = get_database()
+            async with db.session() as session:
+                stmt = select(RiskRuleModel).where(RiskRuleModel.user_id.is_(None))
+                result = await session.execute(stmt)
+                rules = result.scalars().all()
+
+                if rules:
+                    configs = [
+                        {
+                            "rule_type": r.rule_type,
+                            "name": r.name,
+                            "params": r.params,
+                            "enabled": r.enabled,
+                        }
+                        for r in rules
+                    ]
+                    self._engine = build_engine_from_configs(configs)
+                else:
+                    # 无数据库规则，使用默认配置
+                    self._engine = build_engine_from_configs(DEFAULT_RULE_CONFIGS)
+
+                self._risk_state["engine_enabled"] = True
+        except Exception as e:
+            logger.error("failed to load rules from db: %s", e)
+            # 数据库不可用时，使用内存中的默认规则
+            if self._engine is None:
+                self._engine = build_engine_from_configs(DEFAULT_RULE_CONFIGS)
+
+    # ------------------------------------------------------------------
+    # 风控引擎检查
+    # ------------------------------------------------------------------
+
+    async def _check_with_engine(self, code: str, price: float, position: dict[str, Any]) -> None:
+        """使用风控引擎进行全面风险检查。"""
+        if self._engine is None:
+            return
+
+        try:
+            # 构建组合状态（当前只包含触发事件的标的）
+            total_equity = position.get("quantity", 0) * price
+            positions = [
+                {
+                    "code": code,
+                    "quantity": position.get("quantity", 0),
+                    "avg_price": position.get("avg_cost", 0),
+                    "market_value": total_equity,
+                    "weight": 1.0,  # 单个标的权重为 100%
+                    "sector": position.get("sector", "unknown"),
+                }
+            ]
+
+            state = PortfolioState(
+                cash=0.0,
+                total_equity=total_equity,
+                positions=positions,
+                trade_date=date.today(),
+                daily_pnl=(price - position.get("avg_cost", 0)) * position.get("quantity", 0),
+                peak_equity=position.get("max_price", 0) * position.get("quantity", 0),
+            )
+
+            results = self._engine.check(state)
+            for result in results:
+                if not result.passed:
+                    severity = "violation" if result.severity == "error" else "warning"
+                    await self._publish_risk_event(
+                        rule_name=result.rule_name,
+                        rule_type=result.rule_type,
+                        detail=result.message,
+                        context=result.context or {},
+                        severity=severity,
+                    )
+                    logger.warning("engine rule violated: %s - %s", result.rule_name, result.message)
+
+        except Exception as e:
+            logger.error("engine check failed: %s", e)
+
+    # ------------------------------------------------------------------
     # 持仓管理
     # ------------------------------------------------------------------
 
@@ -125,19 +247,34 @@ class RiskMonitorConsumer(EventConsumer):
         code: str,
         quantity: int,
         avg_cost: float,
+        sector: str | None = None,
     ) -> None:
         """更新持仓信息（由交易模块调用）。"""
         code = code.strip().lower()
         existing = self._positions.get(code)
+        current_max_price = avg_cost if existing is None else max(
+            existing.get("max_price", avg_cost), avg_cost
+        )
         self._positions[code] = {
             "quantity": quantity,
             "avg_cost": avg_cost,
-            "max_price": avg_cost if existing is None else max(existing.get("max_price", avg_cost), avg_cost),
+            "max_price": current_max_price,
+            "sector": sector or existing.get("sector") if existing else "unknown",
         }
 
     def remove_position(self, code: str) -> None:
         """移除持仓。"""
-        self._positions.pop(code.strip().lower(), None)
+        code = code.strip().lower()
+        self._positions.pop(code, None)
+        # 同时清理相关的风险状态
+        self._risk_state["drawdowns"].pop(code, None)
+        self._risk_state["daily_changes"].pop(code, None)
+
+    def clear_all_positions(self) -> None:
+        """清空所有持仓（日终结算时调用）。"""
+        self._positions.clear()
+        self._risk_state["drawdowns"].clear()
+        self._risk_state["daily_changes"].clear()
 
     def get_risk_state(self) -> dict[str, Any]:
         """获取当前实时风控状态（供 API 查询）。"""
@@ -173,11 +310,12 @@ class RiskMonitorConsumer(EventConsumer):
             "drawdown_pct": round(drawdown_pct, 4),
             "max_price": max_price,
             "current_price": price,
+            "avg_cost": avg_cost,
             "timestamp": time.time(),
         }
 
         if drawdown_pct >= _DEFAULT_MAX_DRAWDOWN_PCT:
-            await self._publisher.risk_warning(
+            await self._publish_risk_event(
                 rule_name="max_drawdown",
                 rule_type="position",
                 detail=f"{code} 从高点回撤 {drawdown_pct*100:.2f}%（阈值 {_DEFAULT_MAX_DRAWDOWN_PCT*100:.0f}%）",
@@ -188,6 +326,7 @@ class RiskMonitorConsumer(EventConsumer):
                     "avg_cost": avg_cost,
                     "drawdown_pct": drawdown_pct,
                 },
+                severity="warning",
             )
             logger.warning("risk warning: %s drawdown %.2f%%", code, drawdown_pct * 100)
 
@@ -206,7 +345,7 @@ class RiskMonitorConsumer(EventConsumer):
         }
 
         if change_pct <= _DEFAULT_DAILY_LOSS_PCT:
-            await self._publisher.risk_warning(
+            await self._publish_risk_event(
                 rule_name="daily_loss",
                 rule_type="position",
                 detail=f"{code} 当日跌幅 {change_pct:.2f}%",
@@ -215,6 +354,7 @@ class RiskMonitorConsumer(EventConsumer):
                     "price": price,
                     "change_pct": change_pct,
                 },
+                severity="warning",
             )
             logger.warning("risk warning: %s daily loss %.2f%%", code, change_pct)
 
@@ -231,14 +371,16 @@ class RiskMonitorConsumer(EventConsumer):
         # 大盘指数监控（sh.000001 上证指数）
         if code == "sh.000001" and change_pct <= _STRESS_INDEX_DROP_PCT:
             self._risk_state["stress_active"] = True
-            self._risk_state["alerts"].append({
+            alert = {
                 "type": "stress_index_drop",
                 "code": code,
                 "change_pct": change_pct,
                 "threshold": _STRESS_INDEX_DROP_PCT,
                 "timestamp": time.time(),
-            })
-            await self._publisher.risk_violation(
+                "datetime": datetime.now().isoformat(),
+            }
+            self._risk_state["alerts"].append(alert)
+            await self._publish_risk_event(
                 rule_name="stress_test",
                 rule_type="market",
                 detail=f"上证指数跌 {change_pct*100:.2f}%，触发压力场景",
@@ -247,20 +389,23 @@ class RiskMonitorConsumer(EventConsumer):
                     "change_pct": change_pct,
                     "threshold": _STRESS_INDEX_DROP_PCT,
                 },
+                severity="violation",
             )
             logger.warning("STRESS TRIGGERED: index %s drop %.2f%%", code, change_pct)
 
         # 持仓个股暴跌监控
         elif code in self._positions and change_pct <= _STRESS_SINGLE_DROP_PCT:
             self._risk_state["stress_active"] = True
-            self._risk_state["alerts"].append({
+            alert = {
                 "type": "stress_single_drop",
                 "code": code,
                 "change_pct": change_pct,
                 "threshold": _STRESS_SINGLE_DROP_PCT,
                 "timestamp": time.time(),
-            })
-            await self._publisher.risk_violation(
+                "datetime": datetime.now().isoformat(),
+            }
+            self._risk_state["alerts"].append(alert)
+            await self._publish_risk_event(
                 rule_name="stress_test",
                 rule_type="position",
                 detail=f"{code} 跌 {change_pct*100:.2f}%，触发压力场景",
@@ -269,11 +414,12 @@ class RiskMonitorConsumer(EventConsumer):
                     "change_pct": change_pct,
                     "threshold": _STRESS_SINGLE_DROP_PCT,
                 },
+                severity="violation",
             )
             logger.warning("STRESS TRIGGERED: %s drop %.2f%%", code, change_pct)
 
-        # 只保留最近 100 条告警
-        self._risk_state["alerts"] = self._risk_state["alerts"][-100:]
+        # 只保留最近 N 条告警
+        self._risk_state["alerts"] = self._risk_state["alerts"][-self._max_alerts :]
 
     # ------------------------------------------------------------------
     # VaR 计算
@@ -289,7 +435,9 @@ class RiskMonitorConsumer(EventConsumer):
             positions = [
                 {
                     "code": code,
-                    "market_value": pos["quantity"] * self._market_snapshot.get(code, {}).get("price", pos["avg_cost"]),
+                    "market_value": pos["quantity"] * self._market_snapshot.get(code, {}).get(
+                        "price", pos["avg_cost"]
+                    ),
                 }
                 for code, pos in self._positions.items()
             ]
@@ -300,7 +448,6 @@ class RiskMonitorConsumer(EventConsumer):
 
             # 获取历史 K 线（这里简化处理，实际应从 KlineRepository 获取）
             # 由于消费者没有 session，这里暂时使用简化计算
-            # 未来可以预加载历史数据到内存
             var_result = self._simplified_var(positions, total_equity)
 
             self._risk_state["var_result"] = {
@@ -309,12 +456,14 @@ class RiskMonitorConsumer(EventConsumer):
                 "cvar_95": var_result.get("cvar_95", 0),
                 "cvar_99": var_result.get("cvar_99", 0),
                 "timestamp": time.time(),
+                "total_equity": total_equity,
+                "position_count": len(positions),
             }
 
             # 检查 VaR 限额（2% 默认）
             var_95_pct = abs(var_result.get("var_95", 0))
             if var_95_pct >= 0.02:
-                await self._publisher.risk_warning(
+                await self._publish_risk_event(
                     rule_name="var_limit",
                     rule_type="portfolio",
                     detail=f"组合 VaR(95%) {var_95_pct*100:.2f}% 超过限额 2%",
@@ -323,6 +472,7 @@ class RiskMonitorConsumer(EventConsumer):
                         "limit_pct": 0.02,
                         "total_equity": total_equity,
                     },
+                    severity="warning",
                 )
                 logger.warning("risk warning: VaR %.2f%% exceeds limit", var_95_pct * 100)
 
@@ -372,3 +522,52 @@ class RiskMonitorConsumer(EventConsumer):
             "cvar_95": round(cvar_95, 6),
             "cvar_99": round(cvar_99, 6),
         }
+
+    # ------------------------------------------------------------------
+    # 风险事件发布
+    # ------------------------------------------------------------------
+
+    async def _publish_risk_event(
+        self,
+        rule_name: str,
+        rule_type: str,
+        detail: str,
+        context: dict[str, Any],
+        severity: str = "warning",
+    ) -> None:
+        """统一发布风险事件。"""
+        if severity == "violation":
+            await self._publisher.risk_violation(
+                rule_name=rule_name,
+                rule_type=rule_type,
+                detail=detail,
+                context=context,
+            )
+        elif severity == "blocked":
+            await self._publisher.risk_blocked(
+                rule_name=rule_name,
+                rule_type=rule_type,
+                detail=detail,
+                context=context,
+            )
+        else:
+            await self._publisher.risk_warning(
+                rule_name=rule_name,
+                rule_type=rule_type,
+                detail=detail,
+                context=context,
+            )
+
+    # ------------------------------------------------------------------
+    # 生命周期扩展
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """启动消费者前先加载规则。"""
+        await self._load_rules_from_db()
+        await super().start()
+
+    async def stop(self) -> None:
+        """停止消费者。"""
+        await super().stop()
+        logger.info("risk monitor consumer stopped")
