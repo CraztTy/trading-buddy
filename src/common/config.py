@@ -303,6 +303,7 @@ class AuthSettings(BaseSettings):
     jwt_secret: str = "trading-buddy-dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
+    jwt_refresh_token_expire_days: int = 30  # 30 days
 
     def __init__(self, **data):
         if "auth_required" not in data:
@@ -320,6 +321,10 @@ class AuthSettings(BaseSettings):
             raw = os.environ.get("JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
             if raw:
                 data["jwt_access_token_expire_minutes"] = int(raw)
+        if "jwt_refresh_token_expire_days" not in data:
+            raw = os.environ.get("JWT_REFRESH_TOKEN_EXPIRE_DAYS")
+            if raw:
+                data["jwt_refresh_token_expire_days"] = int(raw)
         super().__init__(**data)
 
 

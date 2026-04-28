@@ -14,8 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common import get_logger, get_settings
+from src.common.redis_client import get_redis_client
 from src.data.storage import get_session
-from src.data.storage.models import UserModel
+from src.data.storage.models import UserModel, ApiKeyModel
 
 logger = get_logger(__name__)
 
@@ -23,7 +24,19 @@ logger = get_logger(__name__)
 security = HTTPBearer(auto_error=False)
 
 # 当 AUTH_REQUIRED=false 时返回的默认系统用户
-SYSTEM_USER = {"id": 0, "username": "system", "is_active": True}
+SYSTEM_USER = {"id": 0, "username": "system", "is_active": True, "role": "admin"}
+
+
+async def _is_token_blacklisted(token: str) -> bool:
+    """检查令牌是否在黑名单中。"""
+    redis = get_redis_client()
+    if redis is None:
+        return False
+    try:
+        result = await redis.get(f"token_blacklist:{token}")
+        return result is not None
+    except Exception:
+        return False
 
 
 async def get_current_user(
@@ -35,7 +48,8 @@ async def get_current_user(
 
     - AUTH_REQUIRED=false（默认）时，无 token 返回系统用户（id=0）。
     - AUTH_REQUIRED=true 时，无 token 或 token 无效均抛 401。
-    - token 有效时返回 {"id": int, "username": str, "is_active": bool}。
+    - token 有效时返回 {"id": int, "username": str, "is_active": bool, "role": str}。
+    - 支持 API Key 认证（格式：Bearer tbak_xxx）。
     """
     settings = get_settings().auth
 
@@ -54,6 +68,18 @@ async def get_current_user(
 
     token = credentials.credentials
 
+    # 检查是否是 API Key（以 tbak_ 开头）
+    if token.startswith("tbak_"):
+        return await _verify_api_key(token, session, request)
+
+    # 检查令牌是否在黑名单中
+    if await _is_token_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="令牌已失效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     try:
         payload = jwt.decode(
             token,
@@ -65,6 +91,14 @@ async def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="无效的认证令牌",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # 检查令牌类型
+        token_type = payload.get("type", "access")
+        if token_type != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的令牌类型",
                 headers={"WWW-Authenticate": "Bearer"},
             )
     except JWTError:
@@ -94,7 +128,67 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_dict = {"id": user.id, "username": user.username, "is_active": user.is_active, "role": user.role}
+    user_dict = {
+        "id": user.id,
+        "username": user.username,
+        "is_active": user.is_active,
+        "role": user.role,
+        "email": user.email,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+    request.state.current_user = user_dict
+    return user_dict
+
+
+async def _verify_api_key(
+    key_plain: str,
+    session: AsyncSession,
+    request: Request,
+) -> dict:
+    """验证 API Key 并返回对应的用户信息。"""
+    import hashlib
+
+    key_hash = hashlib.sha256(key_plain.encode()).hexdigest()[:64]
+
+    result = await session.execute(
+        select(ApiKeyModel).where(ApiKeyModel.key_hash == key_hash)
+    )
+    api_key = result.scalar_one_or_none()
+
+    if api_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的 API Key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 更新最后使用时间
+    from datetime import datetime, timezone
+    api_key.last_used_at = datetime.now(timezone.utc)
+    await session.flush()
+
+    # 获取关联用户
+    result = await session.execute(
+        select(UserModel).where(UserModel.id == api_key.user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key 关联的用户不存在或已被禁用",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_dict = {
+        "id": user.id,
+        "username": user.username,
+        "is_active": user.is_active,
+        "role": user.role,
+        "email": user.email,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "api_key_id": api_key.id,
+    }
     request.state.current_user = user_dict
     return user_dict
 
@@ -107,5 +201,17 @@ async def require_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="需要管理员权限",
+        )
+    return current_user
+
+
+async def require_active_user(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """要求当前用户为活跃用户，否则抛 403。"""
+    if not current_user.get("is_active", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="用户已被禁用",
         )
     return current_user
