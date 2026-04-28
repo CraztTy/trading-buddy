@@ -1,9 +1,10 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import VChart from "vue-echarts";
 import { fetchJson } from "../composables/api.js";
 import { writeClipboardText } from "../composables/clipboardWrite.js";
 import { showToast } from "../composables/useToast.js";
+import { useQuote } from "../composables/useQuote.js";
 
 /** 与后端一致；API 未返回 name 或后端未重启时仍显示中文名 */
 const MAJOR_INDEX_NAMES = {
@@ -35,6 +36,13 @@ const lastKlineApiPath = ref("");
 /** 复权类型: 1=后复权, 2=前复权, 3=不复权 */
 const innerAdjustFlag = ref(props.adjustFlag);
 
+// 实时行情相关
+const { quotes, subscribedCodes, subscribe, unsubscribe, connected } = useQuote();
+const realtimePrice = ref(null);
+const realtimeChange = ref(null);
+const realtimeChangePct = ref(null);
+const realtimeVolume = ref(null);
+
 const emit = defineEmits(["update:code", "update:adjustFlag"]);
 
 watch(() => props.adjustFlag, (v) => {
@@ -64,6 +72,23 @@ function onSearchKey(e) {
   emit("update:code", next);
 }
 
+// 监听实时行情更新
+watch(quotes, (newQuotes) => {
+  const quote = newQuotes[props.code];
+  if (quote) {
+    realtimePrice.value = quote.price;
+    realtimeChange.value = quote.change;
+    realtimeChangePct.value = quote.change_pct;
+    if (quote.volume) {
+      realtimeVolume.value = `${(quote.volume / 10000).toFixed(0)} 万`;
+    }
+    // 如果有最新的实时数据，可以更新标题显示
+    if (quote.name) {
+      title.value = chartTitle(props.code, quote.name);
+    }
+  }
+}, { deep: true });
+
 watch(
   () => props.code,
   (c) => {
@@ -71,9 +96,23 @@ watch(
     const k = (c || "").trim().toLowerCase();
     if (MAJOR_INDEX_NAMES[k]) title.value = MAJOR_INDEX_NAMES[k];
     loadKline(c);
+    
+    // 订阅新标的的实时行情
+    unsubscribe(Array.from(subscribedCodes.value));
+    subscribe(c);
   },
   { immediate: true }
 );
+
+// 组件挂载时订阅当前标的
+onMounted(() => {
+  subscribe(props.code);
+});
+
+// 组件卸载时取消订阅
+onUnmounted(() => {
+  unsubscribe(Array.from(subscribedCodes.value));
+});
 
 async function copyAnalysisApiPath() {
   const u = lastKlineApiPath.value.trim();
@@ -255,7 +294,20 @@ const chartOption = computed(() => {
   <section class="workspace">
     <header class="head">
       <div class="head-title-block">
+        <div class="realtime-indicator" v-if="connected">
+          <span class="realtime-dot"></span>
+          <span class="realtime-text">实时</span>
+        </div>
         <h2 class="display">{{ title }}</h2>
+        <div class="price-bar" v-if="realtimePrice !== null">
+          <span class="price-value" :class="{ 'price-up': realtimeChange >= 0, 'price-down': realtimeChange < 0 }">
+            {{ realtimePrice.toFixed(2) }}
+          </span>
+          <span class="price-change" :class="{ 'change-up': realtimeChange >= 0, 'change-down': realtimeChange < 0 }">
+            {{ realtimeChange >= 0 ? '+' : '' }}{{ realtimeChange?.toFixed(2) ?? '0.00' }}
+            ({{ realtimeChange >= 0 ? '+' : '' }}{{ realtimeChangePct?.toFixed(2) ?? '0.00' }}%)
+          </span>
+        </div>
         <p class="mono sub">{{ stockCode }}</p>
         <button
           type="button"
@@ -272,7 +324,7 @@ const chartOption = computed(() => {
         <div><span class="lbl">MA5</span> {{ indicators.ma5?.toFixed(2) ?? "—" }}</div>
         <div><span class="lbl">MA10</span> {{ indicators.ma10?.toFixed(2) ?? "—" }}</div>
         <div><span class="lbl">MA20</span> {{ indicators.ma20?.toFixed(2) ?? "—" }}</div>
-        <div><span class="lbl">量</span> {{ volumeLabel }}</div>
+        <div><span class="lbl">量</span> {{ realtimeVolume || volumeLabel }}</div>
       </div>
     </header>
 
@@ -387,6 +439,79 @@ const chartOption = computed(() => {
   font-size: 0.8rem;
   color: var(--paper-muted);
 }
+
+/* 实时行情指示器 */
+.realtime-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(46, 230, 168, 0.15);
+}
+
+.realtime-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--jade);
+  box-shadow: 0 0 8px var(--jade);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.realtime-text {
+  font-family: var(--font-display);
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--jade);
+}
+
+/* 价格显示 */
+.price-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+
+.price-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  transition: color 0.2s ease;
+}
+
+.price-value.price-up {
+  color: var(--jade);
+}
+
+.price-value.price-down {
+  color: var(--ember);
+}
+
+.price-change {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+
+.price-change.change-up {
+  color: var(--jade);
+}
+
+.price-change.change-down {
+  color: var(--ember);
+}
+
 .stats {
   display: flex;
   flex-wrap: wrap;

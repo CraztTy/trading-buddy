@@ -657,23 +657,159 @@ async function copyCurrentCode() {
   align-items: start;
 }
 
+/* 平板端响应式 (1024px - 768px) */
 @media (max-width: 1024px) {
   .topbar {
     grid-template-columns: 1fr;
     text-align: center;
+    padding: 12px 16px;
   }
   .brand {
     justify-content: center;
   }
+  .brand-text .title {
+    font-size: clamp(1rem, 2.5vw, 1.2rem);
+  }
+  .brand-text .tagline {
+    font-size: 0.68rem;
+  }
   .status {
     justify-content: center;
+    font-size: 0.85rem;
   }
   .topbar-mid {
     max-width: 100%;
     order: 3;
   }
+  .main {
+    padding: 20px 16px 48px;
+  }
   .split {
     grid-template-columns: 1fr;
+  }
+  .view-tabs {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .view-tab {
+    padding: 8px 14px;
+    font-size: 0.62rem;
+  }
+}
+
+/* 移动端响应式 (768px - 576px) */
+@media (max-width: 768px) {
+  .topbar {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+  .sigil-wrap {
+    width: 36px;
+    height: 36px;
+  }
+  .sigil {
+    font-size: 1rem;
+  }
+  .brand {
+    gap: 12px;
+  }
+  .brand-text .title {
+    font-size: clamp(0.9rem, 3vw, 1.1rem);
+  }
+  .brand-text .tagline {
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+  }
+  .main {
+    padding: 16px 12px 60px;
+  }
+  .view-tabs {
+    gap: 6px;
+  }
+  .view-tab {
+    padding: 7px 12px;
+    font-size: 0.58rem;
+    letter-spacing: 0.1em;
+  }
+  .block {
+    margin-bottom: 20px;
+  }
+  .status {
+    gap: 6px;
+    font-size: 0.78rem;
+  }
+  .code-chip {
+    max-width: 8rem;
+    padding: 3px 8px;
+    font-size: 0.75rem;
+  }
+  .auth-btn {
+    margin-left: 6px;
+    padding: 4px 10px;
+    font-size: 0.62rem;
+  }
+}
+
+/* 小屏移动端响应式 (< 576px) */
+@media (max-width: 576px) {
+  .topbar {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .sigil-wrap {
+    width: 32px;
+    height: 32px;
+  }
+  .brand {
+    gap: 10px;
+  }
+  .brand-text .title {
+    font-size: clamp(0.85rem, 3.5vw, 1rem);
+  }
+  .brand-text .tagline {
+    font-size: 0.56rem;
+    letter-spacing: 0.06em;
+  }
+  .main {
+    padding: 12px 8px 70px;
+  }
+  .view-tabs {
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+  .view-tab {
+    padding: 6px 10px;
+    font-size: 0.54rem;
+    letter-spacing: 0.08em;
+    border-radius: 6px;
+  }
+  .block {
+    margin-bottom: 16px;
+  }
+  .session-pill {
+    padding: 3px 8px;
+    font-size: 0.52rem;
+  }
+  .status {
+    gap: 4px;
+    font-size: 0.72rem;
+  }
+  .code-chip {
+    max-width: 6rem;
+    padding: 2px 6px;
+    font-size: 0.68rem;
+  }
+  .auth-btn {
+    margin-left: 4px;
+    padding: 3px 8px;
+    font-size: 0.56rem;
+    border-radius: 4px;
+  }
+  .time {
+    font-size: 0.85rem;
+  }
+  .tz {
+    font-size: 0.56rem;
   }
 }
 
